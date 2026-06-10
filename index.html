@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <title>A Dark Room 3D — POC</title>
+    <style>
+      :root {
+        /* Palette crépusculaire / froide (voir §5 du brief). */
+        --ink: #0c1418;
+        --panel: rgba(12, 20, 24, 0.72);
+        --edge: rgba(170, 200, 210, 0.18);
+        --text: #cfdde2;
+        --muted: #7f97a0;
+        --accent: #f0a050; /* lueur du feu de camp */
+        --good: #8fd3a0;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); }
+      #renderCanvas {
+        position: fixed; inset: 0; width: 100%; height: 100%;
+        display: block; outline: none; touch-action: none;
+      }
+
+      /* ---- Surcouche HUD : DOM pur par-dessus le canvas 3D (§2, §6) ---- */
+      #hud {
+        position: fixed; inset: 0; pointer-events: none;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .panel {
+        position: absolute; pointer-events: auto;
+        background: var(--panel);
+        border: 1px solid var(--edge);
+        border-radius: 10px;
+        padding: 12px 14px;
+        backdrop-filter: blur(6px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      }
+      #resourcePanel { top: 16px; left: 16px; min-width: 150px; }
+      #resourcePanel .label { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+      #resourcePanel .wood { font-size: 30px; font-weight: 700; line-height: 1.1; color: var(--accent); }
+      #resourcePanel .fire { font-size: 18px; font-weight: 600; line-height: 1.25; color: var(--accent); text-transform: capitalize; }
+      #resourcePanel .temp { font-size: 11px; color: var(--muted); }
+
+      #bagCap { color: var(--accent); font-weight: 700; }
+      #bagList { margin-top: 4px; }
+      #bagList .rrow { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; line-height: 1.5; }
+      #bagList .rrow.empty { color: var(--muted); font-style: italic; }
+      #bagList .rname { color: var(--muted); text-transform: capitalize; }
+      #bagList .rval { color: var(--text); font-weight: 600; }
+
+      /* Étiquette d'interaction ancrée au niveau de l'objet (diégétique). */
+      #interactPrompt {
+        position: absolute; display: none; pointer-events: none;
+        transform: translate(-50%, -100%);
+        background: rgba(12, 20, 24, 0.82); border: 1px solid var(--edge); border-radius: 999px;
+        padding: 4px 12px; font-size: 12px; color: var(--text); white-space: nowrap;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      }
+      #interactPrompt .key {
+        display: inline-block; margin-right: 7px; padding: 0 5px; border-radius: 4px;
+        background: var(--accent); color: #1a1208; font-weight: 700; font-size: 11px;
+      }
+
+      /* Dialogue avec un PNJ — bas centré, style « parole ». */
+      #dialogue {
+        position: absolute; display: none; left: 50%; bottom: 9%; transform: translateX(-50%);
+        width: min(560px, 86vw); pointer-events: auto;
+        background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
+        padding: 16px 18px; backdrop-filter: blur(6px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      }
+      #dlgSpeaker { color: var(--accent); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+      #dlgText { font-size: 15px; line-height: 1.5; margin-bottom: 14px; }
+      #dlgChoices { display: flex; flex-direction: column; gap: 6px; }
+      .dlgChoice {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 12px; text-align: left;
+        background: rgba(0, 0, 0, 0.25); border: 1px solid var(--edge); border-radius: 8px;
+        padding: 8px 12px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+      }
+      .dlgChoice:hover:not(:disabled) { border-color: var(--accent); }
+      .dlgChoice:disabled { opacity: 0.4; cursor: default; }
+      /* Grisé mais actif (pour capter le survol -> info-bulle des ressources manquantes). */
+      .dlgChoice.disabled { opacity: 0.4; cursor: help; }
+      .dlgChoice.disabled:hover { border-color: var(--edge); }
+      /* Info-bulle flottante (ressources manquantes, etc.). */
+      .dlgTooltip {
+        position: fixed; display: none; z-index: 20; pointer-events: none;
+        max-width: 220px; padding: 7px 10px; border-radius: 8px;
+        background: rgba(10, 8, 6, 0.96); border: 1px solid var(--edge); color: var(--text);
+        font-size: 12px; line-height: 1.4; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+      }
+      /* Surlignage de la sélection clavier (pointeur capturé) */
+      .dlgChoice.selected, .dlgStepper.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+      .dlgStepper.selected .dsName { color: var(--accent); }
+      .dlgChoice .dcName { text-transform: capitalize; }
+      .dlgChoice .dcCost { font-size: 11px; color: var(--muted); white-space: nowrap; }
+      /* Badge « nouveau » sur un bâtiment fraîchement révélé. */
+      .dlgChoice .dcNew {
+        font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+        background: var(--accent); color: #1a1208; border-radius: 4px; padding: 1px 5px; margin-left: 8px;
+      }
+
+      #dlgSteppers { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+      .dlgStepper { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--edge); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+      .dlgStepper .dsName { text-transform: capitalize; }
+      .dlgStepper .dsSub { font-size: 10px; color: var(--muted); margin-left: 8px; }
+      .dlgStepper .dsRight { display: flex; align-items: center; gap: 8px; }
+      .dlgStepper .dsVal { min-width: 1.5em; text-align: center; font-weight: 700; color: var(--accent); }
+      .dlgStepBtn { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--edge); background: rgba(0, 0, 0, 0.3); color: var(--text); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+      .dlgStepBtn:disabled { opacity: 0.35; cursor: default; }
+      /* Occupation par défaut (bûcheron) : listée comme les autres, mais sans boutons +/-. */
+      .dlgStepper.readonly { opacity: 0.9; }
+      .dlgStepper.readonly .dsRight { padding-right: 34px; } /* aligne l'effectif avec les autres lignes */
+
+      /* Menu Paramètres (centré, ouvert avec Échap hors interface). */
+      #settings {
+        display: none; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: min(380px, 88vw); padding: 20px;
+      }
+      .settingsTitle { color: var(--accent); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 14px; text-align: center; }
+      .settingsList { display: flex; flex-direction: column; gap: 8px; }
+      .settingsBtn { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 14px; color: var(--text); cursor: pointer; text-align: left; }
+      .settingsBtn.primary { background: var(--accent); color: #1a1208; font-weight: 700; }
+      .settingsBtn:hover:not(:disabled) { border-color: var(--accent); }
+      .settingsBtn:disabled { opacity: 0.4; cursor: default; }
+      .settingsSection { margin-top: 16px; border-top: 1px solid var(--edge); padding-top: 12px; }
+      .settingsLabel { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
+      .settingsHint { color: var(--muted); font-size: 11px; text-align: center; margin-top: 14px; }
+      .volRow { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+      .volRow label { flex: 0 0 64px; font-size: 12px; color: var(--text); }
+      .volRow input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+      .volRow .volVal { flex: 0 0 38px; text-align: right; font-size: 12px; color: var(--accent); font-weight: 700; }
+      #muteBtn { margin-top: 8px; width: 100%; }
+      #muteBtn.muted { background: var(--accent); color: #1a1208; font-weight: 700; }
+      .sfxToggles { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 14px; margin: 4px 0 2px; }
+      .sfxToggles label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
+      .sfxToggles input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 14px; height: 14px; }
+      #netStatus { font-size: 13px; margin-bottom: 10px; }
+      #netStatus .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: middle; }
+      #netStatus.online .dot { background: var(--good); }
+      .netRow { display: flex; gap: 6px; margin-top: 8px; }
+      #roomInput, #shareLink {
+        flex: 1; min-width: 0; background: rgba(0,0,0,0.3); border: 1px solid var(--edge);
+        color: var(--text); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px;
+      }
+      #shareLink { color: var(--accent); }
+      #roomBtn, #copyBtn {
+        background: var(--accent); color: #1a1208; border: none; border-radius: 6px;
+        padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+      }
+      #roomBtn:hover, #copyBtn:hover { filter: brightness(1.08); }
+      #roomHint { color: var(--muted); font-size: 11px; margin-top: 8px; line-height: 1.4; }
+
+      #helpPanel { bottom: 16px; left: 16px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+      #helpPanel kbd {
+        background: rgba(0,0,0,0.35); border: 1px solid var(--edge); border-radius: 4px;
+        padding: 1px 6px; color: var(--text); font: inherit; font-size: 11px;
+      }
+      #rendererTag { position: absolute; bottom: 16px; right: 16px; font-size: 11px; color: var(--muted); }
+
+      /* Overlay debug (FPS, latence, etc.) — bascule avec F3. */
+      #debugOverlay {
+        position: absolute; top: 16px; right: 16px; pointer-events: none;
+        background: rgba(8, 14, 17, 0.62); border: 1px solid var(--edge); border-radius: 8px;
+        padding: 8px 10px; font-size: 11px; line-height: 1.55; min-width: 160px;
+        backdrop-filter: blur(4px);
+      }
+      #debugOverlay.hidden { display: none; }
+      #debugOverlay .drow { display: flex; justify-content: space-between; gap: 16px; }
+      #debugOverlay .dk { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      #debugOverlay .dv { color: var(--text); font-weight: 600; }
+      #debugOverlay .dtitle {
+        color: var(--accent); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+        margin-bottom: 4px; display: flex; justify-content: space-between;
+      }
+      #debugOverlay .dtitle .hint { color: var(--muted); font-weight: 400; }
+
+      #toast {
+        position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+        background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+        padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity 0.25s ease;
+      }
+      #toast.show { opacity: 1; }
+
+      #lockHint {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
+        padding: 10px 16px; font-size: 13px; color: var(--text); pointer-events: none;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+
+    <div id="hud">
+      <div id="resourcePanel" class="panel">
+        <div class="label">Sac <span id="bagCap">0/0</span></div>
+        <div id="bagList"></div>
+        <div class="label" style="margin-top: 10px">Feu</div>
+        <div class="fire" id="fireValue">mort</div>
+        <div class="temp" id="tempValue">glacial</div>
+        <div class="label" style="margin-top: 10px">Village</div>
+        <div class="temp" id="popValue">0/0</div>
+      </div>
+
+      <div id="settings" class="panel">
+        <div class="settingsTitle">Paramètres</div>
+        <div class="settingsList">
+          <button class="settingsBtn primary" id="settingsResume">Reprendre</button>
+          <button class="settingsBtn" disabled>Paramètres des touches — bientôt</button>
+        </div>
+        <div class="settingsSection">
+          <div class="settingsLabel">Son</div>
+          <div class="volRow"><label for="volMaster">Général</label><input id="volMaster" type="range" min="0" max="100" step="1" /><span class="volVal" id="volMasterVal">70%</span></div>
+          <div class="volRow"><label for="volMusic">Musique</label><input id="volMusic" type="range" min="0" max="100" step="1" /><span class="volVal" id="volMusicVal">60%</span></div>
+          <div class="volRow"><label for="volSfx">Effets</label><input id="volSfx" type="range" min="0" max="100" step="1" /><span class="volVal" id="volSfxVal">85%</span></div>
+          <div class="settingsLabel" style="margin-top: 6px;">Effets actifs</div>
+          <div id="sfxToggles" class="sfxToggles"></div>
+          <button class="settingsBtn" id="muteBtn">Couper le son</button>
+        </div>
+        <div class="settingsSection">
+          <div class="settingsLabel">Multijoueur</div>
+          <div id="netStatus"><span class="dot"></span><span id="netStatusText">Hors-ligne</span></div>
+          <button class="settingsBtn primary" id="hostBtn">Ouvrir ma partie aux autres</button>
+          <div id="shareRow" class="netRow" style="display: none;">
+            <input id="shareLink" type="text" readonly autocomplete="off" spellcheck="false" />
+            <button id="copyBtn">Copier</button>
+          </div>
+          <div class="settingsLabel" style="margin-top: 14px;">Ou rejoindre une partie</div>
+          <div class="netRow">
+            <input id="roomInput" type="text" placeholder="code reçu" autocomplete="off" spellcheck="false" />
+            <button id="roomBtn">Rejoindre</button>
+          </div>
+          <div id="roomHint">« Ouvrir ma partie » génère un lien à partager (ta partie reste l'autorité). Ou colle un code reçu pour rejoindre.</div>
+        </div>
+        <div class="settingsHint">Échap pour fermer</div>
+      </div>
+
+      <div id="helpPanel" class="panel">
+        <div><kbd>ZQSD</kbd> se déplacer · <kbd>Espace</kbd> sauter · <kbd>E</kbd> interagir · souris : caméra</div>
+        <div><kbd>Échap</kbd> : menu (paramètres / multijoueur) · ou ferme l'interface ouverte</div>
+      </div>
+
+      <div id="rendererTag">initialisation…</div>
+      <div id="debugOverlay"></div>
+      <div id="toast"></div>
+      <div id="lockHint">cliquez pour orienter la caméra à la souris</div>
+
+      <div id="interactPrompt"><span class="key">E</span><span id="promptVerb"></span></div>
+
+      <div id="dialogue">
+        <div id="dlgSpeaker"></div>
+        <div id="dlgText"></div>
+        <div id="dlgSteppers"></div>
+        <div id="dlgChoices"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

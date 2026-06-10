@@ -1,0 +1,11 @@
+node_modules/
+dist/
+public/HavokPhysics.wasm
+test-results/
+playwright-report/
+.DS_Store
+*.log
+
+# Artefacts de test générés / scratch
+tests/screenshot.png
+tests/_tmp_*

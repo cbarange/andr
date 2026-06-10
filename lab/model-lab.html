@@ -1,0 +1,2501 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>andr · labo de modèles 3D</title>
+<!--
+  ============================================================================
+  LABO DE MODÈLES 3D — A New Darkroom (andr)
+  ----------------------------------------------------------------------------
+  Fichier STANDALONE : aucun package npm. Babylon.js est chargé depuis un CDN.
+  Ouvre simplement ce fichier dans un navigateur (double-clic / file://) — ou
+  sers-le via `npm run dev` puis http://localhost:5173/lab/model-lab.html.
+
+  But : prototyper et REVOIR les modèles low-poly du jeu (personnages, bâtiments,
+  pièges, arbres…) avant de les porter dans src/render/*. Même esthétique que le
+  jeu : low-poly, flat shading, palette crépusculaire centralisée (PALETTE).
+
+  Sélectionne un modèle à gauche. Boutons : tourne (turntable), avant/après
+  (compare avec la version actuelle du jeu quand elle existe), échelle (silhouette
+  humaine de 1,8 m), grille (vue d'ensemble), capture PNG.
+  ============================================================================
+-->
+<style>
+  :root {
+    --fog:#2c3a40; --panel:#11181c; --panel2:#0a1013; --ink:#cfe0d6;
+    --ink-dim:#7e928c; --accent:#f0a050; --accent2:#6fb0a6; --line:#22312f;
+    --warn:#e0c070;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden;
+    background:var(--panel2); color:var(--ink);
+    font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace; }
+  #app { display:grid; grid-template-columns:280px 1fr; height:100vh; }
+
+  /* ---- Sidebar ---- */
+  aside { background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border-right:1px solid var(--line); display:flex; flex-direction:column;
+    min-height:0; }
+  .brand { padding:16px 18px 12px; border-bottom:1px solid var(--line); }
+  .brand h1 { margin:0; font-size:15px; letter-spacing:2px; color:var(--ink); }
+  .brand h1 b { color:var(--accent); }
+  .brand p { margin:4px 0 0; font-size:10px; color:var(--ink-dim);
+    letter-spacing:1px; text-transform:uppercase; }
+  .list { overflow-y:auto; flex:1; padding:8px 0 24px; min-height:0; }
+  .cat { padding:14px 18px 6px; font-size:10px; letter-spacing:2px;
+    text-transform:uppercase; color:var(--accent2); opacity:.85; }
+  .item { padding:7px 18px; font-size:13px; color:var(--ink-dim);
+    cursor:pointer; border-left:2px solid transparent; line-height:1.25; }
+  .item:hover { color:var(--ink); background:rgba(255,255,255,.03); }
+  .item.active { color:var(--ink); border-left-color:var(--accent);
+    background:rgba(240,160,80,.08); }
+  .item small { display:block; font-size:10px; color:var(--ink-dim); opacity:.7; }
+
+  /* ---- Stage ---- */
+  main { position:relative; min-width:0; }
+  #c { width:100%; height:100%; display:block; outline:none; touch-action:none; }
+
+  .topbar { position:absolute; top:0; left:0; right:0; padding:14px 18px;
+    display:flex; align-items:flex-start; gap:16px; pointer-events:none;
+    background:linear-gradient(180deg,rgba(7,11,13,.7),transparent); }
+  .title { pointer-events:none; }
+  .title .name { font-size:18px; color:var(--ink); letter-spacing:.5px; }
+  .title .badge { display:inline-block; margin-left:10px; font-size:10px;
+    padding:2px 8px; border:1px solid var(--accent2); color:var(--accent2);
+    border-radius:10px; letter-spacing:1px; vertical-align:middle; }
+  .title .desc { margin-top:5px; font-size:12px; color:var(--ink-dim);
+    max-width:640px; line-height:1.4; }
+  .title .mode { margin-top:6px; font-size:11px; color:var(--warn); display:none; }
+
+  .toolbar { position:absolute; bottom:0; left:0; right:0; padding:14px 18px;
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    background:linear-gradient(0deg,rgba(7,11,13,.72),transparent); }
+  button.tb { pointer-events:auto; background:rgba(20,30,33,.85);
+    border:1px solid var(--line); color:var(--ink-dim); font:inherit;
+    font-size:12px; padding:7px 12px; border-radius:7px; cursor:pointer;
+    letter-spacing:.5px; transition:all .12s; }
+  button.tb:hover { color:var(--ink); border-color:var(--accent2); }
+  button.tb.on { color:#0a1013; background:var(--accent2); border-color:var(--accent2); }
+  button.tb.accent.on { background:var(--accent); border-color:var(--accent); }
+  .spacer { flex:1; }
+  .hint { pointer-events:none; font-size:11px; color:var(--ink-dim); opacity:.7; }
+
+  #loader { position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; flex-direction:column; gap:10px; color:var(--ink-dim);
+    background:var(--panel2); z-index:5; font-size:13px; letter-spacing:1px; }
+  #loader .dot { width:8px; height:8px; border-radius:50%; background:var(--accent);
+    animation:pulse 1s infinite ease-in-out; }
+  @keyframes pulse { 0%,100%{opacity:.2;transform:scale(.8)} 50%{opacity:1;transform:scale(1.3)} }
+  .err { color:#e08070; max-width:520px; text-align:center; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <div class="brand">
+      <h1>a new <b>darkroom</b></h1>
+      <p>labo de modèles 3D</p>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main>
+    <canvas id="c"></canvas>
+    <div class="topbar">
+      <div class="title">
+        <div><span class="name" id="mName">—</span><span class="badge" id="mBadge"></span></div>
+        <div class="desc" id="mDesc"></div>
+        <div class="mode" id="mMode"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="tb" id="btnRot">⟳ tourne</button>
+      <button class="tb accent" id="btnCmp">avant / après</button>
+      <button class="tb" id="btnRef">échelle 1,8 m</button>
+      <button class="tb on" id="btnShadow">ombres</button>
+      <button class="tb" id="btnGrid">⊞ grille</button>
+      <button class="tb" id="btnWire">fil de fer</button>
+      <button class="tb" id="btnFog">brouillard</button>
+      <div class="spacer"></div>
+      <span class="hint">glisser = orbite · molette = zoom · ← → = changer</span>
+      <button class="tb" id="btnShot">⤓ PNG</button>
+    </div>
+    <div id="loader"><div class="dot"></div><div id="loadTxt">chargement de Babylon.js…</div></div>
+  </main>
+</div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script>
+"use strict";
+(function () {
+  const loader = document.getElementById('loader');
+  const loadTxt = document.getElementById('loadTxt');
+  if (typeof BABYLON === 'undefined') {
+    loader.innerHTML = '<div class="err">Babylon.js n\'a pas pu être chargé depuis le CDN.<br>'
+      + 'Vérifie ta connexion internet, ou sers ce fichier via <code>npm run dev</code> '
+      + 'puis ouvre <code>/lab/model-lab.html</code>.</div>';
+    return;
+  }
+  const B = BABYLON;
+  const V3 = (x, y, z) => new B.Vector3(x, y, z);
+
+  // ==========================================================================
+  //  PALETTE — alignée sur src/render/scene.ts, étendue de teintes pour le labo.
+  // ==========================================================================
+  const P = {
+    fog:[0.17,0.23,0.27], ground:[0.18,0.3,0.27], groundLow:[0.09,0.16,0.19],
+    trunk:[0.24,0.17,0.13], foliage:[0.2,0.45,0.36], fire:[1.0,0.55,0.2],
+    player:[0.88,0.8,0.62], remote:[0.55,0.74,0.96],
+    // étendu
+    skin:[0.78,0.6,0.46], skinDark:[0.58,0.43,0.32],
+    cloak:[0.27,0.34,0.41], cloakDark:[0.19,0.26,0.32], cloakTrim:[0.4,0.57,0.52],
+    wood:[0.3,0.22,0.15], woodLight:[0.45,0.34,0.22], woodDark:[0.2,0.15,0.12],
+    roof:[0.24,0.19,0.16], roof2:[0.3,0.25,0.2],
+    stone:[0.32,0.35,0.39], stoneDark:[0.21,0.24,0.27],
+    metal:[0.52,0.56,0.6], metalDark:[0.28,0.31,0.35],
+    leafPine:[0.15,0.33,0.27], leafOak:[0.23,0.46,0.34], leafBirch:[0.5,0.62,0.4],
+    leafAutumn:[0.78,0.45,0.18], leafAutumn2:[0.66,0.28,0.14], leafCypress:[0.18,0.36,0.3],
+    birch:[0.84,0.85,0.8], bush:[0.22,0.4,0.3], grass:[0.3,0.46,0.28],
+    fur:[0.5,0.42,0.34], meat:[0.62,0.3,0.28], hide:[0.55,0.45,0.36],
+    ember:[1.0,0.4,0.12], emberHot:[1.0,0.72,0.3],
+    tunicA:[0.5,0.42,0.34], tunicB:[0.36,0.44,0.5], tunicC:[0.56,0.4,0.3], tunicD:[0.38,0.5,0.42],
+    hatStraw:[0.6,0.5,0.28],
+    // décor (biomes) : os, roseaux/marais, fleurs sauvages, broussaille sèche, fougère
+    bone:[0.82,0.8,0.72], reed:[0.52,0.58,0.38], reedHead:[0.42,0.32,0.22], mud:[0.16,0.2,0.2],
+    dryBrush:[0.5,0.42,0.28], fern:[0.24,0.42,0.3],
+    flowerWhite:[0.9,0.9,0.82], flowerYellow:[0.86,0.74,0.3], flowerViolet:[0.58,0.5,0.72], flowerPink:[0.82,0.45,0.5],
+    // sites / setpieces (M7→M11) : ruines, mines, eau, blindage, drapeau
+    ruinStone:[0.3,0.3,0.32], rust:[0.46,0.29,0.18], coal:[0.12,0.12,0.14], sulphur:[0.72,0.64,0.22],
+    water:[0.13,0.19,0.23], armor:[0.21,0.23,0.27], armorDk:[0.14,0.15,0.18], banner:[0.6,0.22,0.22], dark:[0.03,0.03,0.04],
+    // tier SF/alien + ruines MODERNES (cf. recherche A Dark Room : le « wanderer » est un alien)
+    alienHull:[0.27,0.31,0.36], alienAlloy:[0.42,0.47,0.52], alienGlow:[0.35,0.85,0.82], laser:[0.95,0.4,0.35],
+    concrete:[0.44,0.44,0.42], concreteDk:[0.3,0.3,0.29], glass:[0.34,0.5,0.55], scorch:[0.1,0.1,0.11], rebar:[0.4,0.3,0.24],
+  };
+
+  // ==========================================================================
+  //  KIT de construction — primitives flat-shaded, matériau par pièce.
+  //  Toutes les méthodes renvoient le mesh (pour ajuster rotation/échelle).
+  //  opt: { rot:[x,y,z], scale:n|[x,y,z], emi:k, alpha:a, unlit:true, smooth:true }
+  // ==========================================================================
+  function makeKit(scene) {
+    let uid = 0;
+    const mkMat = (c, opt) => {
+      const m = new B.StandardMaterial('m' + (uid++), scene);
+      m.diffuseColor = new B.Color3(c[0], c[1], c[2]);
+      m.specularColor = new B.Color3(0, 0, 0);
+      if (opt && opt.emi) m.emissiveColor = new B.Color3(c[0]*opt.emi, c[1]*opt.emi, c[2]*opt.emi);
+      if (opt && opt.alpha != null) m.alpha = opt.alpha;
+      if (opt && opt.unlit) m.disableLighting = true;
+      return m;
+    };
+    const place = (m, parent, pos, opt) => {
+      m.parent = parent;
+      if (pos) m.position.set(pos[0]||0, pos[1]||0, pos[2]||0);
+      if (opt && opt.rot) m.rotation.set(opt.rot[0]||0, opt.rot[1]||0, opt.rot[2]||0);
+      if (opt && opt.scale != null) {
+        const s = opt.scale;
+        if (Array.isArray(s)) m.scaling.set(s[0], s[1], s[2]); else m.scaling.setAll(s);
+      }
+      if (!(opt && opt.smooth)) m.convertToFlatShadedMesh();
+      return m;
+    };
+    return {
+      mat: mkMat,
+      box(parent, c, dims, pos, opt) {
+        const m = B.MeshBuilder.CreateBox('b', { width:dims[0], height:dims[1], depth:dims[2] }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      cyl(parent, c, d, pos, opt) {
+        const m = B.MeshBuilder.CreateCylinder('c',
+          { height:d.h, diameterTop:(d.dt!=null?d.dt:d.d), diameterBottom:(d.db!=null?d.db:d.d), tessellation:(d.t||10) }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      cone(parent, c, d, pos, opt) {
+        const m = B.MeshBuilder.CreateCylinder('cn',
+          { height:d.h, diameterTop:0, diameterBottom:d.d, tessellation:(d.t||8) }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      sph(parent, c, d, pos, opt) {
+        const m = B.MeshBuilder.CreateSphere('s', { diameter:d.d, segments:(d.seg||8) }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      ico(parent, c, d, pos, opt) {
+        const m = B.MeshBuilder.CreateIcoSphere('i', { radius:d.d/2, subdivisions:(d.sub||1) }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      tor(parent, c, d, pos, opt) {
+        const m = B.MeshBuilder.CreateTorus('t', { diameter:d.d, thickness:d.thick, tessellation:(d.t||14) }, scene);
+        m.material = mkMat(c, opt); return place(m, parent, pos, opt);
+      },
+      node(parent, pos) {
+        const n = new B.TransformNode('n', scene);
+        if (parent) n.parent = parent;
+        if (pos) n.position.set(pos[0]||0, pos[1]||0, pos[2]||0);
+        return n;
+      },
+    };
+  }
+
+  // ==========================================================================
+  //  BRIQUES PARTAGÉES — humanoïdes & arbres réutilisés par plusieurs modèles.
+  // ==========================================================================
+
+  // Humanoïde générique low-poly. opts.tunic, opts.head(=skin), opts.h(échelle),
+  // opts.hat ('cap'|'hood'|'straw'|'none'), opts.arms.
+  function humanoid(K, parent, o) {
+    o = o || {};
+    const root = K.node(parent);
+    const tunic = o.tunic || P.tunicA;
+    const dark = tunic.map(v => v * 0.78);
+    const legc = o.legs || P.woodDark;
+    // jambes
+    K.cyl(root, legc, { h:0.5, dt:0.13, db:0.16 }, [-0.13, 0.25, 0]);
+    K.cyl(root, legc, { h:0.5, dt:0.13, db:0.16 }, [ 0.13, 0.25, 0]);
+    K.box(root, P.woodDark, [0.2, 0.1, 0.3], [-0.13, 0.05, 0.05]); // pieds
+    K.box(root, P.woodDark, [0.2, 0.1, 0.3], [ 0.13, 0.05, 0.05]);
+    // torse (légèrement conique)
+    K.cyl(root, tunic, { h:0.66, dt:0.34, db:0.46, t:8 }, [0, 0.83, 0]);
+    K.box(root, dark, [0.5, 0.12, 0.34], [0, 0.62, 0]); // ceinture/ourlet
+    // bras
+    K.cyl(root, dark, { h:0.52, dt:0.1, db:0.12 }, [-0.3, 0.82, 0], { rot:[0,0, 0.12] });
+    K.cyl(root, dark, { h:0.52, dt:0.1, db:0.12 }, [ 0.3, 0.82, 0], { rot:[0,0,-0.12] });
+    K.sph(root, P.skin, { d:0.16 }, [-0.33, 0.56, 0.02]); // mains
+    K.sph(root, P.skin, { d:0.16 }, [ 0.33, 0.56, 0.02]);
+    // tête + cou
+    K.cyl(root, P.skinDark, { h:0.12, d:0.16 }, [0, 1.2, 0]);
+    const head = K.sph(root, o.head || P.skin, { d:0.36, seg:8 }, [0, 1.4, 0]);
+    K.box(root, P.skinDark, [0.08, 0.07, 0.12], [0, 1.38, 0.18]); // nez (repère direction)
+    // couvre-chef
+    const hat = o.hat || 'cap';
+    if (hat === 'cap') K.sph(root, o.hair || [0.28,0.2,0.14], { d:0.38, seg:8 }, [0, 1.5, -0.02], { scale:[1,0.6,1] });
+    else if (hat === 'hood') { // chapeau pointu POSÉ sur la tête (bord + pointe + liseré)
+      K.cyl(root, P.cloak, { h:0.07, d:0.58, t:10 }, [0, 1.55, 0]);        // bord qui repose sur le crâne
+      K.tor(root, P.cloakTrim, { d:0.5, thick:0.05, t:14 }, [0, 1.56, 0]); // liseré du bord
+      K.cone(root, P.cloak, { h:0.64, d:0.46, t:8 }, [0, 1.9, 0]);          // pointe
+    }
+    else if (hat === 'straw') { K.cyl(root, P.hatStraw, { h:0.05, d:0.62 }, [0, 1.56, 0]); K.cyl(root, P.hatStraw, { h:0.18, dt:0.22, db:0.3 }, [0, 1.64, 0]); }
+    else if (hat === 'beard') { K.sph(root, [0.26,0.19,0.14], { d:0.38, seg:8 }, [0, 1.5, -0.02], { scale:[1,0.55,1] }); K.box(root, [0.62,0.55,0.45], [0.26,0.16,0.2], [0, 1.27, 0.14]); }
+    if (o.h) root.scaling.setAll(o.h);
+    return root;
+  }
+
+  function treeBuild(K, parent, type, pos) {
+    const root = K.node(parent, pos);
+    switch (type) {
+      case 'pine': { // sapin / conifère : étages de cônes
+        K.cyl(root, P.wood, { h:1.3, dt:0.22, db:0.4 }, [0, 0.65, 0]);
+        K.cone(root, P.leafPine, { h:1.5, d:2.0, t:8 }, [0, 1.5, 0]);
+        K.cone(root, P.leafPine, { h:1.3, d:1.5, t:8 }, [0, 2.35, 0]);
+        K.cone(root, P.leafPine, { h:1.1, d:1.0, t:8 }, [0, 3.1, 0]);
+        break;
+      }
+      case 'oak': { // feuillu rond : houppier en grappe d'icosphères
+        K.cyl(root, P.trunk, { h:1.9, dt:0.38, db:0.62 }, [0, 0.95, 0]);
+        K.ico(root, P.leafOak, { d:2.3 }, [0, 2.7, 0]);
+        K.ico(root, P.leafOak, { d:1.7 }, [-0.85, 2.5, 0.4]);
+        K.ico(root, P.leafOak, { d:1.7 }, [0.8, 2.6, -0.4]);
+        K.ico(root, P.leafOak, { d:1.5 }, [0.1, 3.5, 0.2]);
+        break;
+      }
+      case 'birch': { // bouleau : tronc clair élancé
+        const tr = K.cyl(root, P.birch, { h:3.0, dt:0.16, db:0.24 }, [0, 1.5, 0]);
+        tr.scaling.x = 0.55; // léger penché/finesse visuelle non — garde rond
+        tr.scaling.x = 1;
+        for (let i = 0; i < 4; i++) K.box(root, P.woodDark, [0.26, 0.05, 0.05], [0, 0.8 + i*0.55, 0.12], { rot:[0, i*1.3, 0] }); // marques d'écorce
+        K.ico(root, P.leafBirch, { d:1.7 }, [0, 3.3, 0]);
+        K.ico(root, P.leafBirch, { d:1.3 }, [0.5, 3.6, 0.3]);
+        K.ico(root, P.leafBirch, { d:1.2 }, [-0.5, 3.5, -0.3]);
+        break;
+      }
+      case 'autumn': { // arbre d'automne : feuillage chaud bicolore
+        K.cyl(root, P.trunk, { h:1.8, dt:0.34, db:0.56 }, [0, 0.9, 0]);
+        K.ico(root, P.leafAutumn, { d:2.2 }, [0, 2.6, 0]);
+        K.ico(root, P.leafAutumn2, { d:1.6 }, [-0.8, 2.4, 0.3]);
+        K.ico(root, P.leafAutumn, { d:1.5 }, [0.8, 2.7, -0.3]);
+        K.ico(root, P.leafAutumn2, { d:1.3 }, [0.1, 3.4, 0.1]);
+        break;
+      }
+      case 'cypress': { // peuplier / cyprès : cône étroit et haut
+        K.cyl(root, P.wood, { h:0.9, dt:0.3, db:0.42 }, [0, 0.45, 0]);
+        K.cone(root, P.leafCypress, { h:4.2, d:1.4, t:8 }, [0, 2.9, 0]);
+        K.cone(root, P.leafCypress, { h:1.6, d:1.0, t:8 }, [0, 1.9, 0]);
+        break;
+      }
+      case 'dead': { // arbre mort : tronc nu et branches
+        K.cyl(root, P.woodDark, { h:2.6, dt:0.14, db:0.46 }, [0, 1.3, 0]);
+        K.cyl(root, P.woodDark, { h:1.2, dt:0.06, db:0.14 }, [0.35, 2.2, 0.1], { rot:[0,0,-0.9] });
+        K.cyl(root, P.woodDark, { h:1.0, dt:0.05, db:0.12 }, [-0.3, 2.5, -0.1], { rot:[0.2,0,0.8] });
+        K.cyl(root, P.woodDark, { h:0.7, dt:0.04, db:0.09 }, [0.1, 2.9, 0.2], { rot:[-0.7,0,0.2] });
+        break;
+      }
+      case 'bush': { // buisson
+        K.cyl(root, P.woodDark, { h:0.3, dt:0.1, db:0.14 }, [0, 0.15, 0]);
+        K.ico(root, P.bush, { d:0.95 }, [0, 0.55, 0]);
+        K.ico(root, P.bush, { d:0.8 }, [0.4, 0.5, 0.2]);
+        K.ico(root, P.bush, { d:0.75 }, [-0.4, 0.5, -0.15]);
+        break;
+      }
+      case 'stump': { // souche
+        K.cyl(root, P.trunk, { h:0.5, dt:0.6, db:0.72, t:9 }, [0, 0.25, 0]);
+        K.cyl(root, P.woodLight, { h:0.08, d:0.58, t:9 }, [0, 0.51, 0]); // cernes
+        K.cyl(root, [0.34,0.26,0.18], { h:0.05, d:0.3, t:8 }, [0, 0.55, 0]);
+        K.cyl(root, P.trunk, { h:0.3, dt:0.12, db:0.18 }, [0.55, 0.1, 0.2], { rot:[0,0,1.4] }); // racine
+        break;
+      }
+      case 'petit': { // arbre d'ORIGINE du jeu (tronc + cône), conservé en PETIT sujet
+        K.cyl(root, P.trunk, { h:1.0, dt:0.2, db:0.32, t:6 }, [0, 0.5, 0]);
+        K.cone(root, P.foliage, { h:1.6, d:1.2, t:7 }, [0, 1.8, 0]);
+        break;
+      }
+    }
+    return root;
+  }
+
+  // Toit EN CROUPE (hip roof) : base RECTANGULAIRE + FAÎTAGE horizontal (une ligne, pas un
+  // point) -> nettement différent d'une pyramide. Maillage custom (le kit n'a pas de trapèze) :
+  // 2 pans trapézoïdaux (avant/arrière) + 2 croupes triangulaires (pignons inclinés vers le faîte).
+  // Éclairage two-sided pour rester visible quel que soit le sens des faces.
+  function makeHipRoof(scene, W, D, H, ridgeLen, col) {
+    const hw = W/2, hd = D/2, rl = Math.min(ridgeLen, W*0.92)/2;
+    const pos = [], idx = [];
+    const tri = (a,b,c) => { const i = pos.length/3; pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]); idx.push(i,i+1,i+2); };
+    const quad = (a,b,c,d) => { tri(a,b,c); tri(a,c,d); };
+    const A=[-hw,0,-hd], Bb=[hw,0,-hd], C=[hw,0,hd], Dd=[-hw,0,hd];   // 4 coins d'égout
+    const R0=[-rl,H,0], R1=[rl,H,0];                                  // 2 extrémités du faîtage
+    quad(A, R0, R1, Bb);   // pan avant (-z)
+    quad(C, R1, R0, Dd);   // pan arrière (+z)
+    tri(A, Dd, R0);        // croupe gauche (-x)
+    tri(Bb, R1, C);        // croupe droite (+x)
+    const vd = new B.VertexData();
+    vd.positions = pos; vd.indices = idx; vd.normals = [];
+    B.VertexData.ComputeNormals(pos, idx, vd.normals);
+    const m = new B.Mesh('hipRoof', scene);
+    vd.applyToMesh(m);
+    const mat = new B.StandardMaterial('hipMat', scene);
+    mat.diffuseColor = new B.Color3(col[0], col[1], col[2]);
+    mat.specularColor = new B.Color3(0,0,0);
+    mat.backFaceCulling = false; mat.twoSidedLighting = true;
+    m.material = mat;
+    m.convertToFlatShadedMesh();
+    return m;
+  }
+
+  // Toit À DEUX PENTES (gable) : faîtage horizontal sur toute la longueur (≠ croupe : pignons
+  // TRIANGULAIRES verticaux aux deux bouts). Ridge le long de X ; pans vers ±Z.
+  function makeGableRoof(scene, W, D, H, col) {
+    const hw = W/2, hd = D/2;
+    const pos = [], idx = [];
+    const tri = (a,b,c) => { const i = pos.length/3; pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]); idx.push(i,i+1,i+2); };
+    const quad = (a,b,c,d) => { tri(a,b,c); tri(a,c,d); };
+    const A=[-hw,0,-hd], Bb=[hw,0,-hd], C=[hw,0,hd], Dd=[-hw,0,hd];   // 4 coins d'égout
+    const R0=[-hw,H,0], R1=[hw,H,0];                                  // faîtage sur toute la longueur
+    quad(A, R0, R1, Bb);   // pan avant (-z)
+    quad(C, R1, R0, Dd);   // pan arrière (+z)
+    tri(A, Dd, R0);        // pignon gauche (-x)
+    tri(Bb, R1, C);        // pignon droit (+x)
+    const vd = new B.VertexData();
+    vd.positions = pos; vd.indices = idx; vd.normals = [];
+    B.VertexData.ComputeNormals(pos, idx, vd.normals);
+    const m = new B.Mesh('gableRoof', scene);
+    vd.applyToMesh(m);
+    const mat = new B.StandardMaterial('gableMat', scene);
+    mat.diffuseColor = new B.Color3(col[0], col[1], col[2]);
+    mat.specularColor = new B.Color3(0,0,0);
+    mat.backFaceCulling = false; mat.twoSidedLighting = true;
+    m.material = mat;
+    m.convertToFlatShadedMesh();
+    return m;
+  }
+
+  // Hutte habitable PARAMÉTRÉE — base torchis + ossature/chaume. Variété « légère » :
+  // forme (carrée / ronde), type de toit, côté de la cheminée, fenêtres, appentis au sol.
+  // INVARIANT anti-flottement : fondation posée au sol (y=0), murs sur la fondation,
+  // toit posé sur la sablière (haut des murs), cheminée partant du sol, extras au sol.
+  function buildHut(K, ctx, parent, v) {
+    const root = K.node(parent);
+    const w = v.w, d = v.d ?? v.w, H = v.wallH;          // empreinte (x,z) + hauteur des murs
+    const FND = 0.32;                                     // hauteur de la fondation pierre
+    const topY = FND + H;                                 // niveau de la sablière (haut des murs)
+    const wall = v.tint, wood = P.woodDark, woodL = P.woodLight, stone = P.stone, thatch = v.thatch;
+    const round = v.shape === 'round';
+    const eave = 0.4, roofH = v.roofH, roofBaseY = topY + 0.14;
+
+    if (round) {
+      // --- HUTTE RONDE : murs cylindriques + chaume conique ---
+      K.cyl(root, stone, { h:FND, d:w+0.24, t:12 }, [0, FND/2, 0]);                 // fondation
+      K.cyl(root, wall,  { h:H,   d:w,      t:12 }, [0, FND + H/2, 0]);              // murs torchis
+      K.cyl(root, woodL, { h:0.18, d:w+0.1, t:12 }, [0, topY + 0.05, 0]);           // sablière (anneau)
+      K.cyl(root, wood,  { h:0.1,  d:w+0.12, t:12 }, [0, FND + H*0.5, 0]);          // chaînage à mi-mur
+      K.cone(root, thatch, { h:roofH, d:(w/2+eave)*2, t:12 }, [0, roofBaseY + roofH/2, 0]); // toit conique
+    } else {
+      // --- HUTTE CARRÉE / RECTANGULAIRE : murs boîte + ossature bois ---
+      K.box(root, stone, [w+0.24, FND, d+0.24], [0, FND/2, 0]);                      // fondation
+      K.box(root, wall,  [w, H, d],             [0, FND + H/2, 0]);                   // murs torchis
+      for (const sx of [-1,1]) for (const sz of [-1,1])                              // poteaux d'angle
+        K.box(root, wood, [0.16, H, 0.16], [sx*(w/2), FND + H/2, sz*(d/2)]);
+      K.box(root, woodL, [w+0.14, 0.16, d+0.14], [0, topY + 0.06, 0]);               // sablière
+      K.box(root, wood,  [w+0.02, 0.1, 0.06],   [0, FND + H*0.52, d/2+0.01]);        // chaînage façade
+      if (v.roof === 'hip') {
+        // TOIT EN CROUPE : base rectangulaire + faîtage HORIZONTAL (ligne) -> ≠ pyramide
+        const roof = makeHipRoof(ctx.scene, w + eave*2, d + eave*2, roofH, w*0.5, thatch);
+        roof.parent = root; roof.position.y = roofBaseY;
+        const dk = [thatch[0]*0.78, thatch[1]*0.78, thatch[2]*0.78];
+        K.cyl(root, dk, { h:w*0.5 + 0.3, d:0.22, t:6 }, [0, roofBaseY + roofH + 0.02, 0], { rot:[0,0,Math.PI/2] }); // rouleau de faîtage
+      } else {
+        // TOIT PYRAMIDAL : cône 4 pans -> apex PONCTUEL
+        const rf = K.cone(root, thatch, { h:roofH, d:(w/2 + eave) * 2.828, t:4 }, [0, roofBaseY + roofH/2, 0]);
+        rf.rotation.y = Math.PI/4;
+      }
+    }
+    // épi de faîtage : seulement pour un apex PONCTUEL (rond / pyramide) ; la croupe a un faîtage linéaire
+    if (v.roof !== 'hip') {
+      K.cyl(root, wood, { h:0.5, d:0.1, t:6 }, [0, roofBaseY + roofH + 0.16, 0]);
+      K.sph(root, woodL, { d:0.2, seg:6 },     [0, roofBaseY + roofH + 0.44, 0]);
+    }
+
+    // --- PORTE (façade +Z) : le vantail remplit l'ouverture jusqu'au linteau (pas de jour
+    // noir en haut) et tout l'ensemble est en SAILLIE devant la fondation (porte non « enterrée »).
+    const dz = d/2, LY = 1.74, dx = v.doorX || 0;                                     // dz = profondeur façade (+Z) ; LY = bas du linteau ; dx = porte décentrée
+    K.box(root, [0.05,0.04,0.03], [0.88, 1.46, 0.18], [dx, 1.01, dz+0.05]);           // embrasure sombre (relie le mur au vantail)
+    K.box(root, wood,  [0.8, 1.44, 0.1], [dx, 1.02, dz+0.13]);                         // vantail (0,30 -> linteau)
+    K.box(root, woodL, [0.12, 1.58, 0.14], [dx-0.47, 1.09, dz+0.11]);                 // montant gauche
+    K.box(root, woodL, [0.12, 1.58, 0.14], [dx+0.47, 1.09, dz+0.11]);                 // montant droit
+    K.box(root, woodL, [1.1, 0.14, 0.14], [dx, LY + 0.07, dz+0.11]);                  // linteau (couvre le haut du vantail)
+    K.box(root, P.metalDark, [0.11, 0.06, 0.05], [dx+0.27, 1.0, dz+0.19]);            // poignée
+    K.box(root, stone, [1.12, 0.16, 0.42], [dx, 0.08, dz+0.36]);                      // seuil/marche en pierre (au sol, devant)
+
+    // --- FENÊTRE(S) ÉCLAIRÉE(S) : fond (mord dans le mur) + vitre émissive + rebord + croisillon ---
+    const mkWindow = (x, z, ry) => {
+      const n = K.node(root, [x, FND + 1.02, z]); n.rotation.y = ry;
+      K.box(n, [0.05,0.04,0.03], [0.62, 0.62, 0.18], [0,0,-0.05]);                    // fond sombre (s'enfonce dans le mur)
+      K.box(n, P.emberHot, [0.5, 0.5, 0.04], [0,0,0.05], { emi:0.9, unlit:true });    // vitre éclairée
+      K.box(n, woodL, [0.66, 0.09, 0.1], [0,-0.33,0.06]);                             // rebord
+      K.box(n, wood,  [0.58, 0.06, 0.07], [0,0,0.08]);                                // croisillon h
+      K.box(n, wood,  [0.06, 0.58, 0.07], [0,0,0.08]);                                // croisillon v
+      K.box(n, woodL, [0.72, 0.09, 0.09], [0,0.35,0.06]);                             // imposte
+    };
+    // fenêtre de façade : carré -> frontWinX (défaut : côté opposé à la porte) ; rond -> sur la courbe.
+    const fwx = (v.frontWinX != null) ? v.frontWinX : (dx ? -Math.sign(dx)*0.92 : 0.92);
+    if (round) { [-0.72, 0.72].forEach(th => mkWindow(Math.sin(th)*(w/2), Math.cos(th)*(w/2), th)); } // 2 fenêtres symétriques de part et d'autre de la porte
+    else mkWindow(fwx, dz, 0);
+    if (v.window2) mkWindow(-v.chimney*(w/2), 0, -v.chimney*Math.PI/2);                // mur latéral opposé à la cheminée
+
+    // --- CHEMINÉE EXTERNE : part du sol, longe un mur, dépasse le toit + fumée ---
+    // (mur rond : le cylindre recule en x quand z s'éloigne -> on mord davantage dans le mur)
+    const cx = v.chimney * (round ? w/2 - 0.06 : w/2 + 0.18), cz = round ? -d*0.1 : -d*0.22;
+    const chH = topY + roofH*0.74;
+    K.box(root, P.stoneDark, [0.5, chH, 0.5], [cx, chH/2, cz]);                        // conduit (du sol au-dessus du toit)
+    K.box(root, stone,       [0.6, 0.14, 0.6], [cx, chH - 0.05, cz]);                  // couronnement
+    K.box(root, P.stoneDark, [0.4, 0.12, 0.4],  [cx, chH + 0.08, cz]);                 // mitre
+    smokePuffs(K, ctx, root, [cx, chH + 0.22, cz]);
+
+    // --- EXTRA POSÉ AU SOL, DEVANT la maison (variété légère) ---
+    if (v.extra === 'wood') {                                                          // petit fagot/tas de bûches devant, sous la fenêtre (côté opposé à la porte)
+      const n = K.node(root, [fwx, 0, d/2 + 0.5]);
+      for (let i=0;i<3;i++) K.cyl(n, P.trunk, { h:1.1, d:0.22, t:7 }, [0, 0.13, -0.34+i*0.34], { rot:[0,0,Math.PI/2] }); // bûches le long de la façade
+      for (let i=0;i<2;i++) K.cyl(n, P.trunk, { h:1.1, d:0.22, t:7 }, [0, 0.35, -0.17+i*0.34], { rot:[0,0,Math.PI/2] });
+    } else if (v.extra === 'barrel') {                                                 // tonneau d'eau devant, près de l'entrée
+      const n = K.node(root, [-v.chimney*(w/2 - 0.15), 0, w/2 + 0.42]);
+      K.cyl(n, P.wood, { h:0.7, dt:0.46, db:0.5, t:12 }, [0, 0.35, 0]);
+      K.tor(n, P.metalDark, { d:0.54, thick:0.04, t:14 }, [0, 0.21, 0]);
+      K.tor(n, P.metalDark, { d:0.5,  thick:0.04, t:14 }, [0, 0.56, 0]);
+      K.cyl(n, P.woodLight, { h:0.06, d:0.44, t:12 }, [0, 0.7, 0]);
+    } else if (v.extra === 'bench') {                                                  // banc collé devant la façade, SOUS la fenêtre (côté opposé à la porte)
+      const n = K.node(root, [fwx, 0, d/2 + 0.32]);
+      K.box(n, P.wood, [1.15, 0.1, 0.4], [0, 0.42, 0]);                                // assise le long de la façade
+      for (const sx of [-0.45,0.45]) { K.box(n, wood, [0.1,0.42,0.1], [sx,0.21,-0.12]); K.box(n, wood, [0.1,0.42,0.1], [sx,0.21,0.12]); }
+    }
+    return root;
+  }
+
+  // ==========================================================================
+  //  REGISTRE DES MODÈLES
+  //  { id, name, cat, desc, build(K,ctx)->root, current?(K,ctx)->root, grid? }
+  //  ctx.add(disposable) pour lumières / particules à nettoyer au changement.
+  // ==========================================================================
+  const MODELS = [];
+  const add = (m) => MODELS.push(m);
+
+  // ----- PERSONNAGES --------------------------------------------------------
+  add({
+    id:'constructrice', name:'La constructrice', cat:'Personnages',
+    desc:"L'étrangère devenue maîtresse d'œuvre. Silhouette encapuchonnée, robe à liseré, marteau à la ceinture et sacoche d'outils — elle se distingue nettement des villageois.",
+    build(K) {
+      const root = K.node();
+      const robe = P.cloak, robeDk = P.cloakDark;
+      // bottes qui dépassent sous la robe
+      K.box(root, P.woodDark, [0.2, 0.14, 0.3], [-0.14, 0.07, 0.06]);
+      K.box(root, P.woodDark, [0.2, 0.14, 0.3], [ 0.14, 0.07, 0.06]);
+      // jupe évasée de la robe + ourlet à liseré
+      K.cyl(root, robe, { h:0.95, dt:0.46, db:0.82, t:10 }, [0, 0.6, 0]);
+      K.tor(root, P.cloakTrim, { d:0.82, thick:0.06, t:18 }, [0, 0.12, 0]);
+      // torse jusqu'aux épaules (taille marquée)
+      K.cyl(root, robe, { h:0.5, dt:0.5, db:0.46, t:10 }, [0, 1.18, 0]);
+      // ceinture + boucle
+      K.tor(root, robeDk, { d:0.5, thick:0.06, t:14 }, [0, 0.92, 0]);
+      K.box(root, P.cloakTrim, [0.12, 0.1, 0.05], [0, 0.92, 0.23]);
+      // mantelet d'épaules (donne de la carrure)
+      K.cyl(root, robeDk, { h:0.16, dt:0.5, db:0.64, t:10 }, [0, 1.42, 0]);
+      // cou + tête (bien centrée sur le cou) + nez (repère de direction)
+      K.cyl(root, P.skinDark, { h:0.12, d:0.16 }, [0, 1.5, 0]);
+      K.sph(root, P.skin, { d:0.36, seg:8 }, [0, 1.63, 0.03]);
+      K.box(root, P.skinDark, [0.07, 0.06, 0.06], [0, 1.62, 0.21]);
+      // capuche : coiffe l'ARRIÈRE, le dessus et les côtés ; le VISAGE reste dégagé.
+      // (reculée en z pour ne pas manger le visage — cf. retour utilisateur.)
+      K.sph(root, robeDk, { d:0.44, seg:8 }, [0, 1.7, -0.13], { scale:[1.08, 1.06, 1.0] });
+      K.tor(root, robe, { d:0.5, thick:0.1, t:14 }, [0, 1.52, 0]);
+      // sacoche d'outils à la ceinture (côté gauche)
+      K.box(root, P.wood, [0.3, 0.26, 0.18], [-0.34, 0.78, 0.16], { rot:[0, 0.3, 0] });
+      K.box(root, P.cloakTrim, [0.32, 0.06, 0.2], [-0.34, 0.92, 0.16], { rot:[0, 0.3, 0] });
+      // bandoulière en diagonale
+      K.box(root, robeDk, [0.07, 0.95, 0.05], [0.04, 1.05, 0.2], { rot:[0, 0, 0.32] });
+      // bras gauche, presque vertical le long du corps
+      K.cyl(root, robe, { h:0.62, dt:0.1, db:0.14 }, [-0.28, 1.06, 0.04], { rot:[0, 0, 0.06] });
+      K.sph(root, P.skin, { d:0.14 }, [-0.3, 0.76, 0.06]);
+      // marteau PLANTÉ près d'elle, tête à hauteur de hanche, la main posée dessus
+      K.cyl(root, P.woodLight, { h:0.72, d:0.06 }, [0.31, 0.42, 0.22]);  // manche
+      K.box(root, P.metalDark, [0.28, 0.16, 0.16], [0.31, 0.82, 0.22]);  // tête
+      K.box(root, P.metal, [0.12, 0.18, 0.18], [0.41, 0.82, 0.22]);      // face de frappe
+      // bras droit quasi vertical, main posée sur la tête du marteau
+      K.cyl(root, robe, { h:0.58, dt:0.1, db:0.14 }, [0.3, 1.06, 0.1], { rot:[-0.12, 0, -0.1] });
+      K.sph(root, P.skin, { d:0.14 }, [0.31, 0.93, 0.2]);               // main
+      return root;
+    },
+    // version actuelle du jeu (src/render/stranger.ts) : capsule + sphère capuche
+    current(K) {
+      const root = K.node();
+      const c = [0.34,0.31,0.4];
+      K.cyl(root, c, { h:1.7, d:0.72, t:8, smooth:true }, [0, 0.85+0.36, 0], { smooth:true });
+      // capsule approximée (cylindre + 2 sphères pour rester fidèle au rendu capsule)
+      K.sph(root, c, { d:0.72, seg:8 }, [0, 1.21+0.49, 0], { smooth:true });
+      K.sph(root, c, { d:0.72, seg:8 }, [0, 0.49, 0], { smooth:true });
+      K.sph(root, c, { d:0.5, seg:8 }, [0, 1.55, 0], { smooth:true }); // capuche sphère
+      return root;
+    },
+  });
+
+  add({
+    id:'villageois', name:'Villageois (variété)', cat:'Personnages', grid:false,
+    desc:"Quatre habitants distincts : casquette, capuche, chapeau de paille, barbu. Tuniques de teintes variées et tailles différentes — fini les clones. Le « nez » conserve le repère de direction du jeu.",
+    build(K) {
+      const root = K.node();
+      const specs = [
+        { tunic:P.tunicA, hat:'cap',   h:1.0,  hair:[0.3,0.2,0.13] },
+        { tunic:P.tunicB, hat:'hood',  h:1.05 },
+        { tunic:P.tunicC, hat:'straw', h:0.98 },
+        { tunic:P.tunicD, hat:'beard', h:0.92 },
+        { tunic:[0.46,0.46,0.5], hat:'cap', h:0.8, hair:[0.5,0.45,0.4] }, // enfant
+      ];
+      specs.forEach((s, i) => {
+        const v = humanoid(K, root, s);
+        v.position.set((i - (specs.length-1)/2) * 1.3, 0, 0);
+        v.rotation.y = 0.2 - i * 0.1;
+      });
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      const bodies = [[0.5,0.46,0.4],[0.44,0.4,0.36],[0.54,0.43,0.34],[0.4,0.43,0.47],[0.45,0.5,0.42]];
+      bodies.forEach((c, i) => {
+        const n = K.node(root, [(i-2)*1.3, 0, 0]);
+        const s = 0.9 + (i%3)*0.08;
+        n.scaling.setAll(s);
+        K.sph(n, c, { d:0.55, seg:6, smooth:true }, [0, 0.5, 0], { smooth:true });
+        K.cyl(n, c, { h:0.55, d:0.55, t:6, smooth:true }, [0, 0.78, 0], { smooth:true });
+        K.sph(n, c, { d:0.55, seg:6, smooth:true }, [0, 1.05, 0], { smooth:true });
+        K.sph(n, [0.32,0.27,0.22], { d:0.36, seg:6, smooth:true }, [0, 1.35, 0], { smooth:true });
+        K.box(n, [0.2,0.2,0.22], [0.11,0.09,0.22], [0, 1.32, 0.25]);
+      });
+      return root;
+    },
+  });
+
+  add({
+    id:'joueur', name:'Le joueur', cat:'Personnages',
+    desc:"Le protagoniste : tunique chaude (couleur joueur du jeu), écharpe, sac à dos (le « sac » plafonné de la boucle de jeu) et hachette à la ceinture. Repère de nez conservé.",
+    build(K) {
+      const root = humanoid(K, null, { tunic:P.player, hat:'cap', hair:[0.32,0.24,0.16] });
+      // écharpe
+      K.tor(root, P.cloakTrim, { d:0.42, thick:0.09, t:14 }, [0, 1.18, 0]);
+      K.box(root, P.cloakTrim, [0.12, 0.4, 0.06], [0.1, 0.98, 0.18], { rot:[0,0,0.2] });
+      // sac à dos
+      K.box(root, P.wood, [0.42, 0.5, 0.26], [0, 0.92, -0.28]);
+      K.box(root, P.woodLight, [0.44, 0.12, 0.27], [0, 1.12, -0.28]); // rabat
+      K.box(root, P.cloakDark, [0.07, 0.7, 0.05], [-0.16, 0.95, -0.05], { rot:[0.1,0,0.1] }); // sangles
+      K.box(root, P.cloakDark, [0.07, 0.7, 0.05], [ 0.16, 0.95, -0.05], { rot:[0.1,0,-0.1] });
+      // hachette à la ceinture
+      K.cyl(root, P.woodLight, { h:0.4, d:0.05 }, [-0.32, 0.6, 0.12], { rot:[0.4,0,0] });
+      K.box(root, P.metal, [0.04, 0.18, 0.16], [-0.33, 0.74, 0.22], { rot:[0.4,0,0] });
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      const c = P.player;
+      K.cyl(root, c, { h:1.0, d:0.8, t:8, smooth:true }, [0, 0.9, 0], { smooth:true });
+      K.sph(root, c, { d:0.8, seg:8, smooth:true }, [0, 1.4, 0], { smooth:true });
+      K.sph(root, c, { d:0.8, seg:8, smooth:true }, [0, 0.4, 0], { smooth:true });
+      K.box(root, [0.15,0.18,0.2], [0.22,0.22,0.3], [0, 1.05, 0.52]); // nez
+      return root;
+    },
+  });
+
+  // ==========================================================================
+  //  CABANE PRINCIPALE (entrepôt-mairie) — 4 états : ruine / réparée ×1 / ×5 / ×10.
+  //  Compound OUVERT (poteaux + murets, PLUSIEURS entrées, toit PARTIEL en appentis,
+  //  centre dégagé). Stockage en ÉTAGÈRES-GRILLE (fini la ligne de coffres qui déborde) :
+  //  racks ouverts pour le STANDARD, casier sécurisé pour le RARE. + coffre de dépôt,
+  //  grand tableau d'organisation, et le COIN de la constructrice (elle y vit).
+  // ==========================================================================
+  const STD_COLORS  = [P.trunk, P.fur, P.meat, P.hide, P.dryBrush];  // bois·fourrure·viande·v.séchée·appât
+  const RARE_COLORS = [P.hide, P.coal, P.rust, [0.5,0.56,0.62], P.bone, [0.72,0.72,0.56], P.sulphur, P.metal, P.metalDark, [0.7,0.5,0.72]]; // cuir·charbon·fer·écailles·dents·étoffe·soufre·acier·balles·charme
+
+  // Rack d'étagères OUVERT : 2 montants + tablettes garnies de caisses/sacs (grille -> pas de débord).
+  function cabRack(K, parent, x, z, ry, len, levels, colors) {
+    const n = K.node(parent, [x, 0, z]); n.rotation.y = ry;
+    const wood=P.woodDark, woodL=P.woodLight;
+    const h = 0.5 + levels*0.55;
+    const nUp=Math.max(2, Math.round(len/2.2)+1);
+    for (let u=0;u<nUp;u++){ const sx=-len/2+u*len/(nUp-1); K.box(n, wood, [0.1, h, 0.12], [sx, h/2, -0.18]); K.box(n, wood, [0.1, h, 0.12], [sx, h/2, 0.18]); }
+    for (let l=0;l<levels;l++){
+      const sy = 0.5 + l*0.55;
+      K.box(n, woodL, [len+0.1, 0.05, 0.5], [0, sy, 0]);                                   // tablette
+      const cols = Math.max(3, Math.round(len/0.7));
+      for (let cI=0;cI<cols;cI++){
+        const cx = -len/2 + 0.4 + cI*(len-0.8)/(cols-1);
+        const col = colors[(l*cols+cI) % colors.length];
+        const k = (cI+l)%3;
+        if (k===0) K.box(n, col, [0.36,0.34,0.36], [cx, sy+0.22, 0]);                       // caisse
+        else if (k===1) K.cyl(n, col, {h:0.36,d:0.3,t:8}, [cx, sy+0.21, 0]);                // sac/tonnelet
+        else { K.box(n, col, [0.32,0.28,0.36], [cx, sy+0.2, 0]); K.box(n, woodL,[0.34,0.04,0.38],[cx,sy+0.36,0]); } // caisse+couvercle
+      }
+    }
+    return n;
+  }
+  // RÉSERVE aux RARES (rustique) : petit muret de pierre en L + coffres ferrés (≠ armoire moderne).
+  function cabStrongroom(K, parent, x, z, n) {
+    const g=K.node(parent,[x,0,z]); const sd=P.stoneDark, md=P.metalDark;
+    K.box(g, sd, [1.9,0.95,0.3], [0,0.475,-0.75]); K.box(g, sd, [0.3,0.95,1.6], [0.8,0.475,0]);     // muret L
+    K.box(g, P.stone, [1.96,0.12,0.34], [0,0.95,-0.75]); K.box(g, P.stone, [0.34,0.12,1.66], [0.8,0.95,0]); // chaperon
+    for (let i=0;i<Math.min(3,n+1);i++){ const cz=-0.55+i*0.55;
+      K.box(g, P.wood, [0.74,0.46,0.46],[-0.05,0.23,cz]); K.box(g, sd, [0.78,0.12,0.5],[-0.05,0.5,cz]);  // coffre + couvercle
+      K.box(g, md, [0.8,0.07,0.05],[-0.05,0.3,cz+0.24]); K.tor(g, md,{d:0.1,thick:0.02,t:6},[-0.05,0.28,cz+0.28],{rot:[Math.PI/2,0,0]}); } // bande + cadenas
+    return g;
+  }
+  // Mur en RONDINS empilés (style loge) : longueur `len`, hauteur `h`, à partir de y0 ; `ry` oriente.
+  function cabLogWall(K, parent, x, z, ry, len, h, y0) {
+    const n=K.node(parent,[x,0,z]); n.rotation.y=ry;
+    const logD=0.34, courses=Math.max(1,Math.round(h/logD));
+    for(let i=0;i<courses;i++) K.cyl(n, i%2?[0.26,0.19,0.13]:P.wood, {h:len,d:logD,t:7}, [0, y0+logD/2+i*logD, 0], {rot:[0,0,Math.PI/2]});
+    return n;
+  }
+  // Tas rustique : tonneaux cerclés + sac + caisse (rangement au sol, dans les coins).
+  function cabStacks(K, parent, x, z) {
+    const n=K.node(parent,[x,0,z]); const wood=P.wood, md=P.metalDark;
+    K.cyl(n, wood, {h:0.7,dt:0.46,db:0.52,t:10}, [0,0.35,0]); K.tor(n, md,{d:0.5,thick:0.04,t:12},[0,0.22,0]); K.tor(n, md,{d:0.46,thick:0.04,t:12},[0,0.56,0]);
+    K.cyl(n, wood, {h:0.66,dt:0.44,db:0.5,t:10}, [0.6,0.33,0.12]); K.tor(n, md,{d:0.48,thick:0.04,t:12},[0.6,0.42,0.12]);
+    K.box(n, [0.4,0.33,0.24], [0.5,0.42,0.5], [0.32,0.21,-0.5]);                              // caisse
+    K.cyl(n, P.dryBrush, {h:0.42,dt:0.28,db:0.36,t:8}, [-0.5,0.21,-0.4]);                      // sac de grain
+    return n;
+  }
+  // Botte suspendue à une panne : herbes / peau / corde enroulée.
+  function cabHang(K, parent, x, y, z) {
+    const n=K.node(parent,[x,y,z]); K.cyl(n, P.hide, {h:0.28,d:0.02}, [0,-0.14,0]);
+    const t=Math.abs(Math.round(x*7))%3;
+    if(t===0){ for(let i=0;i<3;i++) K.cone(n,P.dryBrush,{h:0.34,d:0.15,t:6},[-0.07+i*0.07,-0.48,0],{rot:[Math.PI,0,0]}); }
+    else if(t===1){ K.box(n,P.fur,[0.42,0.55,0.05],[0,-0.55,0]); }
+    else { K.tor(n,P.hide,{d:0.3,thick:0.045,t:10},[0,-0.42,0],{rot:[Math.PI/2,0,0]}); }
+    return n;
+  }
+  // Grand TABLEAU d'organisation (panneau encadré, lignes peintes).
+  function cabBoard(K, parent, x, z, ry, h, bw, y0) {
+    const base=(y0==null?0.4:y0);                                                          // bas du panneau (hauteur de montage au mur)
+    const n=K.node(parent,[x, base + h/2, z]); n.rotation.y=ry; const W=bw||2.4;
+    K.box(n, P.woodDark, [0.1, h, W], [0,0,0]);                                             // cadre épais
+    K.box(n, [0.12,0.14,0.13], [0.06, h-0.2, W-0.2], [0.06,0,0]);                           // ardoise
+    K.box(n, [0.9,0.62,0.3], [0.04, 0.14, W*0.72], [0.1, h/2-0.25, 0]);                     // bandeau-titre (orange)
+    for (let i=0;i<Math.floor((h-0.8)/0.3);i++) K.box(n, [0.78,0.84,0.78], [0.03, 0.05, W*0.64], [0.1, h/2-0.6 - i*0.3, 0]); // lignes
+    return n;
+  }
+  // COFFRE de dépôt (point de dépôt, ferré).
+  function cabChest(K, parent, x, z) {
+    K.box(parent, [0.4,0.3,0.16], [1.15,0.62,0.74], [x,0.41,z]);
+    K.box(parent, [0.3,0.22,0.12], [1.2,0.18,0.78],[x,0.8,z]);
+    K.box(parent, P.metalDark, [0.12,0.42,0.05],[x,0.5,z-0.38]);                            // ferrure/serrure côté INTÉRIEUR (face -Z, vers le joueur), pas vers le mur
+    K.tor(parent, P.metalDark, {d:0.14,thick:0.03,t:8},[x,0.46,z-0.42],{rot:[Math.PI/2,0,0]});
+  }
+  // COIN de la constructrice (COMPACT) : couchage + petit établi + tabouret + brasero -> « elle y vit ».
+  function cabCorner(K, ctx, parent, x, z, ry) {
+    const n=K.node(parent,[x,0,z]); n.rotation.y=ry; const wd=P.woodDark, woodL=P.woodLight;
+    K.box(n, wd,[0.85,0.2,1.7],[0,0.12,0]); K.box(n, P.fur,[0.8,0.18,1.35],[0,0.28,-0.1]); K.box(n, P.hide,[0.7,0.2,0.45],[0,0.32,0.55]); // couchage + oreiller
+    K.box(n, P.wood,[1.0,0.1,0.5],[0.95,0.78,-0.45]); for(const lx of[0.6,1.3]) K.cyl(n,wd,{h:0.78,d:0.07},[lx,0.39,-0.45]); // petit établi
+    K.cyl(n, woodL,{h:0.28,d:0.04},[0.78,0.92,-0.45],{rot:[0,0,0.5]}); K.box(n,P.metalDark,[0.13,0.07,0.06],[0.7,0.99,-0.45]); // marteau
+    const br=K.node(n,[1.05,0,0.5]); for(let i=0;i<6;i++){const a=i/6*6.283;K.box(br,P.stoneDark,[0.12,0.13,0.12],[Math.cos(a)*0.28,0.12,Math.sin(a)*0.28]);} K.cyl(br,P.stoneDark,{h:0.11,dt:0.48,db:0.38,t:8},[0,0.24,0]); K.box(br,P.emberHot,[0.3,0.1,0.3],[0,0.28,0],{emi:1.0,unlit:true}); // brasero (entretien du feu)
+    const st=K.node(n,[0.45,0,0.65]); K.cyl(st,P.wood,{h:0.05,d:0.36,t:9},[0,0.42,0]); for(let i=0;i<3;i++){const a=i/3*6.283;K.cyl(st,wd,{h:0.42,d:0.05},[Math.cos(a)*0.12,0.21,Math.sin(a)*0.12]);} // tabouret
+    return n;
+  }
+  // PILE RUSTIQUE (≠ étagère) : tonneau cerclé + caisses empilées de travers + sacs. `big` = pile plus haute.
+  function cabPile(K, parent, x, z, big, colors) {
+    const n=K.node(parent,[x,0,z]); const md=P.metalDark, wood=P.wood, woodL=P.woodLight;
+    const c=(i)=>colors[i%colors.length];
+    K.cyl(n, wood, {h:0.72,dt:0.46,db:0.52,t:10}, [-0.5,0.36,0.12]); K.tor(n, md,{d:0.5,thick:0.04,t:12},[-0.5,0.22,0.12]); K.tor(n, md,{d:0.46,thick:0.04,t:12},[-0.5,0.56,0.12]); // tonneau
+    K.box(n, c(0), [0.5,0.46,0.5], [0.18,0.23,-0.05]);                                       // caisses empilées (de travers)
+    K.box(n, c(1), [0.46,0.44,0.46], [0.46,0.22,0.3], {rot:[0,0.3,0]});
+    K.box(n, woodL, [0.52,0.05,0.52], [0.18,0.47,-0.05]);
+    K.box(n, c(2), [0.44,0.42,0.44], [0.22,0.68,-0.02], {rot:[0,-0.25,0]});
+    K.cyl(n, P.dryBrush, {h:0.42,dt:0.26,db:0.34,t:8}, [-0.45,0.21,-0.42]);                  // sacs
+    K.cyl(n, c(3), {h:0.38,dt:0.24,db:0.32,t:8}, [-0.08,0.19,-0.46]);
+    if (big){ K.box(n, c(1), [0.46,0.44,0.46],[0.52,0.66,0.3],{rot:[0,0.2,0]}); K.cyl(n, wood,{h:0.66,dt:0.44,db:0.5,t:10},[-0.52,0.33,-0.15]); K.tor(n,md,{d:0.48,thick:0.04,t:12},[-0.52,0.4,-0.15]); }
+    return n;
+  }
+  // PETIT COFFRE de ressource (style IDENTIQUE pour tous) : corps + couvercle + ferrure + panneau-COMPTEUR.
+  function cabSmallChest(K, parent, x, y, z) {
+    const n=K.node(parent,[x,y,z]); const wd=[0.34,0.26,0.16], md=P.metalDark;
+    K.box(n, wd, [0.46,0.3,0.4], [0,0.15,0]);                                   // corps
+    K.box(n, [0.28,0.21,0.13], [0.48,0.09,0.42], [0,0.34,0]);                   // couvercle
+    K.box(n, md, [0.05,0.32,0.05], [0,0.18,0.21]);                              // ferrure verticale
+    K.box(n, [0.85,0.86,0.78], [0.32,0.15,0.02], [0,0.17,0.225], {emi:0.3, unlit:true}); // panneau-compteur (étiquette + quantité, cf. jeu)
+    return n;
+  }
+  // ÉTAGÈRES de petits coffres : 1 coffre par ressource (apparition progressive). `nChests` posés,
+  // 5/étagère ; une nouvelle étagère apparaît quand la précédente est pleine. MAX = nb de ressources.
+  function cabStoreShelf(K, parent, x, z, ry, nChests) {
+    const n=K.node(parent,[x,0,z]); n.rotation.y=ry||0; const wd=P.woodDark, woodL=P.woodLight;
+    const perShelf=5, shelves=Math.max(1,Math.ceil(nChests/perShelf)), len=3.2, sy0=0.5, dy=0.62; // len élargi : 5 coffres (corps 0.46) espacés ~0.6 -> écart net ~0.14, distincts individuellement
+    const top=sy0+(shelves-1)*dy+0.45;
+    for(const sx of [-len/2,0,len/2]) K.box(n, wd, [0.09, top, 0.1], [sx, top/2, -0.24]);  // montants
+    let c=0;
+    for(let s=0;s<shelves;s++){ const sy=sy0+s*dy;
+      K.box(n, woodL, [len+0.12,0.05,0.48], [0,sy,0]);                                      // tablette
+      for(let i=0;i<perShelf && c<nChests;i++,c++){ const cx=-len/2+0.4+i*(len-0.8)/(perShelf-1); cabSmallChest(K, n, cx, sy+0.025, 0); }
+    }
+    return n;
+  }
+  // COIN OUTILS / PLANS de la constructrice (pas de couchage ni de foyer) : planche à outils murale + plans roulés.
+  function cabTools(K, parent, x, z, ry) {
+    const n=K.node(parent,[x,0,z]); n.rotation.y=ry||0; const wd=P.woodDark, woodL=P.woodLight, md=P.metalDark;
+    K.box(n, wd, [0.95,0.7,0.05], [0,1.35,0]);                                              // planche murale
+    K.box(n, P.metal, [0.5,0.13,0.02],[-0.18,1.45,0.04]); K.box(n, woodL,[0.5,0.04,0.03],[-0.18,1.52,0.05]); // scie
+    K.cyl(n, woodL,{h:0.26,d:0.04},[0.2,1.32,0.04],{rot:[0,0,0.4]}); K.box(n,md,[0.12,0.07,0.06],[0.12,1.39,0.04]); // marteau
+    K.box(n, md,[0.04,0.28,0.02],[0.32,1.36,0.05]); K.box(n,md,[0.18,0.04,0.02],[0.4,1.24,0.05]);  // équerre
+    K.cyl(n, woodL,{h:0.3,d:0.06,t:6},[0.0,1.18,0.05],{rot:[0,0,1.4]});                     // un plan roulé glissé sur la planche
+    return n;
+  }
+  // TOIT EN PEAU TENDUE (cuir) : membrane légèrement AFFAISSÉE (ribbon) entre l'arrière (haut) et un
+  // bord avant (bas) ; batte lacée à l'arrière + ourlet roulé devant + lacets de coin. Effet « tendu ».
+  function cabHideRoof(K, ctx, root, W, zB, zF, yB, yF) {
+    const sc=ctx.scene, NX=6;
+    const zs=[zB,(zB+zF)/2,zF], ys=[yB,(yB+yF)/2-0.14,yF];
+    const rows=[];
+    for(let r=0;r<3;r++){ const row=[]; for(let i=0;i<=NX;i++){ const t=i/NX, x=-W/2+t*W, sag=Math.sin(t*Math.PI)*0.09; row.push(new BABYLON.Vector3(x, ys[r]-sag, zs[r])); } rows.push(row); }
+    const m=BABYLON.MeshBuilder.CreateRibbon('cabHide',{pathArray:rows},sc);
+    const mat=new BABYLON.StandardMaterial('cabHideMat',sc); mat.diffuseColor=new BABYLON.Color3(P.hide[0],P.hide[1],P.hide[2]); mat.specularColor=new BABYLON.Color3(0,0,0); mat.backFaceCulling=false; mat.twoSidedLighting=true;
+    m.material=mat; m.parent=root; m.convertToFlatShadedMesh();
+    K.cyl(root, P.woodDark, {h:W+0.2,d:0.1,t:6}, [0, yB+0.02, zB], {rot:[0,0,Math.PI/2]});           // batte lacée à l'arrière
+    const hd=[P.hide[0]*0.78,P.hide[1]*0.78,P.hide[2]*0.78];
+    K.cyl(root, hd, {h:W+0.1,d:0.07,t:6}, [0, yF-0.03, zF], {rot:[0,0,Math.PI/2]});                  // ourlet roulé (bord avant)
+    for(const sx of [-1,1]) K.cyl(root, hd, {h:0.16,d:0.03,t:5}, [sx*(W/2-0.06), yF, zF]);            // lacets de coin
+    return m;
+  }
+  // ===== ÉVOLUTIONS de la cabane (sans agrandir l'emprise : on MONTE le toit, on enrichit le décor) =====
+  // TOIT À DEUX PENTES couvrant toute l'emprise, posé sur la sablière ; monte en hauteur (faîtage) SANS
+  // étendre le sol. shingled -> bardeaux + faîtière couverte + épi ; fillEnds -> remplir AUSSI le pignon +X.
+  function cabGableRoof(K, root, W, D, eaveY, rise, shingled, fillEnds) {
+    const ovX=0.2, ovZ=0.2, halfD=D/2+ovZ, L=Math.sqrt(halfD*halfD+rise*rise), th=Math.atan2(rise,halfD), ridgeY=eaveY+rise;
+    const plank=P.roof2, shA=P.roof, shB=[0.29,0.24,0.2], beam=P.woodDark;
+    for(const dir of [1,-1]){
+      const pan=K.node(root,[0, eaveY+rise/2, dir*halfD/2]); pan.rotation.x=dir*th;
+      K.box(pan, plank, [W+2*ovX, 0.08, L+0.04], [0,0,0]);                                         // sous-toiture pleine
+      if(shingled){ const rows=Math.max(4,Math.round(L/0.34));
+        for(let r=0;r<rows;r++){ const lz=-L/2+0.18+r*(L-0.24)/(rows-1); K.box(pan, r%2?shA:shB, [W+2*ovX-0.04, 0.05, (L/rows)+0.08], [0,0.06,lz]); } } // rangées de bardeaux
+      else { for(let r=0;r<3;r++) K.box(pan, beam, [W+2*ovX, 0.025, 0.04], [0,0.06,-L/2+0.3+r*(L-0.6)/2]); }       // joints de planches
+      for(const sx of [-(W/2+ovX-0.12), 0, (W/2+ovX-0.12)]) K.box(pan, beam, [0.08,0.05,L], [sx,-0.04,0]);        // chevrons (débord d'égout)
+    }
+    K.cyl(root, beam, {h:W+2*ovX, d:0.16, t:6}, [0, ridgeY+0.04, 0], {rot:[0,0,Math.PI/2]});         // faîtage
+    if(shingled) K.box(root, shA, [W+2*ovX, 0.1, 0.36], [0, ridgeY+0.09, 0]);                          // faîtière couverte
+    for(const dz of [halfD,-halfD]) K.cyl(root, beam, {h:W+2*ovX, d:0.1, t:6}, [0, eaveY, dz], {rot:[0,0,Math.PI/2]}); // pannes d'égout
+    const ends = fillEnds ? [-1,1] : [-1];                                                            // pignons ±X (gauche toujours ; droite si fillEnds)
+    for(const sx of ends){ const nP=8; for(let i=0;i<nP;i++){ const z=-D/2+(i+0.5)*D/nP, ph=rise*(1-Math.abs(z)/(D/2)); if(ph<0.06) continue; K.box(root, P.wood, [0.09, ph, D/nP+0.03], [sx*(W/2-0.01), eaveY+ph/2, z]); } }
+    if(shingled){ K.cone(root, beam, {h:0.45,d:0.18,t:6}, [-(W/2+ovX-0.06), ridgeY+0.34, 0]); K.sph(root, P.bone, {d:0.13}, [-(W/2+ovX-0.06), ridgeY+0.6, 0]); } // épi de faîtage
+  }
+  // LANTERNE suspendue (cage bois + flamme chaude émissive) — cordon vertical -> à accrocher SOUS une poutre (y+0.52).
+  function cabLantern(K, root, x, y, z) {
+    const n=K.node(root,[x,y,z]);
+    K.cyl(n, P.metalDark, {h:0.4,d:0.015,t:5}, [0,0.32,0]);                                            // cordon
+    K.box(n, P.woodDark, [0.18,0.05,0.18], [0,0.1,0]); K.box(n, P.woodDark, [0.16,0.04,0.16], [0,-0.16,0]); // chapeau + socle
+    for(const cx of [-0.07,0.07]) for(const cz of [-0.07,0.07]) K.cyl(n, P.woodDark, {h:0.24,d:0.014,t:4}, [cx,-0.03,cz]); // montants
+    K.box(n, [1.0,0.82,0.45], [0.12,0.2,0.12], [0,-0.03,0], {emi:1.0, unlit:true});                     // flamme/vitre (allumée)
+    return n;
+  }
+  // MEZZANINE / LOFT : tablette haute (rangement VERTICAL, pas d'emprise) sur 2 poteaux au sol + bord arrière
+  // contre le mur ; caisses/sac/peau dessus (+ échelle si ladder).
+  function cabLoft(K, root, zBack, y, baseY, ladder) {
+    const lw=2.6, zFront=zBack+0.4;
+    K.box(root, P.woodLight, [lw, 0.07, 0.82], [-0.1, y, zBack]);                                       // plateau
+    K.cyl(root, P.woodDark, {h:lw, d:0.08, t:6}, [-0.1, y-0.06, zFront], {rot:[0,0,Math.PI/2]});        // sablière de loft (bord avant)
+    for(const sx of [-1.15, 1.05]) K.cyl(root, P.woodDark, {h:y-baseY, d:0.08, t:6}, [sx, baseY+(y-baseY)/2, zFront]); // 2 poteaux au sol
+    K.box(root, [0.34,0.27,0.18], [0.5,0.42,0.5], [-1.0, y+0.25, zBack]);                               // caisses
+    K.box(root, [0.3,0.24,0.16], [0.46,0.36,0.46], [-0.4, y+0.21, zBack+0.05], {rot:[0,0.2,0]});
+    K.cyl(root, P.dryBrush, {h:0.42,dt:0.26,db:0.34,t:8}, [0.55, y+0.24, zBack-0.04]);                  // sac
+    K.box(root, P.hide, [0.5,0.08,0.4], [0.18, y+0.05, zBack+0.22]);                                    // peau pliée
+    if(ladder){ const lad=K.node(root,[1.05, baseY, zFront+0.5]); lad.rotation.x=-0.2;
+      for(const rx of [-0.13,0.13]) K.cyl(lad, P.woodDark, {h:y-baseY+0.1, d:0.05,t:6}, [rx, (y-baseY+0.1)/2, 0]);
+      for(let i=0;i<4;i++) K.cyl(lad, P.woodLight, {h:0.28,d:0.03,t:6}, [0, 0.4+i*0.45, 0], {rot:[0,0,Math.PI/2]}); }
+  }
+  // PILE DE BOIS de chauffe (vrac « standard » : bois/viande en quantité) : rondins horizontaux empilés. rows -> hauteur.
+  function cabWoodpile(K, root, x, z, baseY, w, rows) {
+    const n=K.node(root,[x,baseY+0.04,z]); const cols=Math.max(2,Math.round(w/0.18));
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) K.cyl(n, (r+c)%2?P.wood:[0.34,0.25,0.16], {h:0.7,d:0.16,t:7}, [-w/2+0.09+c*0.18, 0.09+r*0.18, 0], {rot:[Math.PI/2,0,0]});
+    return n;
+  }
+  // RUINE de départ : une PETITE cabane à MOITIÉ EFFONDRÉE, reconnaissable (coin de murs en rondins
+  // debout, cadre de porte brisé, poutre de toit tombée, chaume éparpillé, vieux coffres brisés).
+  function cabinRuin(K, root) {
+    const W=4.6, D=4.0, FND=0.26, sd=P.stoneDark, logA=[0.26,0.19,0.13], logB=P.wood, wood=P.woodDark, baseY=FND;
+    K.box(root, sd, [W, FND, D], [0,FND/2,0]);                                               // dalle pierre
+    K.box(root, [0.16,0.14,0.11], [W-0.3,0.1,D-0.3], [0,FND+0.05,0]);
+    // coin de murs en rondins DEBOUT (arrière + gauche), à moitié écroulé
+    cabLogWall(K, root, -0.3, -D/2, 0, W*0.6, 1.35, baseY);
+    cabLogWall(K, root, -W/2, -D*0.15, Math.PI/2, D*0.55, 1.1, baseY);
+    K.cyl(root, logA, {h:1.9,d:0.3,t:7}, [-0.7, baseY+0.16, -D/2+0.6], {rot:[0,0.2,Math.PI/2]});   // rondins tombés
+    K.cyl(root, logB, {h:1.4,d:0.3,t:7}, [-W/2+0.6, baseY+0.16, -0.2], {rot:[0.1,0,Math.PI/2]});
+    const pp=K.node(root,[-W/2+0.3, 0, D/2-0.4]); pp.rotation.z=0.32; K.box(pp, wood,[0.16,1.8,0.16],[0,0.9,0]); // poteau penché
+    // CADRE DE PORTE BRISÉ (façade)
+    K.box(root, wood, [0.15,1.5,0.15], [-0.75, baseY+0.75, D/2-0.1]);
+    const lp=K.node(root,[0.75,0,D/2-0.1]); lp.rotation.z=-0.22; K.box(lp, wood,[0.15,1.3,0.15],[0,0.65,0]);
+    const lt=K.node(root,[0,baseY+1.4,D/2-0.1]); lt.rotation.z=0.16; K.box(lt, wood,[1.7,0.16,0.16],[0,0,0]);
+    // POUTRE de toit tombée + pan de chaume effondré
+    const beam=K.node(root,[0.2,0,-0.3]); beam.rotation.set(0.05,0.3,0.32); K.box(beam, wood,[0.18,0.18,3.4],[0,0.95,0]);
+    K.box(root, [0.4,0.33,0.2], [1.9,0.13,1.2], [0.5, baseY+0.6, -0.5], {rot:[0.4,0.2,0]});
+    // vieux coffre de dépôt renversé + 2 petits coffres brisés (indice de l'entrepôt à venir)
+    K.box(root, [0.3,0.22,0.12], [0.9,0.46,0.56], [1.4, baseY+0.23, 0.9], {rot:[0,0.4,0.45]});
+    K.box(root, [0.3,0.24,0.15], [0.44,0.3,0.38], [0.7, baseY+0.15, 1.2], {rot:[0,0.6,0.2]});
+    K.box(root, [0.3,0.24,0.15], [0.44,0.16,0.38], [1.05, baseY+0.08, 1.4], {rot:[0,0.2,0.05]});
+    for(let i=0;i<3;i++){ const a=i*1.9+0.4; K.box(root, logA, [0.2,0.1,1.5], [Math.cos(a)*1.5, baseY+0.07, Math.sin(a)*1.2], {rot:[0,a,0.05]}); }
+    return root;
+  }
+
+  // Construit la cabane (0=ruine, sinon réparée ×1). PETIT abri rustique (rondins + chaume), avec
+  // PLUSIEURS ENTRÉES (le joueur y vient souvent) ; stockage en ÉTAGÈRES de petits coffres (1 par
+  // ressource, apparition progressive, compteur), coffre de dépôt à l'entrée, tableau, coin outils.
+  // `nChests` = nb de coffres à afficher (au labo : MAX = 15 = nb de ressources). Évolutions plus tard.
+  function buildCabin(K, ctx, root, tier, nChests) {
+    if (tier===0) return cabinRuin(K, root);
+    const N = (nChests==null) ? 15 : nChests;
+    const ev = tier>=2;     // ÉVOLUTION 1 (consolidée ×5) : toit en dur, murs fermés, loft, vrac, décor
+    const ev2 = tier>=3;    // ÉVOLUTION 2 (entrepôt ×10) : bardeaux+épi, pignons fermés, +lanternes/charmes, échelle
+    const W=4.6, D=4.0, FND=0.26, postH=2.3;   // EMPRISE INCHANGÉE quel que soit le tier (on monte / on enrichit, on n'élargit pas)
+    const sd=P.stoneDark, stone=P.stone, wood=P.woodDark, woodL=P.woodLight, thatch=[0.42,0.34,0.2];
+    const baseY=FND+0.1, topY=baseY+postH;
+    // fondation pierre + assise + plancher
+    K.box(root, sd, [W+0.4, FND, D+0.4], [0, FND/2, 0]);
+    K.box(root, stone, [W+0.4, 0.1, D+0.4], [0, FND+0.05, 0]);
+    for (let i=0;i<Math.round(W/0.7);i++) K.box(root, i%2?P.wood:wood, [0.6,0.05,D], [-W/2+0.35+i*0.7, baseY+0.03, 0]);
+    if (ev2) K.box(root, [0.4,0.33,0.24], [W-1.6, 0.04, D-1.6], [0.1, baseY+0.06, 0.25]); // tapis tressé (entrepôt établi)
+    // ossature : poteaux d'angle + 1 poteau milieu arrière + sablières
+    for(const x of [-W/2,W/2]) for(const z of [-D/2,D/2]) K.box(root, wood, [0.16,postH,0.16],[x,baseY+postH/2,z]);
+    K.box(root, wood, [0.16,postH,0.16],[0,baseY+postH/2,-D/2]);
+    for(const z of [-D/2,D/2]) K.box(root, woodL, [W+0.22,0.14,0.16],[0,topY,z]);
+    for(const x of [-W/2,W/2]) K.box(root, woodL, [0.16,0.14,D],[x,topY,0]);
+    if (ev) for(const x of [-W/2,W/2]) for(const z of [-D/2,D/2]) K.box(root, woodL, [0.24,0.1,0.24],[x,topY+0.07,z]); // chapeaux de poteaux (finition)
+    // MURS — réparée : arrière plein + gauche partiel ; DROITE & AVANT ouverts. Évolution : plus FERMÉ (gauche plein,
+    // droite partielle arrière, pans avant pleine hauteur) tout en GARDANT 2 entrées (large centrale + côté avant droit).
+    cabLogWall(K, root, 0, -D/2, 0, W+0.1, postH-0.2, baseY);                                   // arrière plein (tous)
+    const fs=(W-2.2)/2;
+    if (ev) {
+      cabLogWall(K, root, -W/2, 0, Math.PI/2, D, postH-0.4, baseY);                             // GAUCHE plein
+      cabLogWall(K, root, W/2, -D*0.26, Math.PI/2, D*0.48, postH-0.4, baseY);                   // DROITE partielle arrière (entrée latérale avant gardée)
+      cabLogWall(K, root, -(1.1+fs/2), D/2, 0, fs, postH-0.4, baseY);                           // pans avant PLEINE HAUTEUR (entrée centrale conservée)
+      cabLogWall(K, root, (1.1+fs/2), D/2, 0, fs, postH-0.4, baseY);
+    } else {
+      cabLogWall(K, root, -W/2, -D*0.18, Math.PI/2, D*0.5, postH-0.4, baseY);                   // GAUCHE partiel
+      cabLogWall(K, root, -(1.1+fs/2), D/2, 0, fs, 1.25, baseY); cabLogWall(K, root, (1.1+fs/2), D/2, 0, fs, 1.25, baseY);
+    }
+    // ENSEIGNE suspendue à la SABLIÈRE AVANT (liens MONTANT) — NOM DU VILLAGE ; cadre sculpté à l'évolution.
+    const signY=baseY+1.6, sTop=signY+0.2, sblY=topY-0.08;
+    K.box(root, woodL, [1.5,0.4,0.08], [0, signY, D/2+0.04]);                          // cadre de l'enseigne
+    K.box(root, [0.85,0.86,0.78], [1.3,0.26,0.03], [0, signY, D/2+0.085], {emi:0.25, unlit:true}); // surface inscrite (nom du village)
+    for(const sx of [-0.55,0.55]) K.cyl(root, P.woodDark, {h:sblY-sTop, d:0.04, t:5}, [sx, (sTop+sblY)/2, D/2+0.02]); // liens panneau -> sablière avant
+    if (ev) for(const sx of [-0.62,0.62]) K.box(root, P.woodDark, [0.05,0.5,0.1], [sx, signY, D/2+0.06]); // montants de cadre sculpté
+    // TOIT — réparée : peau tendue (sablières existantes). Évolution : DEUX PENTES en dur (planches -> bardeaux),
+    // qui MONTE en hauteur (faîtage) sans agrandir l'emprise. ev2 -> bardeaux + faîtière couverte + épi + pignons fermés.
+    if (ev) cabGableRoof(K, root, W, D, topY, 0.95, ev2, ev2);
+    else cabHideRoof(K, ctx, root, W, -D/2, 0, topY, topY-0.04);
+    // STOCKAGE : étagères de petits coffres (RARE), décalées à DROITE (accès au tableau dégagé).
+    cabStoreShelf(K, root, 0.45, -D/2+0.55, 0, N);
+    if (ev) {                                                                                   // capacité ×5/×10 : rangement VERTICAL (loft) + VRAC (bois de chauffe)
+      cabLoft(K, root, -1.45, 2.44, baseY, ev2);
+      cabWoodpile(K, root, -1.65, -1.5, baseY, 0.85, ev2?6:4);
+    }
+    // TABLEAU d'organisation (mur gauche, monté en hauteur)
+    cabBoard(K, root, -W/2+0.12, -0.4, 0, postH-1.0, 1.2, 0.82);
+    // COFFRE DE DÉPÔT (droite, dans le pan, serrure vers l'intérieur)
+    cabChest(K, root, 1.65, D/2-0.6);
+    // OUTILS / PLANS de la constructrice (petit mur gauche en entrant)
+    cabTools(K, root, -1.7, D/2-0.22, Math.PI);
+    if (ev) {                                                                                   // la cabane « vit » : établi de plans + lanterne + bottes suspendues
+      K.box(root, P.wood, [0.92,0.08,0.5], [-1.55, baseY+0.78, D/2-0.95]); for(const lx of [-1.92,-1.18]) K.cyl(root, wood, {h:0.74,d:0.07,t:6}, [lx, baseY+0.39, D/2-0.95]); // établi
+      K.cyl(root, woodL, {h:0.34,d:0.05,t:6}, [-1.5, baseY+0.86, D/2-0.95], {rot:[0,0,1.4]});  // plan roulé sur l'établi
+      cabLantern(K, root, 0.85, 2.07, 1.95);                                                    // lanterne d'entrée (sous la sablière avant)
+      cabHang(K, root, -1.55, topY, 1.92); cabHang(K, root, 1.5, topY, 1.92);                   // bottes suspendues (sablière avant)
+    }
+    if (ev2) {                                                                                  // entrepôt établi : 2e lanterne d'entrée + lanterne intérieure + peau + guirlande de charmes
+      cabLantern(K, root, -0.85, 2.07, 1.95);
+      cabLantern(K, root, -2.2, 2.07, 0.7);
+      K.box(root, P.fur, [0.85,1.0,0.05], [-W/2+0.14, baseY+1.05, 1.15], {rot:[0,Math.PI/2,0]}); // peau tendue déco (mur gauche)
+      const cg=K.node(root,[0.4, topY-0.22, -D/2+0.16]); for(let i=0;i<6;i++){ K.cyl(cg, P.hide, {h:0.12,d:0.012,t:4}, [-0.6+i*0.24, -0.06, 0]); K.cone(cg, P.bone, {h:0.13,d:0.05,t:5}, [-0.6+i*0.24, -0.19, 0], {rot:[Math.PI,0,0]}); } // guirlande de charmes (mur arrière)
+    }
+    return root;
+  }
+
+  // ----- BÂTIMENTS ----------------------------------------------------------
+  add({
+    id:'cabane-ruine', name:'Cabane principale — ruine', cat:'Bâtiments',
+    desc:"État de départ : une PETITE cabane à moitié effondrée, près du feu — coin de murs en rondins encore debout, cadre de porte brisé, poutre de toit tombée, vieux coffres brisés (indice de l'entrepôt à venir). La constructrice la répare.",
+    build(K, ctx) { return buildCabin(K, ctx, K.node(), 0); },
+  });
+  add({
+    id:'cabane', name:'Cabane principale — réparée (×1)', cat:'Bâtiments',
+    desc:"PETIT abri rustique (rondins + chaume), avec PLUSIEURS entrées (large entrée centrale + côté ouvert) pour entrer/sortir vite. Stockage en ÉTAGÈRES de PETITS COFFRES — 1 par type de ressource, même style, avec compteur, apparaissant au fur et à mesure (max = nb de ressources = 15 → 3 étagères × 5). + coffre de dépôt à l'entrée, tableau d'organisation, et un coin outils/plans de la constructrice. (Stockage montré ici au MAX.)",
+    build(K, ctx) { return buildCabin(K, ctx, K.node(), 1); },
+    current(K) {
+      const root = K.node();
+      const HALF = 3, WALL = 2.2, T = 0.28;
+      K.box(root, [0.2,0.16,0.12], [HALF*2, 0.16, HALF*2], [0, 0.08, 0]);
+      const wallMat = [0.34,0.27,0.2];
+      const wall = (w, d, x, z) => K.box(root, wallMat, [w, WALL, d], [x, WALL/2, z]);
+      wall(HALF*2, T, 0, -HALF); wall(T, HALF*2, -HALF, 0); wall(T, HALF*2, HALF, 0);
+      const side = (HALF*2 - 1.6) / 2;
+      wall(side, T, -(0.8 + side/2), HALF); wall(side, T, (0.8 + side/2), HALF);
+      K.box(root, [0.4,0.3,0.16], [1.1, 0.6, 0.7], [0, 0.4, -HALF+1]);
+      K.box(root, [0.3,0.22,0.12], [1.14, 0.18, 0.74], [0, 0.78, -HALF+1]);
+      for (let i = 0; i < 3; i++) { K.box(root, [0.32,0.26,0.2], [0.55, 0.5, 0.55], [HALF-0.5, 0.27, -HALF+1.2 + i*0.85]); K.box(root, P.woodLight, [0.58, 0.06, 0.58], [HALF-0.5, 0.55, -HALF+1.2 + i*0.85]); }
+      return root;
+    },
+  });
+  add({
+    id:'cabane-v2', name:'Cabane principale — améliorée (×5)', cat:'Bâtiments',
+    desc:"ÉVOLUTION 1 (même emprise au sol). On MONTE et on consolide, on n'élargit pas : la peau tendue devient un VRAI TOIT À DEUX PENTES en planches (faîtage haut) ; le mur gauche se ferme, pignon comblé, poteaux coiffés. Rangement qui grandit en VERTICAL : mezzanine de caisses + pile de bois de chauffe (vrac « standard »). La cabane « vit » : établi de plans de la constructrice, lanterne allumée à l'entrée, bottes suspendues. Les 2 entrées (large centrale + côté) restent ouvertes pour circuler vite.",
+    build(K, ctx) { return buildCabin(K, ctx, K.node(), 2); },
+  });
+  add({
+    id:'cabane-v3', name:'Cabane principale — entrepôt (×10)', cat:'Bâtiments',
+    desc:"ÉVOLUTION 2 (même emprise au sol — le village reste MODESTE). L'abri devient l'entrepôt établi du village : toit en BARDEAUX avec faîtière couverte + ÉPI de faîtage, les deux pignons fermés. Capacité maxi sans s'étaler : mezzanine pleine + ÉCHELLE, pile de bois plus haute. Décor « habité » : 2 lanternes à l'entrée + 1 à l'intérieur, peau tendue déco, guirlande de charmes (os/dents), tapis tressé. Toujours coffres (rare), coffre de dépôt, tableau, coin outils.",
+    build(K, ctx) { return buildCabin(K, ctx, K.node(), 3); },
+  });
+
+  add({
+    id:'hutte', name:'Hutte (variété)', cat:'Bâtiments', grid:false,
+    desc:"Loge la population. Habitation à taille humaine : fondation pierre, murs torchis sur ossature bois, chaume, porte à seuil, fenêtre(s) éclairée(s), cheminée fumante. Trois variantes légères — une ronde, deux carrées (toit pyramidal / en croupe) avec tas de bois, tonneau ou banc.",
+    build(K, ctx) {
+      const root = K.node();
+      const variants = [
+        { shape:'square', roof:'pyramid', w:2.8, wallH:1.95, roofH:1.6, tint:[0.42,0.34,0.25], thatch:[0.4,0.33,0.2],  chimney:-1, window2:false, extra:'wood', doorX:0.65, frontWinX:-0.82 },
+        { shape:'round',  roof:'cone',    w:2.9, wallH:1.9,  roofH:1.7, tint:[0.39,0.33,0.27], thatch:[0.45,0.37,0.22], chimney: 1, window2:false, extra:'barrel' },
+        // toit EN CROUPE -> plan RECTANGULAIRE (faîtage visible). Porte décalée à droite, fenêtre (et banc) à gauche.
+        { shape:'square', roof:'hip',     w:3.4, d:2.4, wallH:1.85, roofH:1.4, tint:[0.45,0.36,0.24], thatch:[0.43,0.35,0.21], chimney:1, window2:false, extra:'bench', doorX:0.95, frontWinX:-0.95 },
+      ];
+      variants.forEach((v, i) => {
+        const h = buildHut(K, ctx, root, v);
+        h.position.x = (i - (variants.length-1)/2) * 5.8;
+        h.rotation.y = 0.18 - i * 0.18;
+      });
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      K.box(root, [0.36,0.29,0.22], [1.7, 1.1, 1.7], [0, 0.55, 0]);
+      const roof = K.cone(root, [0.28,0.22,0.16], { h:1.2, d:2.5, t:4 }, [0, 1.7, 0]);
+      roof.rotation.y = Math.PI/4;
+      K.box(root, P.woodDark, [0.55, 0.85, 0.06], [0, 0.43, 0.86]); // porte
+      K.box(root, P.emberHot, [0.4, 0.4, 0.06], [-0.5, 0.7, 0.86], { emi:0.9, unlit:true }); // fenêtre éclairée
+      K.box(root, P.woodLight, [0.46, 0.06, 0.1], [-0.5, 0.48, 0.88]); // rebord
+      K.box(root, P.stoneDark, [0.3, 0.6, 0.3], [0.55, 1.5, 0.3]); // cheminée
+      return root;
+    },
+  });
+
+  add({
+    id:'charrette', name:'Charrette', cat:'Bâtiments',
+    desc:"Double la capacité de transport. Caisse à ridelles, deux grandes roues, brancards et un chargement de rondins.",
+    build(K) {
+      const root = K.node();
+      // Caisse PLUS LONGUE dans le sens de traction (Z) que large (X).
+      K.box(root, P.wood, [0.92, 0.42, 1.5], [0, 0.6, 0]);
+      // Ridelles : deux côtés (le long de Z) + arrière (-Z), avant ouvert.
+      K.box(root, P.woodDark, [0.07, 0.34, 1.5], [-0.45, 0.88, 0]);
+      K.box(root, P.woodDark, [0.07, 0.34, 1.5], [ 0.45, 0.88, 0]);
+      K.box(root, P.woodDark, [0.92, 0.34, 0.07], [0, 0.88, -0.72]);
+      // 2 GRANDES ROUES sur les côtés : essieu le long de X -> elles roulent dans le
+      // sens de traction (Z). Cerclage + moyeu coplanaires à la roue (rot Z, pas X).
+      for (const x of [-0.57, 0.57]) {
+        K.cyl(root, P.woodDark, { h:0.13, d:0.74, t:12 }, [x, 0.37, -0.05], { rot:[0,0,Math.PI/2] });
+        K.tor(root, P.metalDark, { d:0.74, thick:0.05, t:16 }, [x, 0.37, -0.05], { rot:[0,0,Math.PI/2] });
+        K.cyl(root, P.woodLight, { h:0.18, d:0.13, t:6 }, [x, 0.37, -0.05], { rot:[0,0,Math.PI/2] });
+      }
+      // Essieu reliant les deux roues.
+      K.cyl(root, P.metalDark, { h:1.16, d:0.06 }, [0, 0.37, -0.05], { rot:[0,0,Math.PI/2] });
+      // 2 BRANCARDS de traction à l'AVANT (+Z), parallèles, alignés avec le déplacement.
+      for (const x of [-0.28, 0.28]) {
+        K.cyl(root, P.woodLight, { h:1.25, d:0.07 }, [x, 0.6, 1.05], { rot:[1.22, 0, 0] });
+      }
+      // Barre-poignée transversale reliant les brancards au bout.
+      K.cyl(root, P.woodLight, { h:0.62, d:0.06 }, [0, 0.83, 1.62], { rot:[0,0,Math.PI/2] });
+      // Chargement : rondins en travers (le long de X), empilés dans la caisse.
+      for (let i = 0; i < 3; i++)
+        K.cyl(root, P.trunk, { h:0.8, d:0.2, t:8 }, [0, 0.86, -0.42 + i*0.42], { rot:[0,0,Math.PI/2] });
+      return root;
+    },
+  });
+
+  add({
+    id:'loge', name:'Loge de chasse', cat:'Bâtiments',
+    desc:"Assigne des chasseurs. Cabane EN RONDINS (angles entaillés) à toit à deux pentes ; trophée crâne + bois au-dessus de la porte, fenêtre éclairée à volets, cheminée fumante. Autour : 2 cadres à peaux tendues + tas de fourrures, séchoir à viande avec gibier suspendu, billot avec hache plantée, et l'équipement du chasseur (arc & flèches, épieux, collets, lanterne) accroché à la façade.",
+    build(K, ctx) {
+      const root = K.node();
+      const FND = 0.3, wallW = 2.8, wallD = 2.4, wallH = 1.9, topY = FND + wallH;
+      const logA = [0.26,0.19,0.13], logB = P.wood, plank = [0.28,0.2,0.14];
+
+      // --- FONDATION + MURS EN RONDINS (caisson sombre + rondins en relief, angles croisés) ---
+      K.box(root, P.stone, [wallW+0.3, FND, wallD+0.3], [0, FND/2, 0]);
+      K.box(root, P.woodDark, [wallW-0.12, wallH, wallD-0.12], [0, FND + wallH/2, 0]);   // caisson (pas de jour entre rondins)
+      const logD = 0.38, courses = Math.round(wallH/logD);
+      for (let i=0;i<courses;i++){
+        const y = FND + logD/2 + i*logD;
+        const tA = i%2 ? logA : logB, tB = i%2 ? logB : logA;
+        K.cyl(root, tA, { h:wallW+0.34, d:logD, t:7 }, [0, y, wallD/2], { rot:[0,0,Math.PI/2] });        // rondins façade
+        K.cyl(root, tA, { h:wallW+0.34, d:logD, t:7 }, [0, y, -wallD/2], { rot:[0,0,Math.PI/2] });       // rondins arrière
+        K.cyl(root, tB, { h:wallD+0.34, d:logD, t:7 }, [wallW/2, y+logD/2, 0], { rot:[Math.PI/2,0,0] });  // côté droit (décalé -> entaille d'angle)
+        K.cyl(root, tB, { h:wallD+0.34, d:logD, t:7 }, [-wallW/2, y+logD/2, 0], { rot:[Math.PI/2,0,0] }); // côté gauche
+      }
+
+      // --- TOIT À DEUX PENTES, PIGNON EN FAÇADE (porte sous le pignon -> place pour le trophée) ---
+      const roofH = 1.3, roofBaseY = topY - 0.02;
+      const roof = makeGableRoof(ctx.scene, wallD, wallW + 0.7, roofH, plank); // tourné : faîtage le long de Z, pignons triangulaires en façade/arrière
+      roof.parent = root; roof.position.y = roofBaseY; roof.rotation.y = Math.PI/2;
+      K.cyl(root, P.woodDark, { h:wallD+0.12, d:0.16, t:6 }, [0, roofBaseY + roofH, 0], { rot:[Math.PI/2,0,0] });   // faîtage (le long de Z)
+      for (const sx of [-1,1]) K.cyl(root, P.woodDark, { h:wallD, d:0.1, t:6 }, [sx*(wallW/2+0.05), roofBaseY+0.04, 0], { rot:[Math.PI/2,0,0] }); // pannes d'égout (côtés ±X)
+
+      // --- PORTE (façade +Z) à planches verticales + cadre + seuil ---
+      const dz = wallD/2;
+      K.box(root, [0.05,0.04,0.03], [0.94, 1.5, 0.18], [0, 1.02, dz+0.05]);             // embrasure
+      K.box(root, P.woodDark, [0.84, 1.44, 0.1], [0, 1.03, dz+0.13]);                    // vantail
+      for (let i=0;i<3;i++) K.box(root, logA, [0.24, 1.36, 0.04], [-0.27+i*0.27, 1.03, dz+0.19]); // planches
+      K.box(root, P.woodLight, [0.12, 1.6, 0.13], [-0.5, 1.1, dz+0.11]);                 // montant g
+      K.box(root, P.woodLight, [0.12, 1.6, 0.13], [ 0.5, 1.1, dz+0.11]);                 // montant d
+      K.box(root, P.woodLight, [1.14, 0.14, 0.13], [0, 1.78, dz+0.11]);                  // linteau
+      K.box(root, P.metalDark, [0.1, 0.18, 0.06], [0.3, 1.03, dz+0.2]);                  // ferrure
+      K.box(root, P.stone, [1.16, 0.16, 0.44], [0, 0.08, dz+0.34]);                       // marche
+
+      // --- TROPHÉE : crâne de cerf + bois, sur le PIGNON au-dessus de la porte ---
+      const tro = K.node(root, [0, 2.55, dz+0.06]);
+      K.box(tro, P.bone, [0.36, 0.3, 0.18], [0, 0, 0]);                                    // crâne
+      K.cone(tro, P.bone, { h:0.18, d:0.2, t:6 }, [0, -0.21, 0.0], { rot:[Math.PI,0,0] });  // museau
+      for (const sgn of [-1,1]) {                                                          // bois
+        const a = K.node(tro, [0.15*sgn, 0.14, 0]); a.rotation.z = -0.6*sgn;
+        K.cyl(a, P.bone, { h:0.5, d:0.05, t:5 }, [0, 0.24, 0]);
+        K.cyl(a, P.bone, { h:0.26, d:0.04, t:5 }, [0.12*sgn, 0.46, 0], { rot:[0,0,-0.95*sgn] });
+        K.cyl(a, P.bone, { h:0.22, d:0.04, t:5 }, [0.18*sgn, 0.3, 0], { rot:[0,0,-1.3*sgn] });
+      }
+
+      // --- FENÊTRE ÉCLAIRÉE À VOLETS (mur droit +X) ---
+      const win = K.node(root, [wallW/2, 1.12, 0.45]); win.rotation.y = Math.PI/2;
+      K.box(win, [0.05,0.04,0.03], [0.6, 0.6, 0.18], [0,0,-0.05]);
+      K.box(win, P.emberHot, [0.48, 0.48, 0.04], [0,0,0.05], { emi:0.9, unlit:true });
+      K.box(win, P.woodDark, [0.06, 0.5, 0.06], [0,0,0.08]); K.box(win, P.woodDark, [0.5, 0.06, 0.06], [0,0,0.08]);
+      K.box(win, P.woodLight, [0.66, 0.09, 0.1], [0,-0.32,0.06]);                          // rebord
+      for (const s of [-1,1]) K.box(win, logB, [0.3, 0.62, 0.05], [s*0.46, 0, 0.06], { rot:[0,s*0.5,0] }); // volets entrouverts
+
+      // --- CHEMINÉE EXTERNE (mur arrière, sous le pignon arrière) + fumée ---
+      const cx = -0.5, cz = -(wallD/2 + 0.25), chH = topY + roofH*0.82;
+      K.box(root, P.stoneDark, [0.5, chH, 0.5], [cx, chH/2, cz]);
+      K.box(root, P.stone, [0.6, 0.14, 0.6], [cx, chH-0.05, cz]);
+      K.box(root, P.stoneDark, [0.4, 0.12, 0.4], [cx, chH+0.08, cz]);
+      smokePuffs(K, ctx, root, [cx, chH+0.22, cz]);
+
+      // --- ÉQUIPEMENT DU CHASSEUR sur la façade (en SAILLIE devant les rondins ~z1.4) ---
+      const fzz = dz + 0.3; // z bien en avant de la surface des rondins
+      // arc (anneau vertical) + corde, accroché à gauche de la porte sur une cheville
+      K.cyl(root, P.woodDark, {h:0.14,d:0.04,t:5}, [-0.92, 1.55, dz+0.18], {rot:[Math.PI/2,0,0]}); // cheville
+      const bow = K.node(root, [-0.92, 1.18, fzz]);
+      K.tor(bow, P.woodLight, { d:0.8, thick:0.045, t:14 }, [0,0,0], {rot:[Math.PI/2,0,0]}); // arc DEBOUT (plan XY)
+      K.box(bow, P.bone, [0.025, 0.78, 0.025], [0,0,0]);                                   // corde
+      // faisceau de 3 flèches suspendu juste à côté de l'arc (verticales, pointes en haut)
+      for (let i=0;i<3;i++){ K.cyl(root, logB, {h:0.72,d:0.025,t:4}, [-0.58+i*0.05, 1.12, fzz], {rot:[0,0,0.04*(i-1)]}); K.cone(root, P.metal, {h:0.08,d:0.04,t:4}, [-0.58+i*0.05, 1.49, fzz]); }
+      // collets : 2 boucles de corde verticales suspendues à une cheville, à droite de la porte
+      K.cyl(root, P.woodDark, {h:0.14,d:0.04,t:5}, [0.8, 1.5, dz+0.18], {rot:[Math.PI/2,0,0]}); // cheville
+      for (let i=0;i<2;i++) K.tor(root, P.hide, { d:0.24, thick:0.028, t:12 }, [0.8+i*0.16, 1.28-i*0.05, fzz], {rot:[Math.PI/2,0,0]});
+      // corne de chasse (à sangle), plus à droite
+      const horn = K.node(root, [1.08, 1.0, fzz]); horn.rotation.z = -0.5;
+      K.cyl(horn, P.bone, { h:0.44, dt:0.05, db:0.15, t:6 }, [0,0,0]);
+      K.cyl(horn, P.hide, { h:0.12, d:0.02, t:4 }, [-0.02, 0.26, 0]);                       // sangle
+      // 2 épieux appuyés : base au sol DEVANT, pointe en haut CONTRE le mur
+      for (let i=0;i<2;i++){ const sp=K.node(root,[1.1+0.15*i, 0, dz+0.55]); sp.rotation.x=-0.2; K.cyl(sp,logB,{h:2.1,d:0.05,t:6},[0,1.05,0]); K.cone(sp,P.metal,{h:0.24,d:0.09,t:5},[0,2.2,0]); }
+
+      // --- CÔTÉ GAUCHE (-X) : 2 cadres à peaux tendues + tas de fourrures ---
+      const pelts = [P.fur, P.hide];
+      for (let f=0; f<2; f++){
+        const fr = K.node(root, [-(wallW/2+0.95), 0, 0.5 - f*1.25]); fr.rotation.y = 0.22;
+        for (const sx of [-1,1]) K.cyl(fr, logB, { h:1.7, d:0.06, t:6 }, [sx*0.55, 0.85, 0]); // montants
+        K.cyl(fr, logB, { h:1.24, d:0.06, t:6 }, [0, 1.6, 0], { rot:[0,0,Math.PI/2] });         // traverse haute
+        K.cyl(fr, logB, { h:1.24, d:0.06, t:6 }, [0, 0.18, 0], { rot:[0,0,Math.PI/2] });         // traverse basse
+        K.box(fr, pelts[f], [0.92, 1.25, 0.04], [0, 0.9, 0]);                                   // peau tendue
+        for (let i=0;i<4;i++){ const yy=0.5+i*0.3; K.cyl(fr, P.bone, {h:0.14,d:0.02,t:4},[-0.46,yy,0.03],{rot:[0,0,Math.PI/2]}); K.cyl(fr, P.bone,{h:0.14,d:0.02,t:4},[0.46,yy,0.03],{rot:[0,0,Math.PI/2]}); } // lacets
+      }
+      // tas de fourrures : peaux PLIÉES (galettes arrondies aplaties, bords doux) + une peau
+      // d'animal dépliée par-dessus (corps + tête + 4 pattes + queue) -> lecture « fourrure » évidente
+      const pile = K.node(root, [-(wallW/2+0.62), 0, 1.4]);
+      const ft=[P.fur, P.hide, [0.46,0.34,0.24], [0.52,0.42,0.32]];
+      [[0,0.16,0,0.82],[0.06,0.34,0.04,0.72],[-0.04,0.5,-0.02,0.6]].forEach((f,i)=>{ const m=K.ico(pile, ft[i%ft.length], {d:f[3],sub:1}, [f[0],f[1],f[2]]); m.scaling.set(1.18,0.4,0.96); });
+      const drape = K.node(pile, [0.05, 0.62, 0.04]);
+      const body = K.ico(drape, P.fur, {d:0.62, sub:1}, [0,0,0]); body.scaling.set(1.12,0.26,0.84);
+      K.ico(drape, P.fur, {d:0.2, seg:5}, [0,0.03,0.4]);                                    // tête
+      for (const sx of [-1,1]) for (const sz of [-1,1]) K.box(drape, P.hide, [0.08,0.05,0.18], [sx*0.26,-0.04,sz*0.24]); // 4 pattes étalées
+      K.cyl(drape, P.hide, {h:0.26,d:0.05,t:5}, [0,0.0,-0.42], {rot:[Math.PI/2,0,0]});       // queue
+
+      // --- CÔTÉ DROIT (+X) : séchoir à viande + gibier suspendu + billot avec hache ---
+      const drN = K.node(root, [wallW/2+0.95, 0, -0.55]);
+      for (const sz of [-1,1]) K.cyl(drN, logB, { h:1.9, d:0.07, t:6 }, [0, 0.95, sz*0.7]);   // pieds
+      K.cyl(drN, logB, { h:1.7, d:0.06, t:6 }, [0, 1.85, 0], { rot:[Math.PI/2,0,0] });          // perche
+      for (let i=0;i<4;i++) K.box(drN, P.meat, [0.16, 0.34, 0.08], [0, 1.62, -0.5+i*0.34]);     // lanières de viande
+      const game = K.node(drN, [0, 1.5, 0.6]);                                                  // gibier suspendu
+      K.cyl(game, P.fur, { h:0.5, dt:0.14, db:0.22, t:6 }, [0, -0.05, 0]);
+      K.sph(game, P.fur, { d:0.24, seg:6 }, [0, -0.32, 0]);
+      for (const s of [-1,1]) K.cyl(game, P.hide, { h:0.18, d:0.02 }, [s*0.04, 0.26, 0]);        // pattes liées à la perche
+      const blk = K.node(root, [wallW/2+0.8, 0, 0.95]);
+      K.cyl(blk, P.trunk, { h:0.55, dt:0.5, db:0.56, t:9 }, [0, 0.27, 0]);                       // billot
+      K.cyl(blk, P.woodLight, { h:0.06, d:0.48, t:9 }, [0, 0.55, 0]);                            // cernes
+      // hache plantée PAR LA TÊTE : le fer mord le billot, le manche pointe vers le haut
+      const axe = K.node(blk, [0.08, 0.55, 0]); axe.rotation.z = 0.32;
+      K.box(axe, P.metalDark, [0.14, 0.16, 0.14], [0, 0.02, 0]);                                 // œil/talon de la tête (à cheval sur le dessus)
+      K.box(axe, P.metal, [0.08, 0.26, 0.06], [0.13, 0.0, 0]);                                   // lame qui s'enfonce dans le bois
+      K.cyl(axe, P.woodLight, { h:0.62, d:0.045, t:6 }, [-0.02, 0.36, 0]);                        // manche vers le haut
+
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      K.box(root, [0.3,0.24,0.18], [2.2, 1.3, 1.7], [0, 0.65, 0]);
+      const roof = K.cone(root, [0.2,0.16,0.13], { h:1.0, d:3.2, t:4 }, [0, 1.75, 0]); roof.rotation.y = Math.PI/4;
+      K.box(root, P.woodDark, [0.6, 0.9, 0.06], [0, 0.45, 0.86]);
+      for (const sgn of [-1, 1]) { const a = K.node(root, [0.25*sgn, 1.35, 0.9]); a.rotation.z = -0.5*sgn; K.cyl(a, P.hide, { h:0.5, d:0.06 }, [0, 0.25, 0]); K.cyl(a, P.hide, { h:0.25, d:0.04 }, [0.1*sgn, 0.45, 0], { rot:[0,0,-0.8*sgn] }); K.cyl(a, P.hide, { h:0.2, d:0.04 }, [0.16*sgn, 0.3, 0], { rot:[0,0,-1.2*sgn] }); }
+      const frame = K.node(root, [1.9, 0, 0]); K.cyl(frame, P.woodLight, { h:1.6, d:0.06 }, [-0.5, 0.8, 0]); K.cyl(frame, P.woodLight, { h:1.6, d:0.06 }, [0.5, 0.8, 0]); K.cyl(frame, P.woodLight, { h:1.0, d:0.06 }, [0, 1.55, 0], { rot:[0,0,Math.PI/2] }); K.box(frame, P.fur, [0.85, 1.0, 0.05], [0, 1.0, 0]);
+      K.cyl(root, P.woodLight, { h:1.0, d:0.06 }, [-1.6, 0.5, -0.65]); K.cyl(root, P.woodLight, { h:1.0, d:0.06 }, [-1.6, 0.5, 0.65]); K.cyl(root, P.woodLight, { h:1.4, d:0.05 }, [-1.6, 1.0, 0], { rot:[Math.PI/2,0,0] }); K.box(root, P.meat, [0.18, 0.3, 0.1], [-1.6, 0.78, 0.3]); K.box(root, P.meat, [0.18, 0.3, 0.1], [-1.6, 0.78, -0.2]);
+      return root;
+    },
+  });
+
+  add({
+    id:'tannerie', name:'Tannerie', cat:'Bâtiments',
+    desc:"Transforme la fourrure en cuir. Appentis ouvert, peaux qui sèchent sur des perches et cuve de tannage.",
+    build(K) {
+      const root = K.node();
+      // 4 poteaux : ceux de l'ARRIÈRE (-Z) sont PLUS HAUTS pour soutenir la partie
+      // élevée du toit en appentis ; ceux de l'avant (+Z) sont plus courts.
+      const PB = 1.9, PF = 1.46; // hauteurs arrière / avant
+      for (const [x, z, h] of [[-1,-0.8,PB],[1,-0.8,PB],[-1,0.8,PF],[1,0.8,PF]])
+        K.cyl(root, P.wood, { h:h, d:0.12 }, [x, h/2, z]);
+      // toit en appentis : haut à l'arrière, bas à l'avant ; repose sur les poteaux.
+      K.box(root, P.roof, [2.4, 0.12, 2.1], [0, 1.73, 0], { rot:[0.27, 0, 0] });
+      // 2 perches HORIZONTALES reliant les poteaux gauche↔droit, posées SUR la ligne
+      // des poteaux (arrière z=-0.8 / avant z=+0.8) -> liées au bâti, plus dans le vide.
+      K.cyl(root, P.woodLight, { h:2.06, d:0.07 }, [0, 1.5, -0.8], { rot:[0,0,Math.PI/2] });
+      K.cyl(root, P.woodLight, { h:2.06, d:0.07 }, [0, 1.2,  0.8], { rot:[0,0,Math.PI/2] });
+      // peaux qui sèchent, suspendues AUX perches (bord haut au niveau de la perche)
+      K.box(root, P.fur,  [0.62, 0.8, 0.04], [-0.5, 1.08, -0.8]);
+      K.box(root, P.hide, [0.6, 0.9, 0.04], [ 0.46, 1.03, -0.8]);
+      K.box(root, P.hide, [0.62, 0.7, 0.04], [-0.5, 0.83, 0.8]);
+      K.box(root, [0.45,0.34,0.24], [0.6, 0.6, 0.04], [0.46, 0.88, 0.8]); // cuir fini
+      // cuve de tannage
+      K.cyl(root, P.stoneDark, { h:0.5, dt:0.7, db:0.6, t:10 }, [0.7, 0.25, 0.2]);
+      K.cyl(root, [0.3,0.26,0.18], { h:0.06, d:0.62 }, [0.7, 0.5, 0.2]); // liquide
+      return root;
+    },
+  });
+
+  add({
+    id:'fumoir', name:'Fumoir', cat:'Bâtiments',
+    desc:"Fume la viande (→ viande séchée). Cabanon haut en PLANCHES VERTICALES à toit à deux pentes ; porte entrebâillée sur les claies de viande et de poisson suspendus, petit foyer à braises au pied (la source de fumée), évent fumant au faîte et tas de bois de fumage à côté.",
+    build(K, ctx) {
+      const root = K.node();
+      const W=1.7, D=1.5, H=2.2, FND=0.28, topY=FND+H;
+      const plankC=[0.32,0.24,0.16], plankD=[0.24,0.17,0.12], roofC=[0.26,0.2,0.14];
+      const dark=[0.05,0.04,0.03];
+      // fondation + caisson (pas de jour entre planches)
+      K.box(root, P.stone, [W+0.22, FND, D+0.22], [0, FND/2, 0]);
+      K.box(root, plankD, [W-0.06, H, D-0.06], [0, FND+H/2, 0]);
+      // bardage en planches verticales (façade, arrière, 2 côtés)
+      const pw=0.26, nx=Math.round(W/pw), nz=Math.round(D/pw);
+      for(let i=0;i<nx;i++){ const x=-W/2+pw/2+i*pw;
+        K.box(root, i%2?plankC:plankD, [pw*0.9, H, 0.05], [x, FND+H/2, D/2]);
+        K.box(root, i%2?plankD:plankC, [pw*0.9, H, 0.05], [x, FND+H/2, -D/2]); }
+      for(let i=0;i<nz;i++){ const z=-D/2+pw/2+i*pw;
+        K.box(root, i%2?plankC:plankD, [0.05, H, pw*0.9], [W/2, FND+H/2, z]);
+        K.box(root, i%2?plankD:plankC, [0.05, H, pw*0.9], [-W/2, FND+H/2, z]); }
+      // ceinture/sablière haute
+      K.box(root, P.woodDark, [W+0.12, 0.12, D+0.12], [0, topY+0.0, 0]);
+
+      // --- TOIT À DEUX PENTES (pignon en façade) + faîtage + évent fumant ---
+      const roofH=1.0, roofBaseY=topY+0.06;
+      const roof = makeGableRoof(ctx.scene, D, W+0.5, roofH, roofC);
+      roof.parent=root; roof.position.y=roofBaseY; roof.rotation.y=Math.PI/2;
+      K.cyl(root, P.woodDark, { h:D+0.1, d:0.12, t:6 }, [0, roofBaseY+roofH, 0], { rot:[Math.PI/2,0,0] }); // faîtage
+      // évent (petit lanterneau au faîte) d'où s'échappe la fumée
+      K.box(root, roofC, [0.5, 0.26, 0.42], [0, roofBaseY+roofH+0.05, 0]);
+      K.box(root, dark, [0.4, 0.12, 0.32], [0, roofBaseY+roofH+0.02, 0]);   // fente sombre
+      K.box(root, roofC, [0.58, 0.08, 0.5], [0, roofBaseY+roofH+0.2, 0]);   // chapeau de l'évent
+      smokePuffs(K, ctx, root, [0, roofBaseY+roofH+0.28, 0], [0.5,0.5,0.52]);
+
+      // --- OUVERTURE EN FAÇADE (+Z) : recès sombre + cadre + porte entrebâillée + claies ---
+      const fz=D/2;
+      K.box(root, dark, [0.82, 1.5, 0.16], [0, FND+0.82, fz+0.02]);                 // recès sombre
+      K.box(root, P.woodLight, [0.1, 1.6, 0.1], [-0.46, FND+0.85, fz+0.06]);        // montant g
+      K.box(root, P.woodLight, [0.1, 1.6, 0.1], [ 0.46, FND+0.85, fz+0.06]);        // montant d
+      K.box(root, P.woodLight, [1.02, 0.12, 0.1], [0, FND+1.6, fz+0.06]);           // linteau
+      // porte entrebâillée (charnière au montant droit, ouverte ~70°)
+      const door=K.node(root, [0.46, FND+0.78, fz+0.07]); door.rotation.y=1.15; // entrebâillée vers l'extérieur
+      for(let i=0;i<3;i++) K.box(door, plankC, [0.24,1.42,0.05], [-0.12-i*0.24, 0, 0]);
+      K.box(door, P.metalDark, [0.06,0.1,0.04], [-0.62,0.0,0.04]); // poignée
+      // claies : 2 perches horizontales + viandes & poissons suspendus dans le recès
+      for(const py of [FND+1.42, FND+0.92]){ K.cyl(root, P.woodLight, {h:0.78,d:0.04,t:5}, [0,py,fz+0.04], {rot:[0,0,Math.PI/2]}); }
+      for(const mx of [-0.22,0.0,0.22]) K.box(root, P.meat, [0.13,0.3,0.07], [mx, FND+1.22, fz+0.04]); // viande rangée haute
+      for(const fx of [-0.18,0.2]){ const fn=K.node(root,[fx,FND+0.7,fz+0.04]);     // poissons rangée basse
+        K.cyl(fn, [0.55,0.56,0.6], {h:0.34,dt:0.05,db:0.16,t:6}, [0,0,0], {rot:[Math.PI,0,0]});
+        K.cone(fn, [0.5,0.5,0.55], {h:0.12,d:0.18,t:5}, [0,0.2,0], {rot:[Math.PI,0,0]}); }
+
+      // --- FOYER À BRAISES au pied de la façade (source de fumée) ---
+      K.box(root, P.stoneDark, [0.7, 0.36, 0.34], [0, 0.18, fz+0.18]);
+      K.box(root, P.ember, [0.42, 0.16, 0.12], [0, 0.16, fz+0.36], { emi:1.0, unlit:true }); // gueule incandescente
+      for(let i=0;i<3;i++) K.box(root, P.stoneDark, [0.16,0.14,0.16], [-0.28+i*0.28, 0.4, fz+0.12]); // pierres du dessus
+
+      // --- BOIS DE FUMAGE empilé contre le côté gauche (-X) ---
+      const wood=K.node(root, [-(W/2+0.32), 0, -0.1]);
+      for(let i=0;i<3;i++) K.cyl(wood, P.trunk, {h:0.9,d:0.18,t:7}, [0,0.12,-0.28+i*0.28], {rot:[0,0,Math.PI/2]});
+      for(let i=0;i<2;i++) K.cyl(wood, P.trunk, {h:0.9,d:0.18,t:7}, [0,0.31,-0.14+i*0.28], {rot:[0,0,Math.PI/2]});
+      return root;
+    },
+  });
+
+  add({
+    id:'acierie', name:'Aciérie', cat:'Bâtiments',
+    desc:"Produit de l'acier. Forge à l'air libre : massif FOURNEAU de pierre à gueulard incandescent et coulée de métal en fusion, haute cheminée fumante, gros SOUFFLET en cuir, enclume sur billot (marteau + tenailles), bac de trempe, tas de charbon / minerai et lingots d'acier empilés.",
+    build(K, ctx) {
+      const root = K.node();
+      const stone=P.stone, sd=P.stoneDark;
+      K.box(root, sd, [3.2, 0.25, 2.4], [0, 0.125, 0]);                              // socle pierre
+      // --- FOURNEAU massif (base + cuve tronconique -> cheminée) à l'arrière ---
+      K.box(root, sd, [1.5, 1.0, 1.3], [0, 0.5, -0.55]);
+      K.cyl(root, stone, { h:1.7, dt:0.62, db:1.0, t:8 }, [0, 1.85, -0.55]);
+      K.cyl(root, sd, { h:1.0, dt:0.5, db:0.6, t:8 }, [0, 3.1, -0.55]);
+      K.cyl(root, P.ember, { h:0.12, d:0.42, t:8 }, [0, 3.62, -0.55], { emi:1.2, unlit:true });
+      smokePuffs(K, ctx, root, [0, 3.7, -0.55], [0.45,0.45,0.48]);
+      K.box(root, sd, [0.7, 0.6, 0.16], [0, 0.55, 0.1]);                              // cadre du gueulard
+      K.box(root, P.ember, [0.46, 0.42, 0.14], [0, 0.52, 0.16], { emi:1.2, unlit:true }); // gueule en fusion
+      K.box(root, P.emberHot, [0.66, 0.06, 0.5], [0, 0.28, 0.45], { emi:1.0, unlit:true }); // rigole de coulée (au sol)
+      // --- SOUFFLET en cuir sur support (côté gauche, buse dans le fourneau) ---
+      K.box(root, P.woodDark, [0.34, 0.54, 0.42], [-1.05, 0.27, -0.55]);             // support (au sol)
+      const bel=K.node(root, [-1.05, 0.72, -0.55]);
+      K.box(bel, P.woodDark, [0.8, 0.06, 0.5], [0, 0.16, 0]);
+      K.box(bel, P.woodDark, [0.8, 0.06, 0.5], [0, -0.16, 0]);
+      K.box(bel, P.hide, [0.68, 0.28, 0.42], [0, 0, 0]);
+      K.cyl(bel, P.metalDark, { h:0.62, d:0.1, t:6 }, [0.5, 0, 0], { rot:[0,0,Math.PI/2] }); // buse vers le fourneau
+      K.cyl(bel, P.woodLight, { h:0.5, d:0.05 }, [-0.42, 0.34, 0], { rot:[0,0,0.4] });        // bras
+      // --- ENCLUME sur billot (avant droit) + marteau + tenailles ---
+      const blk=K.node(root, [1.15, 0, 0.55]);
+      K.cyl(blk, P.trunk, { h:0.55, dt:0.5, db:0.56, t:9 }, [0, 0.27, 0]);
+      K.box(blk, P.metalDark, [0.46, 0.16, 0.24], [0, 0.63, 0]);
+      K.box(blk, P.metal, [0.6, 0.1, 0.28], [0, 0.74, 0]);
+      K.cone(blk, P.metal, { h:0.3, d:0.2, t:6 }, [0.42, 0.74, 0], { rot:[0,0,Math.PI/2] }); // bigorne
+      K.cyl(blk, P.woodLight, { h:0.42, d:0.04, t:5 }, [-0.05, 0.86, 0.14], { rot:[0.4,0,0] }); // manche marteau
+      K.box(blk, P.metalDark, [0.16,0.1,0.1], [-0.05, 1.0, 0.2]);                     // tête marteau
+      K.cyl(blk, P.metalDark, { h:0.5, d:0.03, t:5 }, [0.25, 0.5, 0.3], { rot:[0.5,0,0.2] }); // tenailles appuyées
+      // --- BAC DE TREMPE (eau) ---
+      const q=K.node(root, [1.55, 0, -0.45]);
+      K.cyl(q, P.wood, { h:0.5, dt:0.46, db:0.5, t:10 }, [0,0.25,0]);
+      K.tor(q, P.metalDark, { d:0.52, thick:0.04, t:12 }, [0,0.38,0]);
+      K.cyl(q, P.water, { h:0.04, d:0.42, t:10 }, [0,0.49,0], { emi:0.12 });
+      // --- CHARBON + MINERAI + LINGOTS d'acier (avant gauche) ---
+      const coal=K.node(root, [-1.05, 0, 0.7]);
+      K.ico(coal, P.coal, { d:0.62 }, [0,0.22,0]); K.ico(coal, P.coal, { d:0.5 }, [0.32,0.18,0.06]); K.ico(coal, P.coal, { d:0.42 }, [-0.24,0.16,0.2]);
+      const ore=K.node(root, [-1.5, 0, 0.0]);
+      K.ico(ore, P.rust, { d:0.52 }, [0,0.2,0]); K.ico(ore, P.rust, { d:0.4 }, [0.28,0.16,0.06]);
+      for(let i=0;i<3;i++) K.box(root, P.metal, [0.5,0.1,0.16], [0.45, 0.31+i*0.11, 1.0], { rot:[0,0.2,0] }); // lingots empilés (sur le socle)
+      return root;
+    },
+  });
+
+  add({
+    id:'poste', name:'Poste de traite', cat:'Bâtiments',
+    desc:"Ouvre le commerce avec les nomades. Étal sur plancher : comptoir sous AUVENT de toile incliné (arrière haut / avant bas), ÉTAGÈRE de stock à l'arrière (caisses, bocaux, ballots, rouleau de tissu), marchandises sur le plateau (pelleteries, caisse, tonneau, panier de produits), BALANCE et bottes d'herbes suspendues au bord de l'auvent, fanion de traite et tabouret du marchand.",
+    build(K, ctx) {
+      const root = K.node();
+      const wood=P.wood, wd=P.woodDark, wl=P.woodLight, toile=[0.5,0.42,0.3], toileDk=[0.44,0.37,0.27];
+      const baseY=0.16, HB=2.0, HF=1.5, yB=baseY+HB, yF=baseY+HF;
+      // --- PLANCHER (deck à lattes) ---
+      K.box(root, wd, [3.0, 0.16, 2.0], [0, 0.08, 0]);
+      for(let i=0;i<7;i++) K.box(root, i%2?wood:wd, [0.4, 0.04, 1.96], [-1.28+i*0.43, 0.17, 0]);
+      // --- 4 POTEAUX (arrière hauts, avant courts) ---
+      for(const x of [-1.35,1.35]){ K.cyl(root, wd, {h:HB,d:0.1}, [x, baseY+HB/2, -0.85]); K.cyl(root, wd, {h:HF,d:0.1}, [x, baseY+HF/2, 0.85]); }
+      // --- AUVENT incliné posé sur les poteaux + lambrequin festonné ---
+      K.box(root, toile, [2.85, 0.08, 2.0], [0, (yB+yF)/2+0.03, 0], { rot:[0.285,0,0] });
+      K.box(root, toileDk, [2.85, 0.22, 0.05], [0, yF-0.06, 0.99]); // lambrequin (bord avant pendant)
+      // --- COMPTOIR (face client +Z) ---
+      K.box(root, wood, [2.5, 0.78, 0.5], [0, baseY+0.39, 0.5]);
+      K.box(root, wl, [2.64, 0.12, 0.6], [0, baseY+0.84, 0.5]); // plateau
+      const top=baseY+0.9;
+      // --- ÉTAGÈRE de stock à l'arrière (-Z) ---
+      for(const x of [-1.05,1.05]) K.cyl(root, wd, {h:1.5,d:0.07}, [x, baseY+0.75, -0.9]);
+      for(const sy of [0.58,1.08]) K.box(root, wl, [2.2,0.06,0.4], [0, baseY+sy, -0.9]);
+      K.box(root, wood, [0.5,0.32,0.34], [-0.7, baseY+0.77, -0.9]);                 // caisse (étagère basse)
+      K.box(root, P.fur, [0.5,0.26,0.34], [0.1, baseY+0.74, -0.9]);                 // ballot de fourrures
+      for(let i=0;i<3;i++) K.cyl(root, [0.5,0.42,0.34], {h:0.28,d:0.16,t:8}, [0.6+i*0.2, baseY+0.73, -0.9]); // bocaux
+      K.box(root, P.hide, [0.42,0.26,0.32], [-0.7, baseY+1.27, -0.9]);              // ballot (étagère haute)
+      K.cyl(root, P.banner, {h:0.36,d:0.2,t:8}, [0.1, baseY+1.27, -0.9], {rot:[Math.PI/2,0,0]}); // rouleau de tissu
+      // --- MARCHANDISES sur le plateau (y=top) ---
+      K.box(root, P.fur,  [0.5,0.12,0.4], [-0.85, top+0.06, 0.5]); K.box(root, P.hide, [0.46,0.1,0.38], [-0.85, top+0.17, 0.5]); // pelleteries
+      K.box(root, wood, [0.4,0.34,0.4], [-0.12, top+0.17, 0.5]); K.box(root, wl, [0.42,0.05,0.42], [-0.12, top+0.36, 0.5]); // caisse
+      K.cyl(root, [0.3,0.24,0.18], {h:0.4,dt:0.32,db:0.28,t:10}, [0.5, top+0.2, 0.5]); K.tor(root, P.metalDark, {d:0.34,thick:0.03,t:12}, [0.5, top+0.2, 0.5]); // tonneau
+      const bsk=K.node(root, [1.05, top, 0.5]); K.cyl(bsk, [0.45,0.36,0.24], {h:0.22,dt:0.36,db:0.26,t:10}, [0,0.11,0]); for(let i=0;i<5;i++){const a=i/5*6.283; K.sph(bsk, [0.62,0.42,0.3], {d:0.15,seg:5}, [Math.cos(a)*0.1,0.24,Math.sin(a)*0.1]);} // panier de produits
+      // --- BALANCE suspendue sous le bord avant de l'auvent ---
+      K.cyl(root, P.metalDark, {h:0.28,d:0.025}, [-0.5, yF-0.18, 0.92]);
+      K.cyl(root, wd, {h:0.5,d:0.04}, [-0.5, yF-0.32, 0.92], {rot:[0,0,Math.PI/2]});
+      for(const s of [-1,1]){ K.cyl(root, P.metalDark, {h:0.1,d:0.015}, [-0.5+s*0.22, yF-0.38, 0.92]); K.cyl(root, P.metal, {h:0.04,dt:0.18,db:0.05,t:10}, [-0.5+s*0.22, yF-0.44, 0.92]); }
+      // bottes d'herbes séchées + lanterne suspendues au bord
+      for(let i=0;i<2;i++) K.cone(root, P.dryBrush, {h:0.32,d:0.16,t:6}, [0.35+i*0.28, yF-0.22, 0.92], {rot:[Math.PI,0,0]});
+      const lant=K.node(root, [1.0, yF-0.26, 0.92]); K.box(lant, P.metalDark,[0.13,0.18,0.13],[0,0,0]); K.box(lant, P.emberHot,[0.08,0.12,0.08],[0,0,0],{emi:1.0,unlit:true});
+      // --- FANION de traite sur le poteau avant droit ---
+      K.cyl(root, wl, {h:0.5,d:0.04}, [1.35, yF+0.28, 0.85]); K.box(root, P.banner, [0.05,0.36,0.42], [1.35, yF+0.34, 1.06]);
+      // --- TABOURET du marchand (derrière le comptoir) ---
+      const st=K.node(root, [0.0, baseY, -0.05]); K.cyl(st, wood, {h:0.06,d:0.42,t:10}, [0,0.46,0]); for(let i=0;i<3;i++){const a=i/3*6.283+0.4; K.cyl(st, wd, {h:0.46,d:0.05}, [Math.cos(a)*0.14,0.23,Math.sin(a)*0.14]);}
+      return root;
+    },
+  });
+
+  add({
+    id:'atelier', name:'Atelier', cat:'Bâtiments',
+    desc:"Débloque l'artisanat avancé. Hangar en appentis (face ouverte) sur plancher : ÉTABLI avec étau, MUR D'OUTILS (scie, marteau, équerre, ciseaux), CHEVALET de sciage avec planche, MEULE à manivelle pour affûter, pile de planches et tonneau de chutes.",
+    build(K, ctx) {
+      const root = K.node();
+      const wood=P.wood, wd=P.woodDark, wl=P.woodLight, roofC=P.roof, FND=0.14;
+      // --- PLANCHER ---
+      K.box(root, wd, [3.0, FND, 2.2], [0, FND/2, 0]);
+      // --- LEAN-TO : mur du fond bardé + 2 murets latéraux + 2 poteaux avant ---
+      K.box(root, wd, [2.9, 2.0, 0.14], [0, FND+1.0, -1.0]);
+      const pw=0.29, nb=Math.round(2.9/pw);
+      for(let i=0;i<nb;i++) K.box(root, i%2?wood:wd, [pw*0.9,2.0,0.05], [-1.45+pw/2+i*pw, FND+1.0, -0.92]);
+      for(const sx of [-1,1]) K.box(root, wd, [0.12,1.5,1.4], [sx*1.45, FND+0.75, -0.35]);   // murets latéraux
+      for(const sx of [-1,1]) K.cyl(root, wd, {h:1.6,d:0.12,t:7}, [sx*1.4, FND+0.8, 1.0]);    // poteaux avant
+      // --- TOIT EN APPENTIS (arrière haut / avant bas) + chevrons ---
+      K.box(root, roofC, [3.1, 0.12, 2.45], [0, FND+1.86, -0.02], { rot:[0.183,0,0] });
+      for(let i=0;i<5;i++) K.box(root, wd, [0.05,0.1,2.4], [-1.3+i*0.65, FND+1.9, -0.02], {rot:[0.183,0,0]});
+      // --- ÉTABLI avec ÉTAU ---
+      const bz=-0.45, by=FND+0.82;
+      K.box(root, wood, [1.7, 0.12, 0.6], [-0.2, by, bz]);
+      for(const lx of [-0.9,0.5]) for(const lz of [-0.65,-0.25]) K.cyl(root, wd, {h:by-FND, d:0.09}, [lx, FND+(by-FND)/2, lz]);
+      K.box(root, P.metalDark, [0.2,0.18,0.24], [-0.92, by+0.13, bz+0.26]);                   // étau corps
+      K.box(root, P.metal, [0.06,0.18,0.24], [-0.8, by+0.13, bz+0.26]);                       // mâchoire mobile
+      K.cyl(root, P.metalDark, {h:0.32,d:0.04}, [-0.74, by+0.11, bz+0.26], {rot:[0,0,Math.PI/2]}); // vis
+      K.box(root, wl, [0.5,0.08,0.3], [0.15, by+0.1, bz+0.06], {rot:[0,0.2,0]});               // pièce en cours
+      // --- MUR D'OUTILS (panneau à chevilles sur le fond) ---
+      const tw=-0.88;
+      K.box(root, wd, [1.9,0.72,0.04], [-0.1, FND+1.45, tw]);
+      K.box(root, P.metal, [0.55,0.16,0.02], [-0.72, FND+1.52, tw+0.04]); K.box(root, wl, [0.55,0.05,0.03], [-0.72, FND+1.6, tw+0.05]); // scie
+      K.cyl(root, wl, {h:0.3,d:0.04}, [0.05, FND+1.4, tw+0.05]); K.box(root, P.metalDark, [0.15,0.08,0.07], [0.05, FND+1.56, tw+0.06]); // marteau
+      K.box(root, P.metalDark, [0.04,0.34,0.03], [0.52, FND+1.46, tw+0.05]); K.box(root, P.metalDark, [0.22,0.04,0.03], [0.62, FND+1.31, tw+0.05]); // équerre
+      for(let i=0;i<3;i++){ K.cyl(root, wl, {h:0.16,d:0.03,t:5}, [0.85+i*0.13, FND+1.42, tw+0.05]); K.cyl(root, P.metal, {h:0.12,d:0.025,t:5}, [0.85+i*0.13, FND+1.29, tw+0.05]); } // ciseaux
+      // --- CHEVALET DE SCIAGE + planche (avant droit) ---
+      const ch=K.node(root, [0.9, 0, 0.5]);
+      for(const sz of [-0.2,0.2]) for(const sx of [-1,1]) K.cyl(ch, wd, {h:0.74,d:0.07}, [sx*0.26, 0.34, sz], {rot:[0,0,sx*0.5]});
+      K.cyl(ch, wd, {h:0.86,d:0.07}, [0,0.64,0], {rot:[Math.PI/2,0,0]});
+      K.box(ch, wl, [0.42,0.06,1.0], [0,0.7,0], {rot:[0,0.12,0]});
+      // --- MEULE à manivelle (droite) ---
+      const gr=K.node(root, [1.3, 0, -0.45]);
+      for(const sx of [-1,1]) K.cyl(gr, wd, {h:0.72,d:0.07}, [sx*0.18,0.36,0], {rot:[0,0,sx*0.18]});
+      K.cyl(gr, wd, {h:0.5,d:0.05}, [0,0.72,0], {rot:[0,0,Math.PI/2]});
+      K.cyl(gr, P.stone, {h:0.1,d:0.5,t:12}, [0,0.72,0], {rot:[0,0,Math.PI/2]});                // meule
+      K.cyl(gr, P.metalDark, {h:0.14,d:0.04}, [0.2,0.8,0]); K.cyl(gr, wl, {h:0.14,d:0.03}, [0.2,0.86,0.07],{rot:[Math.PI/2,0,0]}); // manivelle
+      // --- PILE DE PLANCHES + tonneau de chutes (avant gauche) ---
+      for(let i=0;i<4;i++) K.box(root, i%2?wl:wood, [0.42,0.07,1.3], [-1.15, FND+0.05+i*0.08, 0.5], {rot:[0,0.08,0]});
+      const bar=K.node(root, [-1.32,0,-0.35]); K.cyl(bar, wood, {h:0.5,dt:0.34,db:0.3,t:9}, [0,0.25,0]); K.tor(bar, P.metalDark,{d:0.36,thick:0.03,t:10},[0,0.4,0]);
+      for(let i=0;i<3;i++) K.box(bar, wl, [0.05,0.45,0.05], [-0.06+i*0.06,0.6,0],{rot:[0.12,0,0.1*(i-1)]}); // chutes qui dépassent
+      return root;
+    },
+  });
+
+  add({
+    id:'armurerie', name:'Armurerie', cat:'Bâtiments',
+    desc:"Produit des balles. Bâtisse FORTIFIÉE : madriers + contreforts de pierre aux angles, toit bas renforcé, porte bardée de fer et lucarne à barreaux. Râtelier de mousquets, tonneaux de poudre marqués, caisses de munitions, et surtout le POSTE DE FONTE des balles (foyer + creuset de plomb fondu, louche, lingots et seau de balles).",
+    build(K, ctx) {
+      const root = K.node();
+      const tim=[0.27,0.22,0.17], wd=P.woodDark, wl=P.woodLight, stone=P.stone, sd=P.stoneDark;
+      const W=2.6, D=2.0, H=1.7, FND=0.28, topY=FND+H, dz=D/2;
+      // --- FONDATION + MURS (madriers) + contreforts de pierre aux angles ---
+      K.box(root, sd, [W+0.3, FND, D+0.3], [0, FND/2, 0]);
+      K.box(root, tim, [W, H, D], [0, FND+H/2, 0]);
+      for(let i=0;i<4;i++){ const y=FND+0.28+i*0.42; K.cyl(root, i%2?wd:tim, {h:W+0.08,d:0.22,t:6}, [0,y,dz],{rot:[0,0,Math.PI/2]}); K.cyl(root, i%2?wd:tim, {h:W+0.08,d:0.22,t:6}, [0,y,-dz],{rot:[0,0,Math.PI/2]}); } // madriers façade/arrière
+      for(const sx of [-1,1]) for(const sz of [-1,1]) K.box(root, stone, [0.34, topY+0.1, 0.34], [sx*(W/2), (topY+0.1)/2, sz*(D/2)]); // contreforts (au sol)
+      // --- TOIT BAS RENFORCÉ (épais, débordant) + poutres ---
+      K.box(root, P.roof2, [W+0.5, 0.34, D+0.5], [0, topY+0.17, 0]);
+      for(let i=0;i<4;i++) K.box(root, wd, [0.12,0.1,D+0.54], [-0.95+i*0.63, topY+0.36, 0]);
+      // --- PORTE bardée de fer + cadre + seuil ---
+      K.box(root, [0.05,0.04,0.03], [0.84,1.4,0.16], [0, FND+0.7, dz+0.03]);
+      K.box(root, wd, [0.76,1.34,0.1], [0, FND+0.69, dz+0.1]);
+      for(const by of [FND+0.35, FND+1.0]) K.box(root, P.metalDark, [0.8,0.1,0.05], [0, by, dz+0.16]);    // bandes horizontales
+      for(const bx of [-0.28,0.28]) K.box(root, P.metalDark, [0.1,0.52,0.05], [bx, FND+0.69, dz+0.16]);   // bandes verticales
+      K.cyl(root, P.metal, {h:0.1,d:0.1,t:8}, [0.22, FND+0.69, dz+0.21], {rot:[Math.PI/2,0,0]});          // anneau-poignée
+      K.box(root, wl, [0.94,0.14,0.12], [0, FND+1.4, dz+0.1]);                                            // linteau
+      K.box(root, stone, [1.0,0.16,0.4], [0, 0.08, dz+0.28]);                                              // seuil
+      // --- LUCARNE À BARREAUX (façade droite) ---
+      const win=K.node(root, [0.86, FND+1.0, dz+0.04]);
+      K.box(win, [0.04,0.03,0.02], [0.42,0.42,0.1], [0,0,0]);
+      for(let i=0;i<3;i++) K.cyl(win, P.metalDark, {h:0.44,d:0.03,t:5}, [-0.14+i*0.14,0,0.06]);
+      K.box(win, wd, [0.52,0.09,0.1],[0,0.25,0.04]); K.box(win, wd, [0.52,0.09,0.1],[0,-0.25,0.04]);
+      // --- RÂTELIER DE MOUSQUETS (mur droit +X) ---
+      const rk=K.node(root, [W/2-0.02, 0, -0.15]);
+      K.box(rk, wd, [0.1, 1.1, 1.3], [0.06, FND+0.55, 0]);
+      K.box(rk, wd, [0.18, 0.08, 1.3], [0.16, FND+1.0, 0]);
+      for(let i=0;i<4;i++){ const z=-0.45+i*0.3; K.cyl(rk, P.metalDark, {h:1.2,d:0.04,t:5}, [0.22, FND+0.62, z], {rot:[0.12,0,0]}); K.box(rk, wd, [0.1,0.28,0.1], [0.22, FND+0.13, z+0.07], {rot:[0.12,0,0]}); }
+      // --- TONNEAUX DE POUDRE marqués (avant gauche) ---
+      for(const [x,z] of [[-1.55,0.5],[-1.55,-0.1],[-1.18,0.2]]) { const b=K.node(root,[x,0,z]); K.cyl(b, [0.26,0.2,0.15], {h:0.6,dt:0.42,db:0.36,t:9}, [0,0.3,0]); K.tor(b, P.metalDark, {d:0.44,thick:0.04,t:12}, [0,0.18,0]); K.tor(b, P.metalDark, {d:0.44,thick:0.04,t:12}, [0,0.46,0]); K.cyl(b, P.dark, {h:0.04,d:0.34,t:9}, [0,0.6,0]); K.box(b, P.bone, [0.16,0.16,0.02], [0,0.32,0.21]); } // marque claire
+      // --- POSTE DE FONTE DES BALLES (avant droit — fonction du bâtiment) ---
+      const cast=K.node(root, [1.75, 0, 0.6]);
+      K.box(cast, sd, [0.6,0.5,0.5], [0,0.25,0]);                                    // foyer pierre
+      K.box(cast, P.ember, [0.34,0.16,0.3], [0,0.2,0.06], {emi:1.0,unlit:true});     // braises
+      K.cyl(cast, P.metalDark, {h:0.2,dt:0.26,db:0.18,t:10}, [0,0.6,0]);             // creuset
+      K.cyl(cast, P.emberHot, {h:0.04,d:0.2,t:10}, [0,0.7,0], {emi:1.1,unlit:true}); // plomb fondu
+      K.cyl(cast, P.metalDark, {h:0.42,d:0.03,t:5}, [0.32,0.6,0], {rot:[0,0,1.0]});  // louche
+      for(let i=0;i<3;i++) K.box(cast, P.metalDark, [0.3,0.07,0.1], [0.42,0.05+i*0.08,-0.32], {rot:[0,0.2,0]}); // lingots de plomb
+      const pail=K.node(cast,[-0.52,0,-0.28]); K.cyl(pail, P.metalDark, {h:0.22,dt:0.18,db:0.14,t:9}, [0,0.11,0]); for(let i=0;i<5;i++){const a=i/5*6.283; K.sph(pail, P.metal, {d:0.06,seg:4}, [Math.cos(a)*0.05,0.23,Math.sin(a)*0.05]);} // seau de balles
+      // --- CAISSES DE MUNITIONS (avant, près de la porte) ---
+      K.box(root, P.wood, [0.5,0.3,0.4], [-0.6,0.15,dz+0.5]); K.box(root, wd, [0.52,0.05,0.42], [-0.6,0.32,dz+0.5]);
+      K.box(root, P.wood, [0.4,0.26,0.34], [-0.55,0.45,dz+0.5], {rot:[0,0.3,0]});
+      return root;
+    },
+  });
+
+  // ----- PIÈGES -------------------------------------------------------------
+  add({
+    id:'piege', name:'Piège', cat:'Pièges',
+    desc:"Capture des créatures (fourrure, viande…). Piège à assommoir : une lourde dalle de bois tenue en l'air par un montant, l'appât dessous ; l'animal déclenche et la dalle tombe. Lecture immédiate.",
+    build(K) {
+      const root = K.node();
+      // zone de terre tassée
+      K.cyl(root, [0.17,0.14,0.1], { h:0.05, d:1.7, t:14 }, [0, 0.025, 0]);
+      // pierres d'appui : le bord arrière de la dalle y repose (charnière)
+      K.ico(root, P.stone, { d:0.28 }, [-0.5, 0.07, -0.62]);
+      K.ico(root, P.stone, { d:0.28 }, [ 0.5, 0.07, -0.62]);
+      // DALLE d'assommoir : pivote sur son bord arrière, relevée à l'avant par le montant
+      const slab = K.node(root, [0, 0.16, -0.62]);
+      slab.rotation.x = -0.5;
+      K.box(slab, P.wood, [1.2, 0.16, 1.3], [0, 0, 0.62]);          // planches
+      K.box(slab, P.woodDark, [1.24, 0.07, 0.1], [0, 0.1, 0.2]);    // traverses
+      K.box(slab, P.woodDark, [1.24, 0.07, 0.1], [0, 0.1, 1.05]);
+      // montant qui cale le bord avant relevé (penché sous la dalle)
+      K.cyl(root, P.woodLight, { h:0.7, d:0.07 }, [0.5, 0.33, 0.52], { rot:[-0.28,0,0] });
+      // bâton déclencheur horizontal, relié à l'appât
+      K.cyl(root, P.woodLight, { h:0.55, d:0.05 }, [0.22, 0.12, 0.5], { rot:[0,0,Math.PI/2] });
+      // appât (viande) au sol, sous la dalle relevée
+      K.sph(root, P.meat, { d:0.2, seg:7 }, [-0.05, 0.12, 0.5]);
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      for (let i = 0; i < 4; i++) {
+        const a = (i/4) * Math.PI * 2;
+        K.cyl(root, [0.2,0.17,0.14], { h:1.0, dt:0.04, db:0.12, t:5 }, [Math.cos(a)*0.45, 0.5, Math.sin(a)*0.45], { rot:[Math.cos(a)*0.3, 0, Math.sin(a)*0.3] });
+      }
+      K.box(root, [0.08,0.09,0.1], [1.1, 0.06, 1.1], [0, 0.04, 0]);
+      K.sph(root, [0.46,0.4,0.34], { d:0.5, seg:6 }, [0, 0.3, 0]);
+      return root;
+    },
+  });
+
+  add({
+    id:'piege-pris', name:'Piège (prise)', cat:'Pièges',
+    desc:"État « relevable » : la dalle est retombée et une créature est prise dessous, la tête qui dépasse — signale au joueur (et aux piégeurs) qu'il y a de quoi récolter.",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, [0.17,0.14,0.1], { h:0.05, d:1.7, t:14 }, [0, 0.025, 0]);
+      K.ico(root, P.stone, { d:0.28 }, [-0.5, 0.07, -0.62]);
+      K.ico(root, P.stone, { d:0.28 }, [ 0.5, 0.07, -0.62]);
+      // dalle RETOMBÉE (presque à plat)
+      const slab = K.node(root, [0, 0.14, -0.62]);
+      slab.rotation.x = -0.14;
+      K.box(slab, P.wood, [1.2, 0.16, 1.3], [0, 0, 0.62]);
+      K.box(slab, P.woodDark, [1.24, 0.07, 0.1], [0, 0.1, 0.2]);
+      K.box(slab, P.woodDark, [1.24, 0.07, 0.1], [0, 0.1, 1.05]);
+      // montant éjecté, tombé au sol à côté
+      K.cyl(root, P.woodLight, { h:0.7, d:0.07 }, [0.8, 0.06, 0.4], { rot:[Math.PI/2, 0.35, 0] });
+      // créature prise : corps sous le bord avant, tête + oreilles + museau qui dépassent
+      K.ico(root, P.fur, { d:0.4 }, [0, 0.18, 0.66]);
+      K.sph(root, P.fur, { d:0.26 }, [0, 0.16, 0.98]);
+      K.cone(root, P.fur, { h:0.16, d:0.1, t:6 }, [0.09, 0.3, 1.0]);
+      K.cone(root, P.fur, { h:0.16, d:0.1, t:6 }, [-0.09, 0.3, 1.0]);
+      K.box(root, P.meat, [0.05,0.05,0.05], [0, 0.14, 1.12]); // museau
+      return root;
+    },
+  });
+
+  // ----- ARBRES (diversité) -------------------------------------------------
+  add({
+    id:'arbres', name:'Tous les arbres', cat:'Arbres', grid:false,
+    desc:"Neuf essences pour casser la monotonie de l'unique cône actuel — dont l'arbre d'origine conservé en PETIT arbre : petit (existant), sapin, chêne, bouleau, automne, cyprès, arbre mort, buisson, souche. Mélange-les dans data/world.ts pour une forêt vivante.",
+    build(K) {
+      const root = K.node();
+      const types = ['petit','pine','oak','birch','autumn','cypress','dead','bush','stump'];
+      types.forEach((t, i) => treeBuild(K, root, t, [(i - (types.length-1)/2) * 3.4, 0, 0]));
+      return root;
+    },
+    current(K) {
+      const root = K.node();
+      for (let i = 0; i < 5; i++) {
+        const n = K.node(root, [(i-2)*3.4, 0, 0]);
+        K.cyl(n, P.trunk, { h:1.6, dt:0.32, db:0.5, t:6 }, [0, 0.8, 0]);
+        K.cone(n, P.foliage, { h:2.6, d:1.9, t:7 }, [0, 2.9-1, 0]);
+      }
+      return root;
+    },
+  });
+
+  const treeEntries = [
+    ['petit-arbre','petit',"L'arbre d'origine du jeu (tronc + cône vert), conservé tel quel mais en plus PETIT — sert de jeune pousse / petit sujet pour contraster avec les grandes essences."],
+    ['sapin','pine',"Conifère en étages de cônes — la silhouette classique de forêt sombre."],
+    ['chene','oak',"Feuillu au houppier rond et touffu, vert moyen."],
+    ['bouleau','birch',"Tronc clair élancé marqué d'écorce, feuillage clair — apporte de la lumière."],
+    ['automne','autumn',"Feuillage chaud bicolore — ponctue la forêt de couleur."],
+    ['cypres','cypress',"Cyprès / peuplier étroit et haut — accent vertical."],
+    ['arbre-mort','dead',"Tronc nu et branches cassées — ambiance désolée, bon pour les terres sauvages."],
+    ['buisson','bush',"Arbuste bas — remplit le sous-bois sans masquer la vue."],
+    ['souche','stump',"Souche coupée avec cernes — vestige d'un arbre abattu."],
+  ];
+  treeEntries.forEach(([id, type, desc]) => add({
+    id:'arbre-'+id, name:id.replace('-',' '), cat:'Arbres',
+    desc, build(K) { return treeBuild(K, null, type, [0,0,0]); },
+  }));
+
+  // ----- NATURE -------------------------------------------------------------
+  add({
+    id:'rochers', name:'Rochers', cat:'Nature',
+    desc:"Amas de blocs low-poly à semer dans le monde : relief, repères, futurs sites de minerai.",
+    build(K) {
+      const root = K.node();
+      K.ico(root, P.stone, { d:1.6 }, [0, 0.55, 0], { scale:[1,0.85,1.1], rot:[0.1,0.6,0] });
+      K.ico(root, P.stoneDark, { d:1.0 }, [0.9, 0.35, 0.3], { scale:[1.2,0.8,1], rot:[0,1,0.1] });
+      K.ico(root, P.stone, { d:0.8 }, [-0.7, 0.3, -0.4], { rot:[0.2,2,0] });
+      K.ico(root, P.stoneDark, { d:0.5 }, [-0.2, 0.2, 0.9]);
+      K.ico(root, P.stone, { d:0.4 }, [0.4, 0.18, -0.8]);
+      return root;
+    },
+  });
+
+  add({
+    id:'herbes', name:'Touffes d\'herbe', cat:'Nature',
+    desc:"Petites touffes pour habiller le sol nu autour du campement.",
+    build(K) {
+      const root = K.node();
+      const tuft = (x, z, n) => {
+        for (let i = 0; i < n; i++) {
+          const a = (i/n)*Math.PI*2;
+          K.cone(root, i%2 ? P.grass : P.bush, { h:0.4+0.2*((i*7)%3)/3, d:0.1, t:4 }, [x+Math.cos(a)*0.12, 0.2, z+Math.sin(a)*0.12], { rot:[Math.cos(a)*0.3,0,Math.sin(a)*0.3] });
+        }
+      };
+      tuft(0,0,6); tuft(0.6,0.4,5); tuft(-0.5,0.3,4); tuft(0.2,-0.6,5); tuft(-0.6,-0.4,4);
+      return root;
+    },
+  });
+
+  add({
+    id:'champignons', name:'Champignons', cat:'Nature',
+    desc:"Détail de sous-bois — petit cluster pour habiller les pieds d'arbres et les souches.",
+    build(K) {
+      const root = K.node();
+      const m = (x,z,s) => { K.cyl(root, [0.8,0.78,0.72], { h:0.22*s, dt:0.06*s, db:0.09*s }, [x,0.11*s,z]); K.sph(root, P.meat, { d:0.22*s, seg:6 }, [x,0.24*s,z], { scale:[1,0.6,1] }); };
+      m(0,0,1.2); m(0.25,0.15,0.9); m(-0.2,0.18,0.8); m(0.1,-0.22,1.0);
+      return root;
+    },
+  });
+
+  add({
+    id:'rondin', name:'Rondin', cat:'Nature',
+    desc:"Tronc abattu au sol — décor et indice de récolte passée.",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, P.trunk, { h:2.4, d:0.5, t:8 }, [0, 0.28, 0], { rot:[0,0,Math.PI/2] });
+      K.cyl(root, P.woodLight, { h:0.06, d:0.5, t:8 }, [1.2, 0.28, 0], { rot:[0,0,Math.PI/2] });
+      K.cyl(root, P.woodLight, { h:0.06, d:0.5, t:8 }, [-1.2, 0.28, 0], { rot:[0,0,Math.PI/2] });
+      K.ico(root, P.bush, { d:0.5 }, [0.4, 0.45, 0.2]); // mousse
+      return root;
+    },
+  });
+
+  add({
+    id:'fougere', name:'Fougère', cat:'Nature',
+    desc:"[forêt] Touffe de frondes arquées pour le sous-bois — habille le pied des grands arbres et les zones d'ombre.",
+    build(K) {
+      const root = K.node();
+      const n = 9;
+      // frondes extérieures : largement évasées (presque à l'horizontale) -> port retombant
+      for (let i = 0; i < n; i++) {
+        const fr = K.node(root, [0, 0.05, 0]);
+        fr.rotation.y = (i / n) * Math.PI * 2 + (i % 2) * 0.18;
+        const tilt = 0.98 + (i % 3) * 0.12;
+        const len = 0.78 - (i % 3) * 0.1;
+        K.cone(fr, i % 2 ? P.fern : P.bush, { h:len, d:0.3, t:5 }, [0, len*0.32, 0.22], { rot:[tilt,0,0], scale:[1,1,0.2] });
+      }
+      // cœur de la touffe : quelques frondes plus dressées
+      for (let i = 0; i < 3; i++) {
+        const fr = K.node(root, [0, 0.05, 0]);
+        fr.rotation.y = i * 2.1;
+        K.cone(fr, P.fern, { h:0.6, d:0.22, t:5 }, [0, 0.32, 0.08], { rot:[0.42,0,0], scale:[1,1,0.2] });
+      }
+      K.sph(root, P.fern, { d:0.14, seg:6 }, [0, 0.09, 0]);
+      return root;
+    },
+  });
+
+  add({
+    id:'fleurs', name:'Fleurs sauvages', cat:'Nature',
+    desc:"[champ] Petit parterre de fleurs sur tiges (blanc, jaune, violet, rose) — touche de couleur dans les prairies.",
+    build(K) {
+      const root = K.node();
+      const cols = [P.flowerWhite, P.flowerYellow, P.flowerViolet, P.flowerPink];
+      const spots = [[0,0],[0.2,0.12],[-0.16,0.14],[0.1,-0.18],[-0.13,-0.12],[0.22,-0.06],[-0.24,0.02],[0.04,0.24]];
+      spots.forEach(([x,z], i) => {
+        const h = 0.28 + (i % 3) * 0.08;
+        const col = cols[i % cols.length];
+        K.cyl(root, P.grass, { h:h, d:0.02 }, [x, h/2, z]);
+        K.cyl(root, col, { h:0.025, d:0.16, t:6 }, [x, h, z]);            // pétales (disque)
+        K.sph(root, P.flowerYellow, { d:0.06, seg:5 }, [x, h+0.01, z]);   // cœur
+      });
+      for (let i = 0; i < 6; i++) { const a = i/6*Math.PI*2; K.cone(root, P.grass, { h:0.2, d:0.05, t:4 }, [Math.cos(a)*0.12, 0.1, Math.sin(a)*0.12], { rot:[Math.cos(a)*0.35, 0, Math.sin(a)*0.35] }); }
+      return root;
+    },
+  });
+
+  add({
+    id:'arbuste-sec', name:'Arbuste sec', cat:'Nature',
+    desc:"[lande] Broussaille morte : enchevêtrement de brindilles sèches — désolation des terres pauvres.",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, P.woodDark, { h:0.18, d:0.12 }, [0, 0.09, 0]); // souche basse
+      const n = 11;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + (i % 2) * 0.5;
+        const len = 0.45 + (i % 3) * 0.18;
+        const tilt = 0.55 + (i % 4) * 0.12;
+        K.cyl(root, P.dryBrush, { h:len, dt:0.008, db:0.035 },
+          [Math.sin(a)*0.08, 0.18 + Math.cos(tilt)*len*0.5, Math.cos(a)*0.08],
+          { rot:[Math.cos(a)*tilt, 0, -Math.sin(a)*tilt] });
+      }
+      return root;
+    },
+  });
+
+  add({
+    id:'ossements', name:'Ossements', cat:'Nature',
+    desc:"[lande] Crâne à cornes, cage thoracique et os épars — ambiance morbide des terres sauvages.",
+    build(K) {
+      const root = K.node();
+      // crâne posé au sol, légèrement incliné
+      const skull = K.node(root, [-0.1, 0.13, 0.05]);
+      skull.rotation.set(0.25, 0.5, 0);
+      K.ico(skull, P.bone, { d:0.32 }, [0, 0.04, 0]);                       // boîte crânienne
+      K.box(skull, P.bone, [0.15, 0.13, 0.26], [0, -0.03, 0.2]);            // museau
+      K.box(skull, P.mud, [0.05, 0.05, 0.05], [0.05, 0.02, 0.18]);          // orbites
+      K.box(skull, P.mud, [0.05, 0.05, 0.05], [-0.05, 0.02, 0.18]);
+      K.cyl(skull, P.bone, { h:0.34, dt:0.02, db:0.06, t:5 }, [0.13, 0.16, -0.04], { rot:[0,0,-0.7] }); // cornes
+      K.cyl(skull, P.bone, { h:0.34, dt:0.02, db:0.06, t:5 }, [-0.13, 0.16, -0.04], { rot:[0,0,0.7] });
+      // épine + côtes (arcs émergeant du sol)
+      K.cyl(root, P.bone, { h:0.72, d:0.03 }, [0.5, 0.03, 0], { rot:[Math.PI/2,0,0] });
+      for (let i = 0; i < 4; i++)
+        K.tor(root, P.bone, { d:0.34, thick:0.025, t:8 }, [0.5, 0.0, -0.25 + i*0.16], { rot:[Math.PI/2,0,0] });
+      // os long isolé + épiphyses
+      K.cyl(root, P.bone, { h:0.4, d:0.045 }, [-0.5, 0.04, -0.3], { rot:[0,0.5,Math.PI/2] });
+      K.sph(root, P.bone, { d:0.08, seg:5 }, [-0.69, 0.04, -0.41]);
+      K.sph(root, P.bone, { d:0.08, seg:5 }, [-0.31, 0.04, -0.19]);
+      return root;
+    },
+  });
+
+  add({
+    id:'roseaux', name:'Roseaux', cat:'Nature',
+    desc:"[marais] Touffe de roseaux et massettes sur fond de vase — borde mares et zones humides.",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, P.mud, { h:0.05, d:1.05, t:14 }, [0, 0.025, 0]); // vase / eau
+      const spots = [[0,0],[0.22,0.1],[-0.2,0.08],[0.12,-0.22],[-0.1,-0.16],[0.27,-0.05],[-0.27,0.0],[0.05,0.24],[-0.05,-0.26]];
+      spots.forEach(([x,z], i) => {
+        const h = 0.9 + (i % 4) * 0.22;
+        const lean = ((i % 3) - 1) * 0.1;
+        K.cyl(root, P.reed, { h:h, dt:0.012, db:0.03 }, [x, h/2 + 0.04, z], { rot:[lean, 0, lean] });
+        const tx = x + lean * h * 0.5, tz = z + lean * h * 0.5, ty = h + 0.04;
+        if (i % 3 === 0) {
+          K.cyl(root, P.reedHead, { h:0.22, dt:0.07, db:0.07, t:7 }, [tx, ty - 0.06, tz]); // massette
+          K.cyl(root, P.reed, { h:0.12, d:0.015 }, [tx, ty + 0.08, tz]);
+        } else {
+          K.cone(root, P.reed, { h:0.34, d:0.07, t:4 }, [tx, ty, tz], { scale:[1, 1, 0.3] }); // feuille effilée
+        }
+      });
+      return root;
+    },
+  });
+
+  add({
+    id:'rochers-sml', name:'Rochers S / M / L', cat:'Nature', grid:false,
+    desc:"[tous biomes, surtout lande] Trois tailles de rocher facetté (petit / moyen / gros) à semer — relief, repères, futurs sites de minerai.",
+    build(K) {
+      const root = K.node();
+      const rock = (s, x) => {
+        const r = K.node(root, [x, 0, 0]);
+        K.ico(r, P.stone, { d:1.0*s }, [0, 0.4*s, 0], { scale:[1, 0.82, 1.12], rot:[0.1, 0.6, 0] });
+        K.ico(r, P.stoneDark, { d:0.55*s }, [0.4*s, 0.2*s, 0.25*s], { rot:[0, 1, 0.1] });
+        K.ico(r, P.stone, { d:0.34*s }, [-0.34*s, 0.14*s, -0.2*s], { rot:[0.3, 2, 0] });
+      };
+      rock(0.55, -2.4); rock(1.0, 0); rock(1.75, 3.0);
+      return root;
+    },
+  });
+
+  // ----- SITES / SETPIECES (monde, M7→M11) ----------------------------------
+  add({
+    id:'cave', name:'Entrée de grotte', cat:'Sites',
+    desc:"[site cave · silhouette M7 → explorable M9] Bouche sombre dans un affleurement rocheux, encadrée de blocs.",
+    build(K) {
+      const root = K.node();
+      K.ico(root, P.stone, { d:3.2 }, [0, 1.2, -0.7], { scale:[1.3, 0.95, 1] });
+      K.ico(root, P.stoneDark, { d:2.2 }, [-1.5, 0.8, 0.3], { rot:[0, 1, 0.1] });
+      K.ico(root, P.stone, { d:2.0 }, [1.6, 0.7, 0.4], { rot:[0, 2, 0] });
+      K.box(root, P.dark, [1.7, 1.5, 0.6], [0, 0.8, 0.9], { unlit:true }); // bouche sombre
+      K.cyl(root, P.dark, { h:0.5, d:1.7, t:10 }, [0, 1.55, 0.9], { rot:[Math.PI/2, 0, 0], unlit:true }); // voûte
+      K.ico(root, P.stoneDark, { d:0.9 }, [-1.0, 0.4, 1.2]);
+      K.ico(root, P.stoneDark, { d:0.7 }, [1.1, 0.35, 1.2]);
+      return root;
+    },
+  });
+
+  add({
+    id:'house', name:'Maison en ruine', cat:'Sites',
+    desc:"[site house · M7 → M9] Bâtisse effondrée : murs partiels ébréchés, poutres tombées, gravats.",
+    build(K) {
+      const root = K.node();
+      K.box(root, [0.18,0.16,0.14], [3.0, 0.2, 2.6], [0, 0.1, 0]); // fondation
+      K.box(root, P.ruinStone, [3.0, 1.5, 0.25], [0, 0.85, -1.2]); // mur arrière
+      K.box(root, P.ruinStone, [0.25, 1.0, 2.6], [-1.4, 0.6, 0]); // mur gauche (bas)
+      K.box(root, P.ruinStone, [0.25, 0.5, 1.6], [1.4, 0.35, -0.4]); // mur droit effondré
+      K.box(root, P.ruinStone, [0.25, 1.1, 0.25], [-1.0, 0.65, 1.2]); // montant de façade
+      K.cyl(root, P.woodDark, { h:2.5, d:0.12 }, [0.3, 0.5, 0.2], { rot:[0, 0.4, 1.3] }); // poutres tombées
+      K.cyl(root, P.woodDark, { h:2.0, d:0.1 }, [-0.4, 0.3, -0.3], { rot:[0, -0.3, 1.5] });
+      K.ico(root, P.ruinStone, { d:0.6 }, [0.8, 0.25, 0.6]); // gravats
+      K.ico(root, P.stoneDark, { d:0.5 }, [-0.7, 0.2, 0.8]);
+      K.box(root, P.woodDark, [0.5, 0.15, 0.5], [0.6, 0.12, -0.6]);
+      return root;
+    },
+  });
+
+  add({
+    id:'town', name:'Grappe de ruines', cat:'Sites', grid:false,
+    desc:"[site town · M7 → M9] Hameau abandonné : plusieurs pans de murs effondrés, un muret, des gravats.",
+    build(K) {
+      const root = K.node();
+      const frag = (x, z, ry, s) => {
+        const n = K.node(root, [x, 0, z]); n.rotation.y = ry; n.scaling.setAll(s);
+        K.box(n, P.ruinStone, [2.0, 1.1, 0.22], [0, 0.6, -0.8]);
+        K.box(n, P.ruinStone, [0.22, 0.8, 1.6], [-0.9, 0.45, 0]);
+        K.box(n, P.ruinStone, [0.22, 0.4, 0.9], [0.9, 0.25, -0.3]);
+        K.ico(n, P.stoneDark, { d:0.5 }, [0.5, 0.2, 0.6]);
+      };
+      frag(-2.4, -1.6, 0.3, 1.0); frag(1.9, -2.1, -0.6, 0.85);
+      frag(2.6, 1.6, 1.2, 0.9); frag(-1.6, 2.3, 2.4, 0.75); frag(0, 0.2, 0.8, 0.7);
+      K.box(root, P.ruinStone, [0.3, 0.4, 3.0], [-3.4, 0.2, 0.6], { rot:[0, 0.2, 0] }); // muret
+      return root;
+    },
+  });
+
+  add({
+    id:'city', name:'Ville moderne en ruine', cat:'Sites',
+    desc:"[site city · M9] PAS médiéval : ruines d'une ville MODERNE — gratte-ciels de béton/verre éventrés dressés « comme une cage thoracique », ferraille (rebar) et gravats. (cf. « a buzzing city » d'ADR : hôpital, métro, tours effondrées.)",
+    build(K) {
+      const root = K.node();
+      // Tours de béton brisées, hauteurs variées (silhouette « cage thoracique »).
+      const tower = (x, z, w, h, tilt) => {
+        const t = K.node(root, [x, 0, z]); t.rotation.z = tilt || 0;
+        K.box(t, P.concrete, [w, h, w], [0, h/2, 0]);
+        for (let i = 1; i < Math.floor(h / 0.8); i++) K.box(t, P.concreteDk, [w+0.05, 0.06, w+0.05], [0, i*0.8, 0]); // dalles d'étage
+        K.box(t, P.concreteDk, [w*0.55, 0.5, w*0.55], [w*0.18, h+0.18, -w*0.1]); // sommet effondré irrégulier
+        for (let i = 0; i < 3; i++) K.box(t, P.glass, [w*0.5, 0.4, 0.04], [0, 0.9 + i*0.95, w/2 + 0.01], { emi:0.25, unlit:true }); // fenêtres
+        for (let i = 0; i < 2; i++) K.cyl(t, P.rebar, { h:0.5, d:0.03 }, [(-0.2 + i*0.4)*w, h + 0.35, 0], { rot:[0.2, i, 0.15] }); // ferraille au sommet
+      };
+      tower(-1.6, -0.5, 1.2, 5.2, 0.04);
+      tower(1.4, 0.7, 1.0, 4.0, -0.06);
+      tower(0.3, 1.9, 0.85, 2.8, 0.03);
+      tower(2.7, -1.5, 0.8, 2.0, 0.1);
+      // dalle de béton effondrée + ferraille + gravats au sol
+      K.box(root, P.concreteDk, [3.0, 0.3, 2.0], [-0.3, 0.15, -2.4], { rot:[0, 0.3, 0.05] });
+      for (let i = 0; i < 4; i++) K.cyl(root, P.rebar, { h:1.2, d:0.04 }, [-0.9 + i*0.4, 0.4, -2.4], { rot:[0.4, i, 0.25] });
+      K.ico(root, P.concrete, { d:0.8 }, [1.9, 0.3, 2.0]);
+      K.ico(root, P.concreteDk, { d:0.6 }, [-2.2, 0.25, 1.0]);
+      return root;
+    },
+  });
+
+  add({
+    id:'mines', name:'Entrées de mine (fer / charbon / soufre)', cat:'Sites', grid:false,
+    desc:"[site ironmine / coalmine / sulphurmine · M7 → M9] Adit à cadre de bois dans la roche + wagonnet ; 3 teintes de minerai : fer (rouille), charbon (noir), soufre (jaune).",
+    build(K) {
+      const root = K.node();
+      const mine = (tint, x) => {
+        const n = K.node(root, [x, 0, 0]);
+        K.ico(n, P.stoneDark, { d:2.4 }, [0, 0.9, -0.4], { scale:[1.3, 0.9, 1] });
+        K.box(n, P.woodDark, [0.2, 1.4, 0.2], [-0.7, 0.7, 0.6]);
+        K.box(n, P.woodDark, [0.2, 1.4, 0.2], [0.7, 0.7, 0.6]);
+        K.box(n, P.woodDark, [1.8, 0.25, 0.25], [0, 1.45, 0.6]); // linteau
+        K.box(n, P.dark, [1.2, 1.3, 0.4], [0, 0.65, 0.55], { unlit:true }); // ouverture
+        K.ico(n, tint, { d:0.7 }, [1.1, 0.3, 1.0]); // tas de minerai
+        K.ico(n, tint, { d:0.5 }, [-1.0, 0.25, 1.0]);
+        K.box(n, P.metalDark, [0.5, 0.3, 0.7], [0.2, 0.25, 1.45]); // wagonnet
+        K.tor(n, P.metalDark, { d:0.32, thick:0.05 }, [0.05, 0.18, 1.7], { rot:[0,0,Math.PI/2] });
+        K.tor(n, P.metalDark, { d:0.32, thick:0.05 }, [0.35, 0.18, 1.7], { rot:[0,0,Math.PI/2] });
+      };
+      mine(P.rust, -3.2); mine(P.coal, 0); mine(P.sulphur, 3.2);
+      return root;
+    },
+  });
+
+  add({
+    id:'swamp', name:'Marais', cat:'Sites', grid:false,
+    desc:"[site swamp · M7] Composite : nappe d'eau + îlots de vase + arbres morts + roseaux. Un biome à part entière.",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, P.water, { h:0.06, d:6.0, t:20 }, [0, 0.03, 0], { unlit:true }); // eau
+      K.cyl(root, P.mud, { h:0.1, d:2.0, t:12 }, [-1.5, 0.05, 1.0]);
+      K.cyl(root, P.mud, { h:0.1, d:1.6, t:12 }, [1.8, 0.05, -1.2]);
+      const d1 = treeBuild(K, root, 'dead', [-1.5, 0.08, 1.0]); d1.scaling.setAll(0.85);
+      const d2 = treeBuild(K, root, 'dead', [1.8, 0.08, -1.2]); d2.scaling.setAll(1.0); d2.rotation.y = 1.2;
+      const d3 = treeBuild(K, root, 'dead', [0.5, 0.05, 2.2]); d3.scaling.setAll(0.7);
+      const reeds = (x, z) => {
+        for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; K.cyl(root, P.reed, { h:0.9 + (i%3)*0.2, dt:0.015, db:0.03 }, [x + Math.cos(a)*0.18, 0.5, z + Math.sin(a)*0.18], { rot:[Math.cos(a)*0.08, 0, Math.sin(a)*0.08] }); }
+        K.cyl(root, P.reedHead, { h:0.2, dt:0.07, db:0.07, t:7 }, [x, 1.0, z]);
+      };
+      reeds(-2.4, -0.6); reeds(2.6, 1.0); reeds(0.2, -2.5); reeds(-0.8, 2.6);
+      return root;
+    },
+  });
+
+  add({
+    id:'ship', name:'Vaisseau alien échoué', cat:'Sites', grid:false,
+    desc:"[site ship · M9 / M11] LE vaisseau « wanderer » : une SOUCOUPE lenticulaire (les « familiar curves » du texte d'ADR), plantée de travers dans la cendre. Dôme décentré, anneau-mécanisme ventral luisant (« les indigènes ne savent pas s'en servir »), brèche aux côtes exposées, modules asymétriques (espèce à « plusieurs mains »). Pas de fusée ni d'ailerons.",
+    build(K) {
+      const root = K.node();
+      // Soucoupe inclinée et à demi enfouie (une tranche plonge dans la cendre).
+      const hull = K.node(root, [0, 1.0, 0]); hull.rotation.z = 0.34; hull.rotation.y = 0.5;
+      // corps lenticulaire (ellipsoïde très aplati) = la « courbe familière »
+      K.sph(hull, P.alienHull, { d:4.4, seg:14 }, [0, 0, 0], { scale:[1, 0.3, 1] });
+      K.tor(hull, P.alienAlloy, { d:4.3, thick:0.3, t:24 }, [0, 0, 0]); // jante de coque (tranche)
+      // dôme bas décentré sur le dessus
+      K.sph(hull, P.alienAlloy, { d:1.9, seg:10 }, [0.35, 0.42, -0.25], { scale:[1, 0.55, 1] });
+      K.tor(hull, P.alienHull, { d:1.7, thick:0.12, t:16 }, [0.35, 0.3, -0.25]); // col du dôme
+      // anneau-mécanisme ventral + lueur cyan (le « mécanisme » inscrutable)
+      K.tor(hull, P.alienAlloy, { d:2.3, thick:0.2, t:18 }, [0, -0.32, 0]);
+      K.cyl(hull, P.alienGlow, { h:0.12, d:1.3, t:16 }, [0, -0.42, 0], { emi:1.7, unlit:true });
+      // couture lumineuse + brèche sombre avec côtes intérieures exposées
+      K.box(hull, P.alienGlow, [0.08, 0.16, 1.7], [1.75, 0.06, 0.4], { emi:1.4, unlit:true });
+      K.box(hull, P.scorch, [1.5, 0.45, 1.0], [-1.25, 0.06, 0.7], { unlit:true });
+      for (let i = 0; i < 3; i++) K.box(hull, P.alienAlloy, [0.06, 0.42, 0.55], [-1.15 + i*0.24, 0.04, 0.8]);
+      // modules asymétriques (motif « plusieurs mains ») groupés d'un côté
+      K.sph(hull, P.alienAlloy, { d:0.6, seg:6 }, [-1.5, 0.05, -1.0], { scale:[1,0.8,1] });
+      K.sph(hull, P.alienAlloy, { d:0.45, seg:6 }, [-1.85, -0.02, -0.5], { scale:[1,0.8,1] });
+      K.cyl(hull, P.alienAlloy, { h:0.5, d:0.18, t:6 }, [-1.7, 0.05, -1.4], { rot:[1.2,0,0.3] });
+      // cendre/ensablement + traînée scorchée + débris (panneaux arrachés)
+      K.cyl(root, [0.16, 0.15, 0.14], { h:0.3, d:4.8, t:20 }, [0, 0.15, 0]);
+      K.cyl(root, P.scorch, { h:0.02, d:2.6, t:16 }, [2.2, 0.16, 1.4], { unlit:true, scale:[1.7, 1, 0.8] });
+      K.box(root, P.alienHull, [0.55, 0.08, 0.4], [2.7, 0.18, 0.5], { rot:[0.2, 0.5, 0.1] });
+      K.box(root, P.alienHull, [0.42, 0.07, 0.32], [-2.5, 0.16, -1.3], { rot:[0.1, 1.0, 0.3] });
+      return root;
+    },
+  });
+
+  add({
+    id:'executioner', name:"L'Executioner (cuirassé alien)", cat:'Sites', grid:false,
+    desc:"[site executioner · M9 / M11] Vaisseau de guerre ALIEN colossal encastré dans le sol — « une cité scellée et silencieuse ». Plaques fondues/corrodées, angles durs, lueurs d'alerte, brèche béante. Exploré comme un donjon (ingénierie, armes, médical, passerelle).",
+    build(K) {
+      const root = K.node();
+      const hull = K.node(root, [0, 0.6, 0]); hull.rotation.z = -0.12; hull.rotation.y = 0.12;
+      K.box(hull, P.armor, [3.0, 2.0, 7.0], [0, 0.4, 0]);
+      K.box(hull, P.armorDk, [3.4, 0.8, 7.2], [0, 1.5, 0]); // pont
+      K.box(hull, P.armorDk, [3.2, 1.3, 1.2], [0, 0.6, 2.7], { rot:[0.3, 0, 0] }); // étrave inclinée
+      K.box(hull, P.armor, [2.2, 1.7, 1.4], [0, 0.4, 3.9]); // proue massive
+      K.box(hull, P.armorDk, [1.7, 1.5, 2.2], [0, 2.3, -1.2]); // passerelle
+      K.box(hull, P.alienAlloy, [1.2, 0.5, 1.0], [0, 3.1, -1.2]); // tourelle
+      K.cyl(hull, P.armor, { h:2.0, d:0.42, t:8 }, [0.6, 3.4, -1.6], { rot:[0.1,0,0.05] }); // canon/mât
+      // lueurs d'alerte (bandes cyan) + brèche + scorch + corrosion
+      for (let i = 0; i < 4; i++) K.box(hull, P.alienGlow, [0.12, 0.18, 0.5], [1.51, 0.7, -1.8 + i*1.2], { emi:1.3, unlit:true });
+      K.box(hull, P.dark, [1.1, 1.4, 1.6], [1.2, 0.5, 0.4], { unlit:true }); // brèche béante
+      K.box(hull, P.scorch, [1.4, 0.9, 0.1], [0, 0.9, 3.61], { unlit:true }); // plaque fondue (proue)
+      K.ico(hull, P.rust, { d:0.9 }, [-1.5, 0.5, 1.2]);
+      K.ico(hull, P.rust, { d:0.7 }, [1.35, 1.0, -2.4]);
+      // terre soulevée autour (encastrement)
+      K.cyl(root, [0.14, 0.13, 0.13], { h:0.4, d:8.5, t:20 }, [0, 0.2, 0]);
+      return root;
+    },
+  });
+
+  add({
+    id:'outpost', name:'Avant-poste', cat:'Sites',
+    desc:"[site outpost · M7] Abri UNIFIÉ (« un lieu sûr dans les terres sauvages ») : toit en appentis sur 3 poteaux, le FEU dehors devant ; sous l'abri une caisse en bois surmontée de la gourde d'eau ; à l'arrière (opposé au feu) une toile de cuir tendue du toit au sol (~110°) ; entre les 2 poteaux arrière, une barre où sèchent 3 à 8 lanières de viande (aléatoire). Point de recharge / voyage rapide.",
+    build(K, ctx) {
+      const root = K.node();
+      const SIDE = 0.85, BACK = -0.85, FRONT = 0.95;
+      const HB = 2.3, HF = 1.65;            // poteaux arrière (hauts) / avant (court)
+      const leather = P.hide;
+      // 3 POTEAUX : 2 à l'arrière (côté toile), 1 à l'avant-centre (côté feu).
+      K.cyl(root, P.woodDark, { h:HB, d:0.13 }, [-SIDE, HB/2, BACK]);
+      K.cyl(root, P.woodDark, { h:HB, d:0.13 }, [ SIDE, HB/2, BACK]);
+      K.cyl(root, P.woodDark, { h:HF, d:0.13 }, [0, HF/2, FRONT]);
+      // Poutre faîtière reliant les 2 poteaux arrière.
+      K.cyl(root, P.woodDark, { h:1.95, d:0.08 }, [0, HB, BACK], { rot:[0, 0, Math.PI/2] });
+      // TOIT en appentis (haut à l'arrière, bas à l'avant) reposant sur les 3 poteaux.
+      K.box(root, P.roof, [2.0, 0.12, 2.1], [0, 1.98, 0], { rot:[0.358, 0, 0] });
+      // --- FEU DE CAMP détaillé, DEHORS DEVANT (décalé à GAUCHE de 1,5× sa taille,
+      //     et RAPPROCHÉ de la cabane de 1× sa taille). ---
+      const FS = 0.8; // taille (diamètre) du foyer
+      const fire = K.node(root, [-1.5 * FS, 0, (FRONT + 1.15) - 1.0 * FS]);
+      for (let i = 0; i < 6; i++) { const a = i/6*Math.PI*2; K.box(fire, P.stoneDark, [0.16, 0.15, 0.16], [Math.cos(a)*0.32, 0.08, Math.sin(a)*0.32], { rot:[0, a, 0] }); }
+      for (let i = 0; i < 3; i++) K.cyl(fire, P.trunk, { h:0.6, d:0.08 }, [0, 0.13, 0], { rot:[0, i*1.05, Math.PI/2] });
+      K.sph(fire, P.ember, { d:0.24, seg:6 }, [0, 0.16, 0], { emi:1.7, unlit:true });
+      K.cone(fire, P.fire, { h:0.42, d:0.24, t:6 }, [0, 0.35, 0], { emi:1.5, unlit:true });
+      K.cone(fire, P.emberHot, { h:0.3, d:0.15, t:6 }, [0.07, 0.32, -0.03], { emi:1.7, unlit:true });
+      K.cone(fire, P.fire, { h:0.26, d:0.13, t:6 }, [-0.07, 0.3, 0.05], { emi:1.4, unlit:true });
+      // --- CAISSE EN BOIS + GOURDE dessus, sous l'abri ---
+      K.box(root, P.wood, [0.7, 0.55, 0.6], [-0.32, 0.28, -0.1]);
+      K.box(root, P.woodLight, [0.74, 0.07, 0.64], [-0.32, 0.59, -0.1]); // couvercle
+      K.box(root, P.metalDark, [0.08, 0.2, 0.05], [-0.32, 0.4, 0.21]); // ferrure
+      const g = K.node(root, [-0.32, 0.62, -0.1]); // gourde POSÉE sur la caisse
+      K.sph(g, [0.4, 0.47, 0.34], { d:0.3, seg:8 }, [0, 0.16, 0], { scale:[1, 1.15, 0.8] });
+      K.cyl(g, [0.36, 0.43, 0.31], { h:0.1, dt:0.07, db:0.13 }, [0, 0.33, 0]);
+      K.cyl(g, P.woodDark, { h:0.06, d:0.08 }, [0, 0.4, 0]);
+      K.tor(g, P.woodDark, { d:0.27, thick:0.022, t:10 }, [0, 0.2, 0], { rot:[0.5, 0, 0] });
+      // --- TOILE DE CUIR : UNE seule nappe courbe (ribbon) tendue du toit au sol, ~110° ---
+      //     Finition : surface continue + léger galbe + ourlet roulé en bas + latte au faîte.
+      const sc = ctx.scene, SPAN = 110 * Math.PI / 180, N = 16, R = 1.55;
+      const top = [], mid = [], bot = [];
+      for (let k = 0; k <= N; k++) {
+        const t = k / N;                                   // 0 = gauche, 1 = droite
+        const a = Math.PI + (0.5 - t) * SPAN;              // arc centré sur l'arrière (-Z)
+        // HAUT : ligne DROITE le long du bord arrière du toit -> la toile y est jointe.
+        const tx = -0.92 + t * 1.84, ty = 2.30, tz = -0.96;
+        // BAS : arc évasé au sol, DERRIÈRE et à l'extérieur des poteaux (z < -0.85).
+        const bx = Math.sin(a) * R, bz = Math.cos(a) * R - 0.05;
+        top.push(new BABYLON.Vector3(tx, ty, tz));
+        bot.push(new BABYLON.Vector3(bx, 0.02, bz));
+        // MILIEU : interpolation + léger galbe (recul) -> nappe qui bombe doucement.
+        mid.push(new BABYLON.Vector3((tx + bx) / 2, 1.18, (tz + bz) / 2 - 0.06));
+      }
+      const lm = new BABYLON.StandardMaterial("outpostTarpMat", sc);
+      lm.diffuseColor = new BABYLON.Color3(leather[0], leather[1], leather[2]);
+      lm.specularColor = new BABYLON.Color3(0, 0, 0);
+      lm.backFaceCulling = false; // visible des deux côtés
+      const tarp = BABYLON.MeshBuilder.CreateRibbon("outpostTarp", { pathArray: [top, mid, bot] }, sc);
+      tarp.material = lm; tarp.parent = root; tarp.convertToFlatShadedMesh();
+      // ourlet roulé au bas (finition) + latte de bois au faîte (où la toile est lacée)
+      const hem = BABYLON.MeshBuilder.CreateTube("outpostHem", { path: bot, radius: 0.05, tessellation: 6 }, sc);
+      hem.material = K.mat([leather[0] * 0.78, leather[1] * 0.78, leather[2] * 0.78]); hem.parent = root;
+      const batten = BABYLON.MeshBuilder.CreateTube("outpostBatten", { path: top, radius: 0.05, tessellation: 6 }, sc);
+      batten.material = K.mat(P.woodDark); batten.parent = root;
+      // --- BARRE À VIANDE SÉCHÉE entre les 2 poteaux arrière (un peu en pente) ---
+      const barY = 1.45, slope = 0.09;
+      K.cyl(root, P.woodLight, { h:1.85, d:0.05 }, [0, barY, BACK + 0.07], { rot:[0, 0, Math.PI/2 - slope] });
+      const nMeat = 3 + Math.floor(Math.random() * 6); // 3..8 aléatoire
+      for (let i = 0; i < nMeat; i++) {
+        const x = nMeat > 1 ? -0.78 + (i / (nMeat - 1)) * 1.56 : 0;
+        const by = barY + x * Math.tan(slope);
+        K.box(root, [0.5, 0.2, 0.16], [0.07, 0.28, 0.05], [x, by - 0.16, BACK + 0.07]);
+      }
+      // Petit fanion-repère (l'avant-poste est un point de voyage rapide).
+      K.cyl(root, P.woodLight, { h:0.5, d:0.04 }, [SIDE, HB + 0.25, BACK]);
+      K.box(root, P.banner, [0.38, 0.26, 0.03], [SIDE + 0.21, HB + 0.42, BACK]);
+      return root;
+    },
+  });
+
+  add({
+    id:'borehole', name:'Borehole (forage alien)', cat:'Sites',
+    desc:"[site borehole · M9] PAS un puits : une vaste excavation ALIEN machinée, « évidence du passage précédent » — fosse en gradins concentriques TROP réguliers (mine à ciel ouvert), profondeurs luisantes, déblais des « forêuses colossales » au bord, portique-anneau effondré et trépan brisé.",
+    build(K) {
+      const root = K.node();
+      // Fond sombre = la fosse (les gradins y plongent ; masque le sol plat dessous).
+      K.cyl(root, [0.05, 0.05, 0.06], { h:0.04, d:5.4, t:24 }, [0, 0.02, 0], { unlit:true });
+      // Gradins concentriques machinés (régularité = artificiel, ≠ cratère naturel),
+      // descendant vers le centre.
+      const rings = [[5.0, 0.9], [4.0, 0.66], [3.0, 0.45], [2.1, 0.28], [1.3, 0.15]];
+      rings.forEach(([d, y], i) => K.tor(root, i < 2 ? P.stone : P.stoneDark, { d, thick:0.26, t:Math.max(10, Math.round(d*4.5)) }, [0, y, 0]));
+      // Fond + « profondeurs luisantes » (MÊME cyan que le vaisseau -> même techno alien).
+      K.cyl(root, P.dark, { h:0.12, d:1.05, t:14 }, [0, 0.07, 0], { unlit:true });
+      K.cyl(root, P.alienGlow, { h:0.05, d:0.74, t:14 }, [0, 0.14, 0], { emi:1.6, unlit:true });
+      // « Castoff » des forêuses : tas coniques de déblais + panneau au bord.
+      for (const [x, z] of [[3.0, 0.8], [-2.7, 1.4], [1.0, -3.0], [-1.8, -2.4]]) K.cone(root, [0.2, 0.19, 0.18], { h:0.8, d:1.2, t:6 }, [x, 0.4, z]);
+      K.box(root, P.metalDark, [0.5, 0.1, 0.4], [2.6, 0.07, -1.2], { rot:[0.1, 0.6, 0.15] });
+      // Portique-anneau d'extraction alien, à demi effondré en travers de la fosse.
+      K.tor(root, P.alienAlloy, { d:4.6, thick:0.22, t:20 }, [0.2, 1.4, 0.1], { rot:[1.15, 0.4, 0.15] });
+      // Trépan brisé (gros foret effilé) fiché dans le bord.
+      K.cone(root, P.metalDark, { h:2.2, d:0.8, t:8 }, [-2.4, 0.7, -0.7], { rot:[2.4, 0, 0.6] });
+      K.cyl(root, P.metalDark, { h:0.9, d:0.5, t:8 }, [-2.4, 1.45, -0.7], { rot:[2.4, 0, 0.6] });
+      return root;
+    },
+  });
+
+  add({
+    id:'battlefield', name:'Champ de bataille', cat:'Sites', grid:false,
+    desc:"[site battlefield · M9] Reste d'un affrontement TECHNOLOGIQUE (cf. ADR : « rifles, lasers, grenades ») : terre brûlée, cratères, fusils à énergie tombés (cellule luisante), grenades, caisse blindée éventrée, casque et ossements. (Plus de lances/boucliers médiévaux.)",
+    build(K) {
+      const root = K.node();
+      K.cyl(root, [0.12, 0.11, 0.12], { h:0.04, d:5.0, t:18 }, [0, 0.02, 0]); // terre brûlée
+      K.cyl(root, P.scorch, { h:0.05, d:1.2, t:12 }, [-1.2, 0.03, 0.6], { unlit:true }); // cratères scorchés
+      K.cyl(root, P.scorch, { h:0.05, d:0.9, t:12 }, [1.3, 0.03, -0.8], { unlit:true });
+      // fusils à énergie tombés : canon + crosse + cellule/émetteur lumineux
+      const rifle = (x, z, ry) => {
+        const r = K.node(root, [x, 0.09, z]); r.rotation.y = ry; r.rotation.z = Math.PI/2 - 0.08;
+        K.cyl(r, P.metalDark, { h:0.9, d:0.07 }, [0, 0, 0]);
+        K.box(r, P.armorDk, [0.1, 0.28, 0.13], [0, -0.5, 0]); // crosse
+        K.cyl(r, P.alienGlow, { h:0.12, d:0.09 }, [0, 0.52, 0], { emi:1.4, unlit:true }); // émetteur laser
+      };
+      rifle(-1.0, 0.2, 0.4); rifle(0.9, 0.8, 1.2); rifle(0.3, -1.1, -0.5);
+      // grenades éparses (corps + cuiller)
+      for (const [x, z] of [[-0.4,-0.5],[0.6,0.1],[-1.4,1.0]]) { K.sph(root, P.metalDark, { d:0.18, seg:6 }, [x, 0.1, z]); K.cyl(root, P.metalDark, { h:0.07, d:0.05 }, [x, 0.2, z]); }
+      // caisse blindée éventrée + plaque fondue
+      K.box(root, P.armor, [0.9, 0.5, 0.6], [1.6, 0.25, 1.2], { rot:[0, 0.4, 0.12] });
+      K.box(root, P.scorch, [0.4, 0.32, 0.62], [1.72, 0.3, 1.2], { rot:[0, 0.4, 0.12], unlit:true });
+      // casque + ossements
+      K.sph(root, P.metalDark, { d:0.36, seg:6 }, [-0.8, 0.1, 1.0], { scale:[1, 0.6, 1] });
+      K.ico(root, P.bone, { d:0.3 }, [0.3, 0.12, 0.4]);
+      K.box(root, P.bone, [0.15, 0.12, 0.22], [0.3, 0.1, 0.56]);
+      return root;
+    },
+  });
+
+  add({
+    id:'cache', name:'Cachette', cat:'Sites',
+    desc:"[site cache · M9] Réserve dissimulée : coffre + sacs à demi enterrés, camouflés sous des branchages, marqués d'un cairn.",
+    build(K) {
+      const root = K.node();
+      // Tertre de terre : la cache est à demi enterrée (entoure la base du coffre).
+      K.cyl(root, [0.17, 0.15, 0.13], { h:0.16, d:1.9, t:16 }, [0, 0.05, 0]);
+      // Coffre + couvercle + loquet + anse (légèrement enfoncé dans le tertre).
+      K.box(root, P.wood, [0.9, 0.52, 0.6], [0, 0.24, 0]);
+      K.box(root, P.woodDark, [0.94, 0.12, 0.64], [0, 0.52, 0]);
+      K.box(root, P.metalDark, [0.1, 0.24, 0.05], [0, 0.32, 0.32]);
+      K.tor(root, P.metalDark, { d:0.15, thick:0.03, t:10 }, [0, 0.46, 0.31], { rot:[Math.PI/2, 0, 0] });
+      // Sacs (corps + col resserré) posés au sol de part et d'autre.
+      const sack = (x, z, col, s) => {
+        K.sph(root, col, { d:0.5*s, seg:7 }, [x, 0.2*s, z], { scale:[1, 0.85, 1] });
+        K.cyl(root, [col[0]*0.78, col[1]*0.78, col[2]*0.78], { h:0.1*s, dt:0.07*s, db:0.16*s }, [x, 0.41*s, z]);
+      };
+      sack(0.72, 0.16, P.hatStraw, 1.0);
+      sack(-0.62, 0.26, P.fur, 0.85);
+      // Camouflage : branchages COURTS croisés sur le couvercle (restent sur le coffre).
+      for (let i = 0; i < 4; i++) K.cyl(root, P.wood, { h:0.72, d:0.05 }, [-0.18 + i*0.14, 0.6, 0.02], { rot:[0, 0.4 + i*0.8, Math.PI/2] });
+      // Branches APPUYÉES du sol au bord du couvercle (les deux bouts soutenus -> rien ne flotte).
+      K.cyl(root, P.woodDark, { h:0.9, d:0.05 }, [0.0, 0.3, 0.5], { rot:[-0.9, 0, 0] });
+      K.cyl(root, P.woodDark, { h:0.9, d:0.05 }, [0.35, 0.3, 0.48], { rot:[-0.9, 0, 0.3] });
+      K.cyl(root, P.woodDark, { h:0.9, d:0.05 }, [-0.35, 0.3, 0.5], { rot:[-0.9, 0, -0.3] });
+      K.cyl(root, P.woodDark, { h:0.9, d:0.05 }, [-0.1, 0.3, -0.5], { rot:[0.9, 0, 0.2] });
+      // Feuillage épars (petits panneaux) par-dessus.
+      for (const [x, z, r] of [[0.12, 0.08, 0.3], [-0.16, -0.04, 1.1], [0.04, 0.16, -0.4]]) K.box(root, P.bush, [0.24, 0.04, 0.2], [x, 0.66, z], { rot:[0.12, r, 0] });
+      // Cairn-repère (3 pierres empilées).
+      K.ico(root, P.stone, { d:0.32 }, [1.0, 0.1, -0.55]);
+      K.ico(root, P.stoneDark, { d:0.24 }, [1.0, 0.28, -0.55]);
+      K.ico(root, P.stone, { d:0.16 }, [1.0, 0.42, -0.55]);
+      return root;
+    },
+  });
+
+  // ----- FEU ----------------------------------------------------------------
+  add({
+    id:'feu', name:'Feu de camp', cat:'Feu',
+    desc:"Le cœur du jeu. Foyer travaillé : lit de cendres + braises rougeoyantes, cercle de CAILLOUX arrondis (légèrement enterrés), bûches à plat en CROIX symétrique (un seul niveau), FLAMME sculptée en couches (rouge→orange→jaune→cœur) DÉGAGÉE, avec flammèche animée, lumière chaude + étincelles.",
+    build(K, ctx) {
+      const root = K.node();
+      const char=[0.1,0.09,0.085], ash=[0.17,0.16,0.15], emberC=P.ember, hot=P.emberHot, fireC=P.fire;
+      const yellow=[1.0,0.86,0.4], coreC=[1.0,0.95,0.72], deep=[0.82,0.22,0.08], bark2=[0.24,0.17,0.12];
+
+      // --- LIT : sol calciné + cendres (légèrement bombé) ---
+      K.cyl(root, ash, { h:0.07, dt:2.0, db:2.2, t:18 }, [0, 0.035, 0]);
+      K.cyl(root, char, { h:0.07, dt:1.4, db:1.6, t:16 }, [0, 0.085, 0]);
+
+      // --- CERCLE DE PIERRES : TOUS des CAILLOUX (ico aux proportions variées), légèrement enterrés ---
+      const N = 9;
+      for (let i = 0; i < N; i++) {
+        const a = (i/N)*Math.PI*2 + Math.sin(i*2.3)*0.09;
+        const r = 1.06 + Math.sin(i*1.7)*0.07;
+        const s = 0.46 + Math.abs(Math.sin(i*3.1))*0.24;
+        const col = i%3===0 ? P.stoneDark : (i%3===1 ? P.stone : [0.29,0.32,0.34]);
+        const x = Math.cos(a)*r, z = Math.sin(a)*r;
+        const sy = 0.72 + 0.22*Math.sin(i*1.9), sxz = 0.9 + 0.18*Math.cos(i*2.7); // galet plus ou moins aplati/allongé
+        K.ico(root, col, { d:s, sub:1 }, [x, s*0.28, z], { rot:[Math.sin(i*1.3)*0.4, a, Math.cos(i*2.1)*0.3], scale:[sxz, sy, 1] });
+        if (i%3===0) K.ico(root, P.stoneDark, { d:s*0.5, sub:1 }, [x*0.85, s*0.16, z*0.85], { rot:[0.2, a, 0.3], scale:[1,0.7,1] }); // petit caillou d'appoint
+      }
+
+      // --- BRAISES sur le lit : petits blocs émissifs bas (cœur incandescent) ---
+      for (let i = 0; i < 8; i++) {
+        const a = i*2.39, r = 0.18 + (i%3)*0.2;
+        K.box(root, i%2 ? emberC : hot, [0.17, 0.1, 0.17], [Math.cos(a)*r, 0.12, Math.sin(a)*r], { emi:1.5, unlit:true, rot:[0,a,0] });
+      }
+
+      // --- BÛCHES : 3 grands RONDINS traversants à 60° -> ÉTOILE à 6 branches, symétrique, un seul niveau ---
+      const lly = 0.22, lh = 1.3, ld = 0.2;            // 3 bûches pleines centrées -> 6 bouts qui dépassent
+      const woods = [P.trunk, bark2, [0.31,0.22,0.15]];
+      for (let i = 0; i < 3; i++) {
+        const n = K.node(root, [0, lly, 0]); n.rotation.y = i*Math.PI/3;
+        K.cyl(n, woods[i], { h:lh, d:ld, t:7 }, [0, 0, 0], { rot:[Math.PI/2, 0, 0] }); // rondin couché, orienté à i×60°
+      }
+
+      // --- FLAMME sculptée (node animé) : corps profond -> orange -> jaune -> cœur + langues ---
+      const flame = K.node(root, [0, 0.34, 0]);
+      K.ico(flame, deep, { d:0.72, sub:1 }, [0, 0.24, 0], { emi:1.5, unlit:true, scale:[1,1.55,1] });
+      K.cone(flame, fireC, { h:1.05, d:0.62, t:6 }, [0, 0.56, 0], { emi:1.9, unlit:true });
+      const t2 = K.cone(flame, yellow, { h:0.72, d:0.36, t:6 }, [0.05, 0.9, -0.02], { emi:2.3, unlit:true });
+      const t3 = K.cone(flame, coreC,  { h:0.42, d:0.2,  t:5 }, [-0.03, 1.12, 0.03], { emi:2.7, unlit:true });
+      const sL = K.cone(flame, fireC, { h:0.5,  d:0.24, t:5 }, [-0.24, 0.5, 0.08], { emi:1.9, unlit:true, rot:[0,0,0.42] });
+      const sR = K.cone(flame, fireC, { h:0.46, d:0.22, t:5 }, [ 0.24, 0.48,-0.06], { emi:1.9, unlit:true, rot:[0,0,-0.46] });
+      ctx.animate((tt) => {
+        flame.scaling.y = 1 + Math.sin(tt*9)*0.07 + Math.sin(tt*17+1)*0.03; // pulsation
+        flame.rotation.y = Math.sin(tt*3)*0.07;                              // léger balancement
+        t2.rotation.z = Math.sin(tt*7)*0.13; t3.rotation.z = Math.sin(tt*11+2)*0.2;
+        sL.scaling.y = 1 + Math.sin(tt*13)*0.22; sR.scaling.y = 1 + Math.sin(tt*13+2)*0.22;
+      });
+
+      // --- lumière chaude + étincelles + filet de fumée (nettoyés au changement de modèle) ---
+      const light = new B.PointLight('fireLight', V3(0, 1.1, 0), ctx.scene);
+      light.diffuse = new B.Color3(P.fire[0], P.fire[1], P.fire[2]);
+      light.specular = new B.Color3(0,0,0);
+      light.intensity = 1.7; light.range = 20;
+      ctx.add(light);
+      ctx.add(flameParticles(ctx.scene, V3(0, 0.7, 0)));
+      smokePuffs(K, ctx, root, [0, 1.5, 0], [0.42,0.42,0.45]);
+      return root;
+    },
+  });
+
+  // ---- helpers de feedback (fumée, flammes) --------------------------------
+  function smokePuffs(K, ctx, parent, pos, color) {
+    const node = K.node(parent, pos);
+    const c = color || [0.5,0.5,0.52];
+    const puffs = [];
+    for (let i = 0; i < 4; i++)
+      puffs.push(K.sph(node, c, { d:0.35, seg:6 }, [0, i*0.4, 0], { alpha:0.55, unlit:true, emi:0.5 }));
+    ctx.animate((t) => {
+      puffs.forEach((p, i) => {
+        const k = ((t*0.4 + i*0.28) % 1);
+        p.position.y = k * 1.6;
+        p.scaling.setAll(0.4 + 0.9*(1-k));
+        p.position.x = Math.sin(k*4 + i) * 0.15;
+      });
+    });
+    return node;
+  }
+
+  function discTex(scene) {
+    const t = new B.DynamicTexture('disc', { width:32, height:32 }, scene, false);
+    const c = t.getContext();
+    const g = c.createRadialGradient(16,16,0,16,16,16);
+    g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(0,0,32,32);
+    t.hasAlpha = true; t.update(); return t;
+  }
+
+  function flameParticles(scene, pos) {
+    const ps = new B.ParticleSystem('flame', 80, scene);
+    ps.particleTexture = discTex(scene);
+    ps.emitter = pos.clone();
+    ps.minEmitBox = V3(-0.18, 0, -0.18); ps.maxEmitBox = V3(0.18, 0.15, 0.18);
+    ps.color1 = new B.Color4(1.0, 0.7, 0.25, 1);
+    ps.color2 = new B.Color4(1.0, 0.4, 0.12, 1);
+    ps.colorDead = new B.Color4(0.4, 0.12, 0.05, 0);
+    ps.minSize = 0.15; ps.maxSize = 0.45;
+    ps.minLifeTime = 0.3; ps.maxLifeTime = 0.7;
+    ps.emitRate = 60;
+    ps.gravity = V3(0, 2.5, 0);
+    ps.direction1 = V3(-0.3, 1, -0.3); ps.direction2 = V3(0.3, 1.4, 0.3);
+    ps.minEmitPower = 0.4; ps.maxEmitPower = 0.9;
+    ps.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+    ps.start();
+    return ps;
+  }
+
+  // ==========================================================================
+  //  SCÈNE & VISUALISEUR
+  // ==========================================================================
+  const canvas = document.getElementById('c');
+  const engine = new B.Engine(canvas, true, { preserveDrawingBuffer:true, stencil:true, alpha:false, premultipliedAlpha:false });
+  const scene = new B.Scene(engine);
+  // Fond de « studio » : un peu plus clair que le brouillard du jeu pour que les
+  // modèles (souvent sombres) ressortent nettement lors de la revue.
+  scene.clearColor = new B.Color4(0.14, 0.18, 0.22, 1);
+  scene.fogColor = new B.Color3(P.fog[0], P.fog[1], P.fog[2]);
+  scene.fogDensity = 0.02;
+
+  // Fond dégradé « studio » (clair en haut → sombre en bas) : garantit du contraste
+  // pour tout modèle, qu'il soit clair (bouleau) ou sombre (cape de la constructrice).
+  const bgTex = new B.DynamicTexture('bg', { width:8, height:256 }, scene, false);
+  (function(){ const x = bgTex.getContext(); const g = x.createLinearGradient(0,0,0,256);
+    g.addColorStop(0,'#9aacb6'); g.addColorStop(0.5,'#566873'); g.addColorStop(1,'#212b32');
+    x.fillStyle = g; x.fillRect(0,0,8,256); bgTex.update(); })();
+  const bgLayer = new B.Layer('bg', null, scene, true);
+  bgLayer.texture = bgTex;
+
+  const K = makeKit(scene);
+
+  // caméra orbite
+  const camera = new B.ArcRotateCamera('cam', -Math.PI/2 - 0.5, 1.12, 12, V3(0, 1, 0), scene);
+  camera.attachControl(canvas, true);
+  camera.wheelDeltaPercentage = 0.02;
+  camera.lowerBetaLimit = 0.15; camera.upperBetaLimit = Math.PI/2 + 0.2;
+  camera.lowerRadiusLimit = 2; camera.upperRadiusLimit = 80;
+  camera.minZ = 0.1;
+
+  // lumières — esprit du jeu (teintes froides/chaudes) mais plus généreuses :
+  // un labo doit montrer la FORME des modèles, pas l'ambiance crépusculaire.
+  const hemi = new B.HemisphericLight('hemi', V3(0,1,0), scene);
+  hemi.intensity = 0.9; hemi.diffuse = new B.Color3(0.7,0.78,0.9); hemi.groundColor = new B.Color3(0.2,0.24,0.26);
+  const sun = new B.DirectionalLight('sun', V3(-0.5,-1,-0.45), scene);
+  sun.position = V3(20, 40, 20); sun.intensity = 1.4; sun.diffuse = new B.Color3(1.0,0.94,0.84);
+  // lumière d'appoint froide à l'opposé (débouche les ombres, lit les volumes)
+  const fill = new B.DirectionalLight('fill', V3(0.6,-0.4,0.7), scene);
+  fill.intensity = 0.55; fill.diffuse = new B.Color3(0.55,0.66,0.8); fill.specular = new B.Color3(0,0,0);
+
+  // ombres de contact (aident à lire la forme et l'assise au sol)
+  const shadowGen = new B.ShadowGenerator(1024, sun);
+  shadowGen.useBlurExponentialShadowMap = true; shadowGen.blurKernel = 24; shadowGen.setDarkness(0.45);
+  sun.shadowMinZ = 1; sun.shadowMaxZ = 120;
+
+  // sol : grille de référence (1 unité / case)
+  const gridTex = (() => {
+    const t = new B.DynamicTexture('grid', { width:128, height:128 }, scene, false);
+    const c = t.getContext();
+    c.fillStyle = '#16242a'; c.fillRect(0,0,128,128);
+    c.strokeStyle = '#3a5e57'; c.lineWidth = 5;
+    c.strokeRect(0,0,128,128);
+    t.update();
+    t.wrapU = t.wrapV = B.Texture.WRAP_ADDRESSMODE;
+    t.uScale = t.vScale = 60;
+    return t;
+  })();
+  const ground = B.MeshBuilder.CreateGround('ground', { width:60, height:60, subdivisions:1 }, scene);
+  const groundMat = new B.StandardMaterial('groundMat', scene);
+  groundMat.diffuseTexture = gridTex;
+  groundMat.specularColor = new B.Color3(0,0,0);
+  groundMat.diffuseColor = new B.Color3(0.6,0.7,0.66);
+  ground.material = groundMat;
+  ground.receiveShadows = true;
+
+  // post-process léger (comme le jeu)
+  const pipe = new B.DefaultRenderingPipeline('def', true, scene, [camera]);
+  pipe.fxaaEnabled = true;
+  pipe.imageProcessing.contrast = 1.1;
+  pipe.imageProcessing.exposure = 1.08;
+  pipe.imageProcessing.toneMappingEnabled = true;
+  pipe.imageProcessing.vignetteEnabled = true;
+  pipe.imageProcessing.vignetteWeight = 1.1;
+  pipe.bloomEnabled = true; pipe.bloomThreshold = 1.25; pipe.bloomWeight = 0.55; pipe.bloomScale = 0.5;
+  pipe.grainEnabled = true; pipe.grain.intensity = 2.5; pipe.grain.animated = true;
+
+  // état du visualiseur
+  let currentRoot = null;
+  let extras = [];       // lumières/particules à disposer
+  let animators = [];    // callbacks d'animation (fumée…)
+  let selected = MODELS[0];
+  let showCurrent = false;
+  let autoRotate = false; // table tournante DÉSACTIVÉE par défaut (l'utilisateur gère la caméra)
+  let refMesh = null;
+  let gridMode = false;
+  let wire = false;
+
+  function clearScene() {
+    if (currentRoot) { currentRoot.dispose(false, true); currentRoot = null; }
+    extras.forEach(e => e.dispose && e.dispose());
+    extras = []; animators = [];
+    shadowGen.getShadowMap().renderList = [];
+  }
+
+  function makeCtx() {
+    return {
+      scene,
+      add: (o) => { extras.push(o); return o; },
+      animate: (fn) => { animators.push(fn); },
+    };
+  }
+
+  function applyWire(node) {
+    node.getChildMeshes().forEach(m => { if (m.material) m.material.wireframe = wire; });
+  }
+
+  // N'ajoute QUE les meshes (pas les TransformNode) comme projeteurs d'ombre :
+  // l'auto-extension de la projection appelle getBoundingInfo() sur chaque entrée.
+  function castShadows(node) {
+    node.getChildMeshes(false).forEach(m => { if (m.getTotalVertices() > 0) shadowGen.addShadowCaster(m); });
+  }
+
+  function frame(root) {
+    const b = root.getHierarchyBoundingVectors(true);
+    const center = b.min.add(b.max).scale(0.5);
+    const size = b.max.subtract(b.min).length();
+    camera.setTarget(new B.Vector3(center.x, Math.max(center.y, 0.6), center.z));
+    camera.radius = size * 1.25 + 2;
+    camera.lowerRadiusLimit = size * 0.3 + 1;
+    camera.upperRadiusLimit = size * 5 + 20;
+  }
+
+  function showRefScale() {
+    if (refMesh) { refMesh.dispose(false, true); refMesh = null; }
+    if (!document.getElementById('btnRef').classList.contains('on')) return;
+    const root = K.node();
+    K.cyl(root, [0.9,0.9,0.95], { h:1.0, d:0.7, t:8, smooth:true }, [1.6, 0.9, 0], { smooth:true, alpha:0.25 });
+    K.sph(root, [0.9,0.9,0.95], { d:0.7, seg:8, smooth:true }, [1.6, 1.4, 0], { smooth:true, alpha:0.25 });
+    K.sph(root, [0.9,0.9,0.95], { d:0.7, seg:8, smooth:true }, [1.6, 0.4, 0], { smooth:true, alpha:0.25 });
+    root.getChildMeshes().forEach(m => { m.material.alpha = 0.22; });
+    refMesh = root;
+  }
+
+  function render() {
+    clearScene();
+    document.getElementById('btnRef').classList.contains('on'); // noop guard
+    const ctx = makeCtx();
+    if (gridMode) {
+      renderGrid(ctx);
+    } else {
+      const builder = (showCurrent && selected.current) ? selected.current : selected.build;
+      currentRoot = builder(K, ctx);
+      castShadows(currentRoot);
+      applyWire(currentRoot);
+      frame(currentRoot);
+    }
+    showRefScale();
+    updateInfo();
+  }
+
+  function makeLabel(text, pos) {
+    const t = new B.DynamicTexture('lbl', { width:256, height:64 }, scene, false);
+    t.hasAlpha = true;
+    t.drawText(text, null, 44, 'bold 26px monospace', '#dfe9e2', 'transparent', true);
+    const m = new B.StandardMaterial('lblm', scene);
+    m.diffuseTexture = t; m.opacityTexture = t;
+    m.emissiveColor = new B.Color3(0.85,0.92,0.86); m.disableLighting = true; m.backFaceCulling = false;
+    const p = B.MeshBuilder.CreatePlane('lblp', { width:2.2, height:0.55 }, scene);
+    p.material = m; p.position.copyFrom(pos); p.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
+    return p;
+  }
+
+  function renderGrid(ctx) {
+    const items = MODELS.filter(m => m.grid !== false);
+    const cols = Math.ceil(Math.sqrt(items.length));
+    const gap = 6;
+    const root = K.node();
+    items.forEach((m, i) => {
+      const cx = (i % cols - (cols-1)/2) * gap;
+      const cz = (Math.floor(i/cols) - (Math.ceil(items.length/cols)-1)/2) * gap;
+      const sub = m.build(K, ctx);
+      sub.parent = root; sub.position.set(cx, 0, cz);
+      const b = sub.getHierarchyBoundingVectors(true);
+      makeLabel(m.name, new B.Vector3(cx, b.max.y + 0.5, cz)).parent = root;
+    });
+    currentRoot = root;
+    castShadows(root);
+    applyWire(root);
+    // cadrage d'ensemble : vue plongeante qui embrasse toute la grille
+    const b = root.getHierarchyBoundingVectors(true);
+    const ext = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+    camera.setTarget(new B.Vector3((b.min.x+b.max.x)/2, 0.4, (b.min.z+b.max.z)/2));
+    camera.beta = 0.82;
+    camera.radius = ext * 1.05 + 6;
+    camera.lowerRadiusLimit = 4; camera.upperRadiusLimit = ext * 4 + 40;
+  }
+
+  // ---- UI -----------------------------------------------------------------
+  function buildList() {
+    const list = document.getElementById('list');
+    const cats = [];
+    MODELS.forEach(m => { if (!cats.includes(m.cat)) cats.push(m.cat); });
+    cats.forEach(cat => {
+      const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; list.appendChild(h);
+      MODELS.filter(m => m.cat === cat).forEach(m => {
+        const el = document.createElement('div');
+        el.className = 'item'; el.dataset.id = m.id;
+        el.innerHTML = m.name + (m.current ? '<small>avant / après dispo.</small>' : '');
+        el.onclick = () => selectModel(m.id);
+        list.appendChild(el);
+      });
+    });
+  }
+
+  function selectModel(id) {
+    const m = MODELS.find(x => x.id === id); if (!m) return;
+    selected = m; gridMode = false;
+    document.getElementById('btnGrid').classList.remove('on');
+    if (!m.current) { showCurrent = false; document.getElementById('btnCmp').classList.remove('on'); }
+    render();
+    syncList();
+  }
+
+  function syncList() {
+    document.querySelectorAll('.item').forEach(el =>
+      el.classList.toggle('active', !gridMode && el.dataset.id === selected.id));
+  }
+
+  function updateInfo() {
+    const cmpBtn = document.getElementById('btnCmp');
+    if (gridMode) {
+      document.getElementById('mName').textContent = 'Vue d\'ensemble';
+      document.getElementById('mBadge').textContent = MODELS.filter(m=>m.grid!==false).length + ' modèles';
+      document.getElementById('mDesc').textContent = 'Tous les modèles atomiques disposés sur la grille. Clique un nom à gauche pour l\'examiner en détail.';
+      document.getElementById('mMode').style.display = 'none';
+      cmpBtn.style.display = 'none';
+      return;
+    }
+    document.getElementById('mName').textContent = selected.name;
+    document.getElementById('mBadge').textContent = selected.cat;
+    document.getElementById('mDesc').textContent = selected.desc || '';
+    cmpBtn.style.display = selected.current ? '' : 'none';
+    const mode = document.getElementById('mMode');
+    if (showCurrent && selected.current) { mode.style.display = 'block'; mode.textContent = '▲ version ACTUELLE du jeu (telle quelle dans src/render)'; }
+    else if (selected.current) { mode.style.display = 'block'; mode.textContent = '◆ proposition — bouton « avant / après » pour comparer'; }
+    else mode.style.display = 'none';
+  }
+
+  // boutons
+  const $ = (id) => document.getElementById(id);
+  $('btnRot').onclick = function(){ autoRotate = !autoRotate; this.classList.toggle('on', autoRotate); };
+  $('btnCmp').onclick = function(){ if (!selected.current) return; showCurrent = !showCurrent; this.classList.toggle('on', showCurrent); render(); };
+  $('btnRef').onclick = function(){ this.classList.toggle('on'); showRefScale(); };
+  $('btnShadow').onclick = function(){ const on = this.classList.toggle('on'); shadowGen.getShadowMap().refreshRate = on ? B.RenderTargetTexture.REFRESHRATE_RENDER_ONEVERYFRAME : 0; ground.receiveShadows = on; };
+  $('btnGrid').onclick = function(){ gridMode = !gridMode; this.classList.toggle('on', gridMode); render(); syncList(); };
+  $('btnWire').onclick = function(){ wire = this.classList.toggle('on'); if (currentRoot) applyWire(currentRoot); };
+  $('btnFog').onclick = function(){ const on = this.classList.toggle('on'); scene.fogMode = on ? B.Scene.FOGMODE_EXP2 : B.Scene.FOGMODE_NONE; };
+  $('btnShot').onclick = function(){ B.Tools.CreateScreenshot(engine, camera, { width:1600, height:1000 }); };
+
+  document.addEventListener('keydown', (e) => {
+    if (gridMode) return;
+    const i = MODELS.indexOf(selected);
+    if (e.key === 'ArrowRight') selectModel(MODELS[(i+1) % MODELS.length].id);
+    else if (e.key === 'ArrowLeft') selectModel(MODELS[(i-1+MODELS.length) % MODELS.length].id);
+    else if (e.key.toLowerCase() === 'r') $('btnRot').click();
+    else if (e.key.toLowerCase() === 'c') $('btnCmp').click();
+  });
+
+  // boucle de rendu
+  let t = 0;
+  scene.onBeforeRenderObservable.add(() => {
+    const dt = engine.getDeltaTime() / 1000;
+    t += dt;
+    if (autoRotate) camera.alpha += dt * 0.4;
+    animators.forEach(fn => fn(t));
+  });
+
+  buildList();
+  render();
+  syncList();
+  loader.style.display = 'none';
+
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+})();
+</script>
+</body>
+</html>
