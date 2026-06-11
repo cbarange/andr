@@ -10,13 +10,15 @@
 // ============================================================================
 
 import {
-  GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carryCapacity,
+  GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carryCapacity, plannedCount, siteKey,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
+import { lootForNode, lootNodeIds } from "./dungeon";
+import { drawRoad } from "./roads";
 import {
-  config, craftables, craftableById, craftableCost, trapDrops, jobs, jobById,
-  events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
+  config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
+  craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -42,6 +44,11 @@ const INCOME_TICKS = config.population.incomeSeconds * HZ;
 const EV_MIN_S = config.events.minSeconds;
 const EV_MAX_S = config.events.maxSeconds;
 const EV_EMPTY_SCALE = config.events.emptyRescheduleScale;
+
+/** Durée d'un chantier en TICS (>= 1) — la constructrice bâtit ce bâtiment en autant de tics. */
+function buildTicks(id: string): number {
+  return Math.max(1, Math.round(buildSecondsFor(id) * HZ));
+}
 
 // ---- M5 : application d'un effet d'événement (déclaratif) à un BROUILLON d'état. ----
 // Tout est PUR/déterministe : on mute le brouillon (déjà cloné par l'appelant) et le RNG.
@@ -182,22 +189,28 @@ export function reduce(state: GameState, action: GameAction): GameState {
       if (!craftable) return state;
       // La cabane doit être réparée (elle abrite l'atelier de la constructrice).
       if (!state.cabinRepaired) return state;
-      const count = state.buildings[action.id] ?? 0;
+      // On COMPTE les exemplaires achevés + ceux déjà en chantier (déjà payés) : on n'enfile
+      // pas plus que le maximum, et le coût escaladant suit le rang du PROCHAIN exemplaire.
+      const count = plannedCount(state, action.id);
       if (count >= craftable.maximum) return state; // maximum atteint
       const cost = craftableCost(craftable, count);
       // Ressources suffisantes ?
       for (const r of Object.keys(cost)) {
         if (stockOf(state, r) < cost[r]) return state;
       }
-      // Déduire le coût et incrémenter le bâtiment.
+      // Le coût est débité IMMÉDIATEMENT (les matériaux partent sur le chantier) ; le bâtiment
+      // n'est compté dans `buildings` qu'à l'ACHÈVEMENT (cf. TICK). On enfile un chantier : s'il
+      // est seul, il démarre tout de suite (doneAt = échéance) ; sinon il attend son tour (doneAt 0).
       const resources = { ...state.resources };
       for (const r of Object.keys(cost)) {
         resources[r] = (resources[r] ?? 0) - cost[r];
       }
+      const startsNow = state.constructing.length === 0;
+      const item = { id: action.id, doneAt: startsNow ? state.tick + buildTicks(action.id) : 0 };
       return {
         ...state,
         resources,
-        buildings: { ...state.buildings, [action.id]: count + 1 },
+        constructing: [...state.constructing, item],
         rng: cloneRng(state.rng),
       };
     }
@@ -294,6 +307,12 @@ export function reduce(state: GameState, action: GameAction): GameState {
       if (job.id === "gatherer") return state;
       // Prérequis : le bâtiment du métier doit exister.
       if (job.building && (state.buildings[job.building] ?? 0) === 0) return state;
+      // M9 — prérequis SITE : un métier de mineur n'est assignable qu'une fois une mine du bon
+      // type SÉCURISÉE (cf. SECURE_MINE). Verrouillé tant qu'aucun filon correspondant n'est pris.
+      if (job.siteType) {
+        const unlocked = Object.values(state.sites ?? {}).some((s) => s.secured && s.type === job.siteType);
+        if (!unlocked) return state;
+      }
       if (freeWorkers(state) <= 0) return state; // aucun bûcheron disponible à reconvertir
       return {
         ...state,
@@ -310,6 +329,116 @@ export function reduce(state: GameState, action: GameAction): GameState {
         workers: { ...state.workers, [action.job]: n - 1 },
         rng: cloneRng(state.rng),
       };
+    }
+
+    // ---- M9 : exploration des mines & grottes (disposition/butin dérivés de la graine ; ICI on ne
+    //      stocke que ce qui CHANGE — découverte / butin pris / mine sécurisée / grotte nettoyée). ----
+
+    case "DISCOVER_SITE": {
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.discovered && prog.type) return state; // déjà connu -> no-op
+      return {
+        ...state,
+        sites: { ...state.sites, [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true } },
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "TAKE_LOOT": {
+      // Butin COMMUN à toute la carte : premier-servi. Si ce nœud est déjà pris -> no-op (l'hôte
+      // arbitre l'ordre). Sinon, le contenu (dérivé de la graine) va dans le SAC, borné par la capacité.
+      const pid = action.playerId;
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.taken?.[action.nodeId]) return state; // déjà ramassé par quelqu'un
+      const loot = lootForNode(action.siteType, action.cx, action.cz, state.worldSeed, action.nodeId);
+      if (Object.keys(loot).length === 0) return state; // rien à ramasser ici
+      let room = carryCapacity(state) - carriedTotal(state, pid);
+      if (room <= 0) return state; // sac plein -> on n'« épuise » pas le cache (on pourra revenir)
+      const bag = { ...(state.carried[pid] ?? {}) };
+      for (const r of Object.keys(loot)) {
+        if (room <= 0) break;
+        const add = Math.min(loot[r], room);
+        bag[r] = (bag[r] ?? 0) + add;
+        room -= add;
+      }
+      const taken = { ...(prog.taken ?? {}), [action.nodeId]: true };
+      // Grotte ENTIÈREMENT vidée -> nettoyée (devient un avant-poste, cf. rendu R4). Usage unique.
+      let cleared = prog.cleared ?? false;
+      if (!cleared && action.siteType === "cave") {
+        const ids = lootNodeIds(action.siteType, action.cx, action.cz, state.worldSeed);
+        cleared = ids.length > 0 && ids.every((id) => taken[id]);
+      }
+      const lootSites = {
+        ...state.sites,
+        [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true, taken, cleared },
+      };
+      // Grotte NOUVELLEMENT nettoyée (devient avant-poste) -> trace une route vers le réseau (fusion).
+      const lootRoads = cleared && !prog.cleared ? drawRoad(state.roads, lootSites, action.cx, action.cz) : state.roads;
+      return {
+        ...state,
+        carried: { ...state.carried, [pid]: bag },
+        sites: lootSites,
+        roads: lootRoads,
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "CLEAR_HAZARD": {
+      // Dégage un éboulement (v1 : sans coût ; le coût d'outil viendra en v3). Idempotent.
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.hazards?.[action.nodeId]) return state;
+      return {
+        ...state,
+        sites: { ...state.sites, [key]: { ...prog, hazards: { ...(prog.hazards ?? {}), [action.nodeId]: true } } },
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "SECURE_MINE": {
+      // Sécuriser le filon SUFFIT à débloquer le métier (cf. garde ASSIGN_WORKER). Idempotent.
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.secured) return state;
+      // Mine sécurisée : une route est tracée (fidèle ADR) MAIS la mine ne devient PAS un avant-poste.
+      const mineSites = { ...state.sites, [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true, secured: true } };
+      return {
+        ...state,
+        sites: mineSites,
+        roads: drawRoad(state.roads, mineSites, action.cx, action.cz),
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "CLEAR_CAVE": {
+      // Grotte entièrement nettoyée ⇒ se convertit en avant-poste (le rendu lit `cleared`). Idempotent.
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.cleared) return state;
+      const caveSites = { ...state.sites, [key]: { ...prog, discovered: true, cleared: true } };
+      return {
+        ...state,
+        sites: caveSites,
+        roads: drawRoad(state.roads, caveSites, action.cx, action.cz), // avant-poste -> route (fusion)
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "CRAFT_ITEM": {
+      // Fabrique un OBJET : recette puisée dans l'ENTREPÔT, objet ajouté au SAC (occupe 1 de portage).
+      const item = craftableItemById[action.itemId];
+      if (!item) return state;
+      if (item.building && (state.buildings[item.building] ?? 0) === 0) return state; // prérequis bâtiment
+      for (const r of Object.keys(item.recipe)) if (stockOf(state, r) < item.recipe[r]) return state; // ressources manquantes
+      const pid = action.playerId;
+      if (carryCapacity(state) - carriedTotal(state, pid) <= 0) return state; // sac plein
+      const resources = { ...state.resources };
+      for (const r of Object.keys(item.recipe)) resources[r] = (resources[r] ?? 0) - item.recipe[r];
+      const bag = { ...(state.carried[pid] ?? {}) };
+      bag[item.id] = (bag[item.id] ?? 0) + 1;
+      return { ...state, resources, carried: { ...state.carried, [pid]: bag }, rng: cloneRng(state.rng) };
     }
 
     case "RESOLVE_EVENT_CHOICE": {
@@ -469,6 +598,19 @@ export function reduce(state: GameState, action: GameAction): GameState {
     case "TICK": {
       const tick = state.tick + 1;
 
+      // 0) CHANTIERS : la file avance. Le chantier de tête s'achève à son échéance ->
+      //    le bâtiment compte enfin dans `buildings`, on retire la tête et le suivant DÉMARRE
+      //    (séquentiel : un seul chantier actif). Déterministe (échéances en tics).
+      let buildings = state.buildings;
+      let constructing = state.constructing;
+      while (constructing.length > 0 && constructing[0].doneAt > 0 && tick >= constructing[0].doneAt) {
+        const head = constructing[0];
+        buildings = { ...buildings, [head.id]: (buildings[head.id] ?? 0) + 1 };
+        const rest = constructing.slice(1);
+        // Le nouveau chantier de tête démarre maintenant (doneAt calé sur ce tic).
+        constructing = rest.length > 0 ? [{ id: rest[0].id, doneAt: tick + buildTicks(rest[0].id) }, ...rest.slice(1)] : rest;
+      }
+
       // 1) Le feu refroidit d'un cran à échéance.
       let fire = state.fire;
       let fireCoolAt = state.fireCoolAt;
@@ -504,7 +646,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       let rng = state.rng;
       let population = state.population;
       let popGrowAt = state.popGrowAt;
-      const maxPop = (state.buildings["hut"] ?? 0) * HUT_ROOM;
+      const maxPop = (buildings["hut"] ?? 0) * HUT_ROOM;
       if (tick >= popGrowAt) {
         if (population < maxPop) population += 1;
         rng = cloneRng(state.rng);
@@ -574,7 +716,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       let eventScheduledAt = state.eventScheduledAt;
       let pendingEffects = state.pendingEffects;
       let workers = state.workers;
-      let buildings = state.buildings;
+      // `buildings` est déclaré plus haut (avance des chantiers) ; les événements peuvent le modifier.
 
       const pendingDue = pendingEffects.length > 0 && pendingEffects.some((p) => p.at <= tick);
       const canTrigger = activeEvent === null && (eventScheduledAt === 0 || tick >= eventScheduledAt);
@@ -649,6 +791,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         producing,
         workers,
         buildings,
+        constructing,
         activeEvent,
         eventScheduledAt,
         pendingEffects,

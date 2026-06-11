@@ -24,8 +24,12 @@ export type GameActionMsg = PlayerAction;
  *  - les échéances (`*At`) + le `rng` sont inclus -> un client promu hôte reprend la timeline
  *    sans rafale d'événements/revenus (pas de « burst » post-migration).
  * `host` = revendication d'autorité de l'émetteur (anti split-brain : cf. `net/host.ts`).
+ *  - `forced` : l'émetteur a « ouvert » la partie (autorité pinnée) ;
+ *  - `epoch` : terme d'autorité (façon Raft-lite) — incrémenté à chaque reprise par failover.
+ *    L'époque la plus haute fait autorité, ce qui évite qu'un ancien hôte revenu après un silence
+ *    n'écrase l'autorité reprise. (Défaut 0 pour les pairs d'une version antérieure.)
  */
 export type StateSyncMsg = {
   state: GameState;
-  host: { id: string; forced: boolean };
+  host: { id: string; forced: boolean; epoch: number };
 };

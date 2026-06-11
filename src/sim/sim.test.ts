@@ -5,17 +5,19 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  createInitialState, Fire, Temp, BUILDER_ABSENT, carriedTotal, carryCapacity, freeWorkers, GameState,
+  createInitialState, Fire, Temp, BUILDER_ABSENT, carriedTotal, carriedOf, carryCapacity, freeWorkers, siteKey, GameState,
 } from "./state";
 import { reduce, reduceAll, advanceTicks } from "./reducer";
 import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, GameAction,
+  discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction,
 } from "./actions";
+import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
-import { config, eventById, storageCap, craftableById, craftableRevealed } from "../../data/world";
+import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
 
 /** Force le déclenchement d'un événement par id (action de debug, hors réseau). */
 function trigger(s: GameState, id: string): GameState {
@@ -24,6 +26,8 @@ function trigger(s: GameState, id: string): GameState {
 
 const HZ = config.simTickHz;
 const MAX = config.fire.builder.maxLevel;
+/** Durée d'un chantier en tics (résiste au réglage des `buildSeconds`). */
+const ticksFor = (id: string): number => Math.max(1, Math.round(buildSecondsFor(id) * HZ));
 
 /** État de base où la cabane est réparée (entrepôt + construction débloqués). */
 function repaired(extra: Partial<GameState> = {}): GameState {
@@ -161,25 +165,89 @@ describe("construction (depuis l'entrepôt, après réparation)", () => {
     expect(reduce(notRepaired, build("p1", "cart"))).toBe(notRepaired);
   });
 
-  it("construit et déduit le coût de l'entrepôt", () => {
+  it("débite le coût immédiatement et achève le bâtiment après le chantier", () => {
     const s = repaired({ resources: { wood: 50 } });
     const b = reduce(s, build("p1", "cart")); // 30
-    expect(b.buildings["cart"]).toBe(1);
-    expect(b.resources.wood).toBe(20);
+    expect(b.resources.wood).toBe(20); // matériaux partis sur le chantier tout de suite
+    expect(b.buildings["cart"] ?? 0).toBe(0); // mais le bâtiment N'EST PAS encore là
+    expect(b.constructing.length).toBe(1); // un chantier en cours
+    const done = advanceTicks(b, ticksFor("cart") + 2); // après la durée du chantier
+    expect(done.buildings["cart"]).toBe(1); // achevé -> compte enfin
+    expect(done.constructing.length).toBe(0);
   });
 
-  it("applique des coûts croissants et respecte le maximum", () => {
+  it("applique des coûts croissants et respecte le maximum (chantiers en file inclus)", () => {
     let s = repaired({ resources: { wood: 100 } });
     s = reduce(s, build("p1", "trap")); // 10
-    s = reduce(s, build("p1", "trap")); // 10 + 1×10 = 20
-    expect(s.buildings["trap"]).toBe(2);
+    s = reduce(s, build("p1", "trap")); // 10 + 1×10 = 20 (le coût suit le chantier déjà en file)
     expect(s.resources.wood).toBe(70);
+    expect(s.constructing.length).toBe(2);
     const cart1 = reduce(s, build("p1", "cart"));
-    expect(reduce(cart1, build("p1", "cart"))).toBe(cart1); // cart max 1
+    expect(reduce(cart1, build("p1", "cart"))).toBe(cart1); // cart max 1 : le chantier en file compte
+    const done = advanceTicks(s, ticksFor("trap") * 2 + 2); // deux pièges séquentiels
+    expect(done.buildings["trap"]).toBe(2);
   });
 
   it("refuse une ressource non encore disponible (loge : fourrure)", () => {
     expect(reduce(repaired({ resources: { wood: 9999 } }), build("p1", "lodge")).buildings["lodge"] ?? 0).toBe(0);
+  });
+});
+
+describe("file de construction (chantiers séquentiels, déterministes)", () => {
+  it("séquentiel : les chantiers s'achèvent l'un APRÈS l'autre, pas en parallèle", () => {
+    let s = repaired({ resources: { wood: 9999 } });
+    s = reduce(s, build("p1", "hut"));
+    s = reduce(s, build("p1", "hut"));
+    expect(s.constructing.length).toBe(2);
+    const T = ticksFor("hut");
+    // Juste après l'achèvement du 1er, une seule hutte est posée — la 2ᵉ démarre seulement là.
+    const afterFirst = advanceTicks(s, T + 1);
+    expect(afterFirst.buildings["hut"]).toBe(1);
+    expect(afterFirst.constructing.length).toBe(1);
+    // Il faut encore ~T tics pour la seconde (preuve qu'elles ne tournaient pas en parallèle).
+    expect((advanceTicks(s, T + 2).buildings["hut"] ?? 0)).toBe(1);
+    const afterSecond = advanceTicks(s, 2 * T + 2);
+    expect(afterSecond.buildings["hut"]).toBe(2);
+    expect(afterSecond.constructing.length).toBe(0);
+  });
+
+  it("ne dépasse jamais le maximum, chantiers en file compris", () => {
+    // cart max = 1 : une fois un cart en chantier, on ne peut pas en enfiler un second.
+    let s = repaired({ resources: { wood: 9999 } });
+    s = reduce(s, build("p1", "cart"));
+    const blocked = reduce(s, build("p1", "cart"));
+    expect(blocked).toBe(s); // no-op : plannedCount(cart) = 1 = maximum
+    expect(s.constructing.filter((c) => c.id === "cart").length).toBe(1);
+  });
+
+  it("« fonctionnel à la fin » : une hutte n'ouvre des places de population qu'une fois ACHEVÉE", () => {
+    // Sans hutte achevée, aucun villageois n'arrive même après une longue attente…
+    let s = repaired({ resources: { wood: 9999 } });
+    s = reduce(s, build("p1", "hut")); // hut en chantier, pas encore comptée
+    const T = ticksFor("hut");
+    // Avance juste avant l'achèvement : maxPop dérive de buildings["hut"] = 0 -> population reste 0.
+    const beforeDone = advanceTicks(s, T - 2);
+    expect(beforeDone.buildings["hut"] ?? 0).toBe(0);
+    expect(beforeDone.population).toBe(0);
+    // Une fois la hutte achevée puis le temps de croissance écoulé, la population peut grandir.
+    const grown = advanceTicks(s, T + 60 * HZ);
+    expect(grown.buildings["hut"]).toBe(1);
+    expect(grown.population).toBeGreaterThan(0);
+  });
+
+  it("déterministe : même séquence (build + ticks) -> file et bâtiments identiques", () => {
+    const base = repaired({ resources: { wood: 9999 } });
+    const total = ticksFor("trap") * 2 + ticksFor("hut") + 30; // les 3 chantiers, en séquence, + marge
+    const seq: GameAction[] = [
+      build("a", "trap"), build("a", "hut"), build("a", "trap"),
+      ...Array.from({ length: total }, () => tick()),
+    ];
+    const r1 = seq.reduce(reduce, base);
+    const r2 = seq.reduce(reduce, base);
+    expect(r1).toEqual(r2);
+    expect(r1.buildings["trap"]).toBe(2);
+    expect(r1.buildings["hut"]).toBe(1);
+    expect(r1.constructing.length).toBe(0);
   });
 });
 
@@ -633,5 +701,186 @@ describe("entrepôt : plafonds par rareté + paliers + entretien du feu", () => 
     const a = reduceAll(createInitialState(config.rngSeed, 0), acts);
     const b = reduceAll(createInitialState(config.rngSeed, 0), acts);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// ============================================================================
+//  M9 — MINES & GROTTES (donjon pur + exploration : butin, premier-servi, métier mineur)
+// ============================================================================
+
+describe("M9 — donjon déterministe (sim/dungeon.ts)", () => {
+  const SEED = createInitialState(config.rngSeed, 0).worldSeed;
+
+  it("dungeonFor est PUR : même (type,cx,cz,seed) => même graphe", () => {
+    expect(dungeonFor("cave", 3, -2, SEED)).toEqual(dungeonFor("cave", 3, -2, SEED));
+    expect(dungeonFor("ironmine", 5, 0, SEED)).toEqual(dungeonFor("ironmine", 5, 0, SEED));
+  });
+
+  it("une mine est COURTE et a exactement un filon (`deep`) porteur de minerai", () => {
+    const d = dungeonFor("ironmine", 5, 0, SEED);
+    const deep = d.nodes.filter((n) => n.kind === "deep");
+    expect(deep).toHaveLength(1);
+    expect(deep[0].loot.iron).toBeGreaterThan(0);
+  });
+
+  it("une grotte est RAMIFIÉE (carrefour + plusieurs branches)", () => {
+    const d = dungeonFor("cave", 3, -2, SEED);
+    expect(d.nodes.some((n) => n.kind === "junction")).toBe(true);
+    const branches = d.nodes.filter((n) => n.kind === "chamber" || n.kind === "deadend");
+    expect(branches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("change avec les coordonnées / le type (sites distincts ⇒ donjons distincts)", () => {
+    expect(dungeonFor("cave", 3, -2, SEED)).not.toEqual(dungeonFor("cave", 4, -2, SEED));
+    expect(dungeonFor("ironmine", 5, 0, SEED)).not.toEqual(dungeonFor("coalmine", 5, 0, SEED));
+  });
+});
+
+describe("M9 — ramassage du butin (TAKE_LOOT) : sac + premier-servi global", () => {
+  /** Un site de test garanti porteur de butin : le filon d'une mine de fer. */
+  function mine() {
+    const s = repaired({ population: 0 });
+    const node = dungeonFor("ironmine", 5, 0, s.worldSeed).nodes.find((n) => n.kind === "deep")!;
+    return { s, cx: 5, cz: 0, nodeId: node.id, loot: node.loot };
+  }
+
+  it("le butin va dans le SAC du ramasseur", () => {
+    const { s, cx, cz, nodeId, loot } = mine();
+    const r = reduce(s, takeLoot("a", cx, cz, "ironmine", nodeId));
+    expect(carriedOf(r, "a", "iron")).toBe(loot.iron);
+    expect(r.sites[siteKey(cx, cz)].taken?.[nodeId]).toBe(true);
+    expect(r.resources.iron ?? 0).toBe(0); // pas dans l'entrepôt
+  });
+
+  it("PREMIER-SERVI : un 2ᵉ ramassage du même nœud est un no-op (rien pour l'autre joueur)", () => {
+    const { s, cx, cz, nodeId } = mine();
+    const s1 = reduce(s, takeLoot("a", cx, cz, "ironmine", nodeId));
+    const s2 = reduce(s1, takeLoot("b", cx, cz, "ironmine", nodeId));
+    expect(s2).toBe(s1); // état inchangé (même référence)
+    expect(carriedTotal(s2, "b")).toBe(0);
+  });
+
+  it("sac plein ⇒ no-op, le cache n'est PAS épuisé (on pourra revenir)", () => {
+    const { s, cx, cz, nodeId } = mine();
+    const full = reduce(s, gatherWood("a", 100000)); // sac de 'a' au plafond
+    expect(carriedTotal(full, "a")).toBe(carryCapacity(full));
+    const r = reduce(full, takeLoot("a", cx, cz, "ironmine", nodeId));
+    expect(r).toBe(full); // no-op
+    expect(r.sites[siteKey(cx, cz)]?.taken?.[nodeId]).toBeFalsy(); // cache intact
+  });
+
+  it("le butin ramassé est borné par la capacité du sac", () => {
+    const { s, cx, cz, nodeId } = mine();
+    const nearFull = reduce(s, gatherWood("a", carryCapacity(s) - 2)); // reste 2 de place
+    const r = reduce(nearFull, takeLoot("a", cx, cz, "ironmine", nodeId));
+    expect(carriedTotal(r, "a")).toBe(carryCapacity(r)); // exactement plein, pas au-delà
+  });
+});
+
+describe("M9 — mine sécurisée ⇒ métier de mineur", () => {
+  it("le mineur de fer est VERROUILLÉ tant qu'aucune mine de fer n'est sécurisée", () => {
+    const s = repaired({ population: 3 });
+    const r = reduce(s, assignWorker("a", "iron_miner"));
+    expect(r.workers.iron_miner ?? 0).toBe(0); // refusé
+  });
+
+  it("SECURE_MINE débloque l'assignation du mineur correspondant", () => {
+    let s = repaired({ population: 3 });
+    s = reduce(s, secureMine("a", 5, 0, "ironmine"));
+    expect(s.sites[siteKey(5, 0)].secured).toBe(true);
+    const r = reduce(s, assignWorker("a", "iron_miner"));
+    expect(r.workers.iron_miner).toBe(1);
+  });
+
+  it("une mine de CHARBON sécurisée ne débloque PAS le mineur de fer", () => {
+    let s = repaired({ population: 3 });
+    s = reduce(s, secureMine("a", 10, 0, "coalmine"));
+    const r = reduce(s, assignWorker("a", "iron_miner"));
+    expect(r.workers.iron_miner ?? 0).toBe(0);
+  });
+
+  it("le mineur assigné PRODUIT du fer au cycle de revenu (ressuscite la chaîne)", () => {
+    let s = repaired({ population: 3, resources: { "cured meat": 50 } });
+    s = reduce(s, secureMine("a", 5, 0, "ironmine"));
+    s = reduce(s, assignWorker("a", "iron_miner"));
+    const r = advanceTicks(s, 1); // 1ᵉʳ tic => revenu (incomeAt part de 0)
+    expect(r.resources.iron ?? 0).toBeGreaterThan(0);
+    expect(r.resources["cured meat"]).toBeLessThan(50); // viande séchée consommée
+  });
+
+  it("SECURE_MINE est idempotent", () => {
+    let s = repaired();
+    s = reduce(s, secureMine("a", 5, 0, "ironmine"));
+    const again = reduce(s, secureMine("a", 5, 0, "ironmine"));
+    expect(again).toBe(s);
+  });
+});
+
+describe("M9 — grotte nettoyée ⇒ avant-poste, et déterminisme global", () => {
+  it("CLEAR_CAVE pose `cleared` (idempotent)", () => {
+    let s = repaired();
+    s = reduce(s, clearCave("a", 3, -2));
+    expect(s.sites[siteKey(3, -2)].cleared).toBe(true);
+    expect(reduce(s, clearCave("a", 3, -2))).toBe(s); // no-op
+  });
+
+  it("grotte ENTIÈREMENT vidée -> cleared automatiquement (devient un avant-poste)", () => {
+    const seed = createInitialState(config.rngSeed, 0).worldSeed;
+    // trouve une grotte porteuse de butin (la plupart le sont) à coords déterministes
+    let cx = 0; let ids: string[] = [];
+    for (let i = 1; i < 30 && ids.length === 0; i++) { ids = lootNodeIds("cave", i, 1, seed); if (ids.length) cx = i; }
+    expect(ids.length).toBeGreaterThan(0);
+    let s = repaired();
+    for (const id of ids) s = reduce(s, takeLoot("a", cx, 1, "cave", id));
+    expect(s.sites[siteKey(cx, 1)].cleared).toBe(true);
+  });
+
+  it("DISCOVER_SITE / CLEAR_HAZARD marquent l'état (idempotents)", () => {
+    let s = repaired();
+    s = reduce(s, discoverSite("a", 3, -2, "cave"));
+    expect(s.sites[siteKey(3, -2)].discovered).toBe(true);
+    expect(s.sites[siteKey(3, -2)].type).toBe("cave");
+    s = reduce(s, clearHazard("a", 3, -2, "b0"));
+    expect(s.sites[siteKey(3, -2)].hazards?.b0).toBe(true);
+  });
+
+  it("déterministe : même graine + actions d'exploration (+ ticks) => même état", () => {
+    const acts: GameAction[] = [
+      debugUnlockAll(),
+      discoverSite("a", 5, 0, "ironmine"),
+      takeLoot("a", 5, 0, "ironmine", "deep"),
+      secureMine("a", 5, 0, "ironmine"),
+      discoverSite("b", 3, -2, "cave"),
+      clearCave("b", 3, -2),
+      tick(), tick(),
+    ];
+    const a = reduceAll(createInitialState(config.rngSeed, 0), acts);
+    const b = reduceAll(createInitialState(config.rngSeed, 0), acts);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("lootNodeIds liste les nœuds porteurs de butin (mine : le filon)", () => {
+    const ids = lootNodeIds("ironmine", 5, 0, createInitialState(config.rngSeed, 0).worldSeed);
+    expect(ids).toContain("deep");
+  });
+});
+
+describe("M9 — torche craftable (CRAFT_ITEM)", () => {
+  it("fabrique une torche : débite l'entrepôt, ajoute au SAC", () => {
+    const s0 = repaired({ resources: { wood: 5, cloth: 3 } });
+    const s = reduce(s0, craftItem("a", "torch"));
+    expect(carriedOf(s, "a", "torch")).toBe(1);
+    expect(s.resources.wood).toBe(4); // 1 bois consommé
+    expect(s.resources.cloth).toBe(2); // 1 étoffe consommée
+  });
+
+  it("refuse si une ressource manque (no-op)", () => {
+    const s0 = repaired({ resources: { wood: 5 } }); // pas d'étoffe
+    expect(reduce(s0, craftItem("a", "torch"))).toBe(s0);
+  });
+
+  it("refuse un objet inconnu (no-op)", () => {
+    const s0 = repaired({ resources: { wood: 5, cloth: 5 } });
+    expect(reduce(s0, craftItem("a", "inconnu"))).toBe(s0);
   });
 });

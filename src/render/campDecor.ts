@@ -7,7 +7,7 @@
 //  & local (comme la forêt / les villageois). Réutilise le registre Decor. Voir docs/plan-campement.md.
 // ============================================================================
 
-import { Scene, TransformNode } from "@babylonjs/core";
+import { Scene, TransformNode, type InstancedMesh } from "@babylonjs/core";
 import { Decor } from "./scatter";
 import { campLayout, trees as treeSlots, terrainHeight } from "../../data/world";
 import { CAMP_R, campClearing, campPath } from "./campGround";
@@ -33,6 +33,9 @@ interface Obstacle { x: number; z: number; r: number }
 
 export class CampDecor {
   private readonly node: TransformNode;
+  // Instances posées (herbe/fleurs/cailloux…) avec leur position -> permet de DÉGAGER une emprise
+  // quand un bâtiment s'y construit (les « pierres » et le décor au sol disparaissent).
+  private readonly items: Array<{ x: number; z: number; mesh: InstancedMesh }> = [];
 
   constructor(scene: Scene, decor: Decor) {
     this.node = new TransformNode("campDecor", scene);
@@ -64,13 +67,25 @@ export class CampDecor {
       if (blocked) continue;
 
       const inst = decor.createInstance(typePick.kind, x, terrainHeight(x, z), z, rotY, scale);
-      if (inst) inst.parent = this.node;
+      if (inst) { inst.parent = this.node; this.items.push({ x, z, mesh: inst }); }
     }
   }
 
   /** Affiche/masque le décor du sol (l'éditeur de spawn le cache pour une vue épurée). */
   setVisible(v: boolean): void {
     this.node.setEnabled(v);
+  }
+
+  /** Dégage l'emprise d'un bâtiment : retire le décor au sol (cailloux, herbes…) qui s'y trouve.
+   *  Appelé à la construction (en complément de l'évitement à l'implantation). */
+  clearFootprint(x: number, z: number, r: number): void {
+    const r2 = r * r;
+    for (let k = this.items.length - 1; k >= 0; k--) {
+      const it = this.items[k];
+      if ((it.x - x) ** 2 + (it.z - z) ** 2 > r2) continue;
+      it.mesh.dispose();
+      this.items.splice(k, 1);
+    }
   }
 
   private pickType(rng: RngState): { kind: string; min: number; max: number } {

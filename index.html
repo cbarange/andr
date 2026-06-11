@@ -49,7 +49,15 @@
       #bagList .rrow { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; line-height: 1.5; }
       #bagList .rrow.empty { color: var(--muted); font-style: italic; }
       #bagList .rname { color: var(--muted); text-transform: capitalize; }
-      #bagList .rval { color: var(--text); font-weight: 600; }
+      #bagList .rval { color: var(--text); font-weight: 600; display: inline-block; transform-origin: right center; }
+      /* « Juice » : un gain de ressource fait pulser la valeur (échelle + flash couleur d'accent). */
+      #bagList .rval.gain { animation: rvalGain 0.45s ease-out; }
+      @keyframes rvalGain {
+        0% { transform: scale(1); }
+        28% { transform: scale(1.32); color: var(--accent); }
+        100% { transform: scale(1); color: var(--text); }
+      }
+      @media (prefers-reduced-motion: reduce) { #bagList .rval.gain { animation: none; } }
 
       /* Étiquette d'interaction ancrée au niveau de l'objet (diégétique). */
       #interactPrompt {
@@ -199,11 +207,14 @@
       <div id="resourcePanel" class="panel">
         <div class="label">Sac <span id="bagCap">0/0</span></div>
         <div id="bagList"></div>
-        <div class="label" style="margin-top: 10px">Feu</div>
-        <div class="fire" id="fireValue">mort</div>
-        <div class="temp" id="tempValue">glacial</div>
-        <div class="label" style="margin-top: 10px">Village</div>
-        <div class="temp" id="popValue">0/0</div>
+        <!-- Feu + Village : visibles seulement DANS le village (masqués en exploration). -->
+        <div id="campInfo">
+          <div class="label" style="margin-top: 10px">Feu</div>
+          <div class="fire" id="fireValue">mort</div>
+          <div class="temp" id="tempValue">glacial</div>
+          <div class="label" style="margin-top: 10px">Village</div>
+          <div class="temp" id="popValue">0/0</div>
+        </div>
       </div>
 
       <div id="settings" class="panel">
@@ -220,6 +231,11 @@
           <div class="settingsLabel" style="margin-top: 6px;">Effets actifs</div>
           <div id="sfxToggles" class="sfxToggles"></div>
           <button class="settingsBtn" id="muteBtn">Couper le son</button>
+        </div>
+        <div class="settingsSection">
+          <div class="settingsLabel">Confort</div>
+          <div class="volRow"><label for="fovSlider">Champ de vision</label><input id="fovSlider" type="range" min="40" max="100" step="1" /><span class="volVal" id="fovVal">46°</span></div>
+          <div class="volRow"><label for="sensSlider">Sensibilité souris</label><input id="sensSlider" type="range" min="20" max="200" step="5" /><span class="volVal" id="sensVal">100%</span></div>
         </div>
         <div class="settingsSection">
           <div class="settingsLabel">Multijoueur</div>

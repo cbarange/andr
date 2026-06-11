@@ -18,7 +18,7 @@ import { NavGrid, type NavPt } from "./navGrid";
 import { pathIntensity } from "./campGround";
 import type { Trails } from "./trails";
 
-const MAX_AVATARS = 48; // garde-fou perf
+const MAX_AVATARS = 64; // garde-fou perf (la moitié est « à l'intérieur » -> ~32 animés au plus quand plein)
 const GOLDEN = 2.399963; // angle d'or pour une répartition régulière
 const WALK_SPEED = 1.35; // u/s — lent (le joueur va à 6)
 const ARRIVE_DIST = 0.4; // distance à laquelle on considère la cible atteinte
@@ -58,6 +58,15 @@ const BODY = 0.29; // demi-corps : jamais à l'intérieur d'une emprise (poussé
 const WP_REACH = 0.7; // distance à laquelle on passe au waypoint suivant
 const STUCK_SECONDS = 4; // filet anti-blocage : si on n'avance plus, re-choisir une cible
 const PATH_PREFER = 0.35; // biais : marcher sur un sentier dessiné coûte jusqu'à -35% -> les villageois suivent les chemins
+
+// --- Vie du village : les villageois passent du temps DANS leur hutte (rotation) -----------
+// But : quand le village est plein, ~la moitié des habitants sont à l'intérieur (non rendus) et
+// tournent (entrée/sortie), avec un bruit de porte. Réduit la foule ET allège le rendu (un avatar
+// « dedans » n'est ni dessiné ni animé). 100 % cosmétique/local (Math.random admis).
+const INSIDE_RATIO = 0.5; // fraction visée d'avatars « à l'intérieur » quand des huttes existent
+const HOME_MIN = 22, HOME_MAX = 55; // intervalle (s) avant qu'un villageois n'envisage de rentrer
+const DWELL_MIN = 12, DWELL_MAX = 32; // durée (s) passée à l'intérieur d'une hutte
+const DOOR_APPROACH = 2.3; // distance (u) du centre de hutte où l'on « entre » (côté feu, hors emprise)
 
 // Hash déterministe [0,1) -> variations d'apparence stables (cohérence visuelle entre pairs).
 function hash(seed: number): number {
@@ -126,6 +135,12 @@ interface Avatar {
   path: NavPt[]; // chemin A* (waypoints) vers la cible — dernier = cible réelle
   wp: number; // index du waypoint courant
   stuckT: number; // temps sans progression réelle (filet anti-blocage)
+  // Vie du village (rotation dans les huttes) :
+  home: { x: number; z: number } | null; // hutte d'attache du trajet en cours (null = aucune)
+  headingHome: boolean; // en route vers sa hutte pour y entrer
+  inside: boolean; // actuellement DANS la hutte (non rendu, non animé)
+  insideTimer: number; // temps restant à l'intérieur (s)
+  homeTimer: number; // compte à rebours avant d'envisager de rentrer (échelonné par avatar)
 }
 
 export class Villagers {
@@ -138,6 +153,10 @@ export class Villagers {
   private rolesKey = "";
   private time = 0;
   private visible = true; // rendu conditionnel (LOD) : caché quand loin du village
+  private insideCount = 0; // nb d'avatars actuellement à l'intérieur (pour viser ~INSIDE_RATIO)
+  // Callback « bruit de porte » (entrée/sortie de hutte) — fourni par main.ts, qui gère
+  // l'atténuation par la distance et un cooldown. Cosmétique/local (aucun réseau).
+  private doorCb: ((x: number, z: number, opening: boolean) => void) | null = null;
 
   constructor(private readonly scene: Scene) {
     this.K = makeKit(scene);
@@ -148,13 +167,19 @@ export class Villagers {
     this.landmarks = l;
   }
 
-  /** Grille de navigation courante : reconstruite seulement quand les emprises changent
-   *  (un bâtiment apparaît). Biais de coût léger pour préférer les sentiers dessinés. */
+  /** Grille de navigation courante : reconstruite dès que les EMPRISES **ou** les CHEMINS
+   *  changent (la signature couvre les deux). Le biais de coût « préférer les sentiers » reste
+   *  donc toujours à jour, même si tu déplaces/ajoutes/retires un chemin (cf. docs/plan-campement.md). */
   private ensureNav(): NavGrid | null {
     if (!this.landmarks) return null;
     const obs = this.landmarks.obstacles();
     let sig = obs.length;
     for (const o of obs) sig += o.x * 7.13 + o.z * 13.37 + o.r * 17.71;
+    // ... ET les chemins dessinés (points + largeur) -> rebuild du champ de coût quand ils bougent.
+    for (const p of campLayout.paths) {
+      sig += (p.w ?? 0) * 101.1 + p.pts.length * 313.3;
+      for (const pt of p.pts) sig += pt[0] * 1.731 + pt[1] * 2.917;
+    }
     if (this.nav && sig === this.navSig) return this.nav;
     this.navSig = sig;
     this.nav = new NavGrid(obs, (x, z) => 1 - PATH_PREFER * pathIntensity(x, z, campLayout.paths));
@@ -166,21 +191,27 @@ export class Villagers {
     this.trails = t;
   }
 
+  /** Branche le son de porte (joué quand un villageois entre/sort d'une hutte). `opening` = entrée. */
+  setDoorSound(cb: (x: number, z: number, opening: boolean) => void): void {
+    this.doorCb = cb;
+  }
+
   /** Rendu conditionnel (LOD) : affiche/masque TOUS les avatars d'un coup. Quand masqués,
    *  on ne les rend plus ET on cesse de les animer (le manager coupe `update`). */
   setVisible(v: boolean): void {
     if (v === this.visible) return;
     this.visible = v;
-    for (const a of this.avatars) a.node.setEnabled(v);
+    // Un avatar « à l'intérieur » d'une hutte reste caché même quand le LOD ré-affiche le village.
+    for (const a of this.avatars) a.node.setEnabled(v && !a.inside);
   }
 
   /** Nombre d'avatars instanciés. */
   get count(): number {
     return this.avatars.length;
   }
-  /** Nombre d'avatars effectivement rendus (0 si déchargés par le LOD). */
+  /** Nombre d'avatars effectivement rendus (hors LOD déchargé ET hors villageois dans les huttes). */
   get rendered(): number {
-    return this.visible ? this.avatars.length : 0;
+    return this.visible ? this.avatars.length - this.insideCount : 0;
   }
 
   /**
@@ -225,6 +256,8 @@ export class Villagers {
       yaw: hash(i + 3) * Math.PI * 2, workYaw: 0, scale,
       rig, walkPhase: i * 1.7, walkInt: 0,
       path: [], wp: 0, stuckT: 0,
+      home: null, headingHome: false, inside: false, insideTimer: 0,
+      homeTimer: HOME_MIN + Math.random() * (HOME_MAX - HOME_MIN),
     };
     this.pickTarget(a);
     this.avatars.push(a);
@@ -232,6 +265,7 @@ export class Villagers {
 
   /** Choisit la prochaine destination de l'avatar selon son métier. */
   private pickTarget(a: Avatar): void {
+    a.headingHome = false; // un choix de cible « métier » annule tout trajet vers la hutte
     const L = this.landmarks;
     let p: { x: number; z: number };
     if (!L) {
@@ -278,11 +312,73 @@ export class Villagers {
     a.stuckT = 0;
   }
 
+  // --- Rotation dans les huttes (cosmétique/local) ---------------------------------------
+  /** Nombre d'avatars qu'on souhaite « à l'intérieur » (0 si aucune hutte construite). */
+  private wantInside(): number {
+    const huts = this.landmarks?.buildings("hut") ?? [];
+    return huts.length === 0 ? 0 : Math.round(INSIDE_RATIO * this.avatars.length);
+  }
+  /** L'avatar doit-il rentrer maintenant ? (minuterie échue + on est sous la cible d'occupation) */
+  private shouldGoHome(a: Avatar): boolean {
+    if (a.homeTimer > 0) return false;
+    return this.insideCount < this.wantInside();
+  }
+  /** Point « porte » d'une hutte : devant elle, côté feu, juste hors de son emprise. */
+  private doorApproach(home: { x: number; z: number }): { x: number; z: number } {
+    const f = this.landmarks?.fire ?? { x: 0, z: 0 };
+    const dx = f.x - home.x, dz = f.z - home.z;
+    const d = Math.hypot(dx, dz) || 1e-4;
+    const p = { x: home.x + (dx / d) * DOOR_APPROACH, z: home.z + (dz / d) * DOOR_APPROACH };
+    const c = clampWorld(p);
+    if (this.landmarks) pushOut(c, this.landmarks.obstacles(), BODY + 0.1);
+    return c;
+  }
+  /** Envoie l'avatar vers sa hutte (porte). Repli : s'il n'y a pas de hutte, reprend le métier. */
+  private headHome(a: Avatar): void {
+    const L = this.landmarks;
+    const huts = L?.buildings("hut") ?? [];
+    if (!L || huts.length === 0) { this.pickTarget(a); return; }
+    a.home = pick(huts);
+    const p = this.doorApproach(a.home);
+    a.tx = p.x; a.tz = p.z;
+    const nav = this.ensureNav();
+    a.path = nav ? nav.findPath({ x: a.x, z: a.z }, p) : [{ x: p.x, z: p.z }];
+    a.wp = 0; a.stuckT = 0; a.working = false;
+    a.headingHome = true; // (après pickTarget=false dans le repli — ici on l'arme)
+  }
+  /** L'avatar entre dans sa hutte : caché (non rendu/animé), décompte un séjour, son de porte. */
+  private enterHut(a: Avatar): void {
+    a.inside = true;
+    this.insideCount++;
+    a.node.setEnabled(false);
+    a.headingHome = false;
+    a.working = false;
+    a.insideTimer = DWELL_MIN + Math.random() * (DWELL_MAX - DWELL_MIN);
+    this.doorCb?.(a.x, a.z, true);
+  }
+  /** L'avatar ressort : ré-affiché à la porte, son de porte, puis repart vaquer à son métier. */
+  private exitHut(a: Avatar): void {
+    a.inside = false;
+    this.insideCount = Math.max(0, this.insideCount - 1);
+    a.node.setEnabled(this.visible);
+    a.homeTimer = HOME_MIN + Math.random() * (HOME_MAX - HOME_MIN);
+    this.doorCb?.(a.x, a.z, false);
+    this.pickTarget(a);
+  }
+
   /** Déplacement + petits gestes de travail. Maths pures, aucune allocation par frame. */
   update(dtSec: number): void {
     this.time += dtSec;
     const obstacles = this.landmarks ? this.landmarks.obstacles() : [];
     for (const a of this.avatars) {
+      // À L'INTÉRIEUR d'une hutte : caché, on décompte juste le séjour puis on ressort.
+      if (a.inside) {
+        a.insideTimer -= dtSec;
+        if (a.insideTimer <= 0) this.exitHut(a);
+        continue;
+      }
+      a.homeTimer -= dtSec; // compteur de rotation (n'avance que hors hutte)
+
       let lean = 0; // bascule avant (rotation X) — coups de hache, penché…
       let sway = 0; // balayage du regard (ajouté au yaw figé)
       let squash = 1; // écrasement vertical — accroupi
@@ -290,9 +386,11 @@ export class Villagers {
       if (a.working) {
         a.timer -= dtSec;
         if (a.timer <= 0) {
-          this.pickTarget(a);
           a.working = false;
           a.yaw = a.workYaw; // repart de l'orientation de travail
+          // Fin de tâche : rentrer à la hutte (rotation ~INSIDE_RATIO) ou reprendre le métier ?
+          if (this.shouldGoHome(a)) this.headHome(a);
+          else this.pickTarget(a);
         } else if (!a.goingHome && a.role === "gatherer") {
           lean = (0.5 - 0.5 * Math.cos(this.time * 8 + a.phase)) * CHOP_AMP; // coups réguliers
         } else if (!a.goingHome && a.role === "trapper") {
@@ -306,6 +404,7 @@ export class Villagers {
       } else {
         const fdist = Math.hypot(a.tx - a.x, a.tz - a.z); // distance à la CIBLE finale
         if (fdist <= ARRIVE_DIST) {
+          if (a.headingHome && a.home) { this.enterHut(a); continue; } // arrivé à la porte -> entre (caché)
           a.working = true;
           a.timer = WORK_MIN + Math.random() * (WORK_MAX - WORK_MIN);
           a.workYaw = a.yaw; // fige l'orientation pour la durée du travail

@@ -26,6 +26,7 @@ import {
 } from "@babylonjs/core";
 import { terrainHeight, RESOURCE_LABELS, campLayout, storageCap } from "../../data/world";
 import { makeKit, P, type Kit } from "./lowpoly";
+import { prepareReveal, applyReveal, clamp01, type RevealEl } from "./reveal";
 
 const CX = campLayout.cabin.x;
 const CZ = campLayout.cabin.z;
@@ -53,6 +54,9 @@ const SINK = 0.22;
 const ROOT_Y = GY - SINK; // y monde de l'origine du modèle (base de fondation)
 
 const TIERS = [0, 1, 5, 10] as const;
+// Durée de la MONTÉE de la cabane (réparation / amélioration) — un peu plus longue qu'un bâtiment,
+// elle est plus imposante. Voir render/reveal.ts (montée « assemblage par éléments »).
+const CABIN_RISE_SECONDS = 6;
 
 export class Cabin {
   readonly center = new Vector3(CX, GY, CZ); // pivot d'orientation (invariant)
@@ -82,12 +86,23 @@ export class Cabin {
   private readonly shelves = new Map<string, { tex: DynamicTexture; lastQty: number; lastFull: boolean }>();
   private shelfCount = 0;
 
+  // Toit adressable séparément (fondu caméra en 3ᵉ personne) : meshes du toit par palier, cachés
+  // pour éviter une allocation par frame. `roofAlpha` = opacité courante (1 = opaque, 0 = invisible).
+  private readonly roofMeshes = new Map<number, AbstractMesh[]>();
+  private currentRoof: AbstractMesh[] = [];
+  private roofAlpha = 1;
+
+  // Montée « construction » de la coque (réparation/amélioration) : on dévoile ses pièces du bas
+  // vers le haut (cf. reveal.ts). N'a lieu qu'en cours de partie (pas au chargement d'une sauvegarde).
+  private rising: { els: RevealEl[]; t: number; dur: number } | null = null;
+  private established = false; // le palier de départ (frais ou chargé) a-t-il été calé ? (sinon : pas d'anim)
+
   constructor(scene: Scene) {
     this.scene = scene;
     this.K = makeKit(scene);
     this.fittings = this.buildFittings();
     this.fittings.setEnabled(false);
-    this.setTier(0); // état de départ : la ruine, visible d'emblée
+    this.applyTier(0); // état de départ : la ruine, visible d'emblée (sans animation)
   }
 
   get isRepaired(): boolean {
@@ -104,10 +119,21 @@ export class Cabin {
     this.setTier(value ? 1 : 0);
   }
 
-  /** Fixe le palier affiché. Construit la coque à la volée, bascule l'affichage, active les fittings. */
+  /** Fixe le palier affiché (appelé chaque frame par la sim). Lors d'une AUGMENTATION en cours de
+   *  partie (réparation 0->1, amélioration 1->5->10), la coque MONTE pièce par pièce (cf. reveal.ts) ;
+   *  au tout premier calage (partie fraîche ou sauvegarde chargée), elle apparaît directement. */
   setTier(tier: number): void {
     const t = TIERS.includes(tier as (typeof TIERS)[number]) ? tier : tier >= 10 ? 10 : tier >= 5 ? 5 : tier >= 1 ? 1 : 0;
-    if (t === this.tier && this.shells.has(t)) return; // déjà à jour (setTier est appelé chaque frame)
+    if (t === this.tier && this.shells.has(t)) { this.established = true; return; } // déjà à jour
+    const prev = this.tier;
+    const animate = this.established && t > prev && t >= 1 && !this.hidden;
+    this.applyTier(t);
+    this.established = true;
+    if (animate) this.startRise(t);
+  }
+
+  /** Bascule la coque/colliders/toit du palier `t` SANS animation (calage instantané). */
+  private applyTier(t: number): void {
     this.tier = t;
     for (const [k, node] of this.shells) node.setEnabled(!this.hidden && k === t);
     if (!this.shells.has(t)) {
@@ -119,10 +145,42 @@ export class Cabin {
     }
     this.fittings.setEnabled(!this.hidden && t >= 1);
     if (t !== this.collidersTier) { this.rebuildColliders(t); this.collidersTier = t; }
+    this.currentRoof = this.roofMeshes.get(t) ?? []; // toit du palier courant (pour le fondu caméra)
+    this.applyRoofVisibility(); // réapplique l'opacité courante au toit qui vient d'apparaître
+  }
+
+  /** Démarre la montée « construction » de la coque du palier `t` : on cache ses pièces puis on
+   *  les fait sortir de terre du bas vers le haut ; l'aménagement intérieur n'apparaît qu'à la fin. */
+  private startRise(t: number): void {
+    const shell = this.shells.get(t);
+    if (!shell) return;
+    const els = prepareReveal(shell);
+    this.rising = { els, t: 0, dur: CABIN_RISE_SECONDS };
+    applyReveal(els, 0); // rien n'est visible au départ
+    this.fittings.setEnabled(false); // l'intérieur (coffres, tableau…) se pose une fois la coque montée
+  }
+
+  /** Avancement de la montée en cours (0..1), ou -1 s'il n'y en a pas. DEBUG/DEV. */
+  getRiseProgress(): number {
+    return this.rising ? clamp01(this.rising.t / this.rising.dur) : -1;
+  }
+
+  /** Avance l'animation de montée de la cabane (à appeler chaque frame). No-op s'il n'y en a pas. */
+  update(dtSec: number): void {
+    if (!this.rising) return;
+    this.rising.t += dtSec;
+    const p = clamp01(this.rising.t / this.rising.dur);
+    applyReveal(this.rising.els, p);
+    if (p >= 1) {
+      this.rising = null;
+      this.fittings.setEnabled(!this.hidden && this.tier >= 1); // intérieur posé
+      this.applyRoofVisibility(); // le toit vient d'arriver -> réapplique l'opacité caméra courante
+    }
   }
 
   /** Masque/affiche la cabane (éditeur de spawn). À l'affichage, respecte le palier courant. */
   setHidden(hidden: boolean): void {
+    if (this.rising) { applyReveal(this.rising.els, 1); this.rising = null; } // une montée en cours -> calée à plein
     this.hidden = hidden;
     for (const [k, node] of this.shells) node.setEnabled(!hidden && k === this.tier);
     this.fittings.setEnabled(!hidden && this.tier >= 1);
@@ -131,6 +189,22 @@ export class Cabin {
   /** Meshes de la COQUE courante (murs/toit) — occulteurs pour la collision caméra (spring-arm). */
   occluders(): AbstractMesh[] {
     return this.shells.get(this.tier)?.getChildMeshes(false) ?? [];
+  }
+
+  /**
+   * Opacité du TOIT du palier courant (1 = opaque, 0 = invisible) — fondu piloté par la caméra
+   * pour voir l'intérieur en 3ᵉ personne quand on approche/est sous l'emprise. Per-mesh (`visibility`)
+   * pour ne pas toucher les matériaux PARTAGÉS (les murs restent opaques). No-op sur la ruine (pas de toit).
+   */
+  setRoofOpacity(alpha: number): void {
+    const v = Math.max(0, Math.min(1, alpha));
+    if (v === this.roofAlpha) return;
+    this.roofAlpha = v;
+    this.applyRoofVisibility();
+  }
+
+  private applyRoofVisibility(): void {
+    for (const m of this.currentRoof) m.visibility = this.roofAlpha;
   }
 
   // ---- Stockage (coffres) : révélation progressive + quantités ----
@@ -213,8 +287,11 @@ export class Cabin {
 
     // TOIT — réparée : peau tendue (sablières) ; évolution : deux pentes en dur (planches/bardeaux),
     // qui MONTE en hauteur sans agrandir l'emprise. ev2 -> bardeaux + faîtière couverte + épi + pignons fermés.
-    if (ev) this.gableRoof(root, TOP_Y, 0.95, ev2, ev2);
-    else this.hideRoof(root, -D / 2, 0, TOP_Y, TOP_Y - 0.04);
+    // Groupé sous un nœud DÉDIÉ pour pouvoir le FONDRE depuis la caméra (3PV proche -> voir l'intérieur).
+    const roofNode = K.node(root);
+    if (ev) this.gableRoof(roofNode, TOP_Y, 0.95, ev2, ev2);
+    else this.hideRoof(roofNode, -D / 2, 0, TOP_Y, TOP_Y - 0.04);
+    this.roofMeshes.set(tier, roofNode.getChildMeshes(false));
 
     // RANGEMENT VERTICAL / VRAC (capacité ×5 / ×10) — sans s'étaler au sol.
     if (ev) {

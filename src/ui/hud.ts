@@ -42,9 +42,14 @@ export interface DialogueView {
 export class Hud {
   private readonly bagCapEl: HTMLElement;
   private readonly bagList: HTMLElement;
+  // Lignes du sac PERSISTANTES (par ressource) : on met à jour au lieu de tout reconstruire chaque
+  // frame -> permet le « count-up » (compte animé) + le pop au gain, et supprime le churn DOM/frame.
+  private readonly bagRows = new Map<string, { row: HTMLElement; val: HTMLElement; shown: number; target: number }>();
+  private bagEmpty = true; // état « (vide) » actuellement affiché ?
   private readonly fireEl: HTMLElement;
   private readonly tempEl: HTMLElement;
   private readonly popEl: HTMLElement;
+  private readonly campInfoEl: HTMLElement; // bloc Feu + Village (masqué hors du village)
   private readonly statusEl: HTMLElement;
   private readonly statusTextEl: HTMLElement;
   private readonly roomInput: HTMLInputElement;
@@ -83,6 +88,11 @@ export class Hud {
   private readonly muteBtn: HTMLButtonElement;
   private readonly sfxTogglesEl: HTMLElement;
   private audioMuted = false;
+  // Réglages de confort (section « Confort » du menu) : FOV + sensibilité souris.
+  private readonly fovSlider: HTMLInputElement;
+  private readonly fovVal: HTMLElement;
+  private readonly sensSlider: HTMLInputElement;
+  private readonly sensVal: HTMLElement;
 
   // Étiquette d'interaction (ancrée à l'écran au-dessus de l'objet).
   private readonly promptEl: HTMLElement;
@@ -107,6 +117,7 @@ export class Hud {
     this.fireEl = this.byId("fireValue");
     this.tempEl = this.byId("tempValue");
     this.popEl = this.byId("popValue");
+    this.campInfoEl = this.byId("campInfo");
     this.statusEl = this.byId("netStatus");
     this.statusTextEl = this.byId("netStatusText");
     this.roomInput = this.byId("roomInput") as HTMLInputElement;
@@ -132,6 +143,10 @@ export class Hud {
     this.volSfxVal = this.byId("volSfxVal");
     this.muteBtn = this.byId("muteBtn") as HTMLButtonElement;
     this.sfxTogglesEl = this.byId("sfxToggles");
+    this.fovSlider = this.byId("fovSlider") as HTMLInputElement;
+    this.fovVal = this.byId("fovVal");
+    this.sensSlider = this.byId("sensSlider") as HTMLInputElement;
+    this.sensVal = this.byId("sensVal");
     this.promptEl = this.byId("interactPrompt");
     this.promptVerbEl = this.byId("promptVerb");
     this.dialogueEl = this.byId("dialogue");
@@ -147,18 +162,28 @@ export class Hud {
     return el;
   }
 
-  /** Contenu du SAC porté + capacité. */
+  /** Contenu du SAC porté + capacité. Lignes PERSISTANTES : compte animé (count-up) + pop au gain. */
   setBag(total: number, capacity: number, entries: Array<{ label: string; value: number }>): void {
     this.bagCapEl.textContent = `${total}/${capacity}`;
     if (entries.length === 0) {
-      const row = document.createElement("div");
-      row.className = "rrow empty";
-      row.textContent = "(vide)";
-      this.bagList.replaceChildren(row);
+      if (!this.bagEmpty) {
+        this.bagRows.clear();
+        const row = document.createElement("div");
+        row.className = "rrow empty";
+        row.textContent = "(vide)";
+        this.bagList.replaceChildren(row);
+        this.bagEmpty = true;
+      }
       return;
     }
-    this.bagList.replaceChildren(
-      ...entries.map(({ label, value }) => {
+    if (this.bagEmpty) { this.bagList.replaceChildren(); this.bagEmpty = false; }
+
+    // 1) Réconcilie les lignes (créer/màj la cible ; pop si la valeur AUGMENTE).
+    const seen = new Set<string>();
+    for (const { label, value } of entries) {
+      seen.add(label);
+      let r = this.bagRows.get(label);
+      if (!r) {
         const row = document.createElement("div");
         row.className = "rrow";
         const name = document.createElement("span");
@@ -168,9 +193,31 @@ export class Hud {
         val.className = "rval";
         val.textContent = String(value);
         row.append(name, val);
-        return row;
-      }),
-    );
+        this.bagList.append(row);
+        this.bagRows.set(label, { row, val, shown: value, target: value });
+      } else {
+        if (value > r.target + 1e-6) this.popValue(r.val); // gain -> petit pop couleur+échelle
+        r.target = value;
+      }
+    }
+    // 2) Retire les ressources qui ne sont plus portées.
+    for (const [label, r] of this.bagRows) {
+      if (!seen.has(label)) { r.row.remove(); this.bagRows.delete(label); }
+    }
+    // 3) Compte animé : la valeur affichée glisse vers la cible (≈0,2 s) au lieu de sauter.
+    for (const r of this.bagRows.values()) {
+      if (Math.abs(r.target - r.shown) < 0.5) r.shown = r.target;
+      else r.shown += (r.target - r.shown) * 0.28;
+      const txt = String(Math.round(r.shown));
+      if (r.val.textContent !== txt) r.val.textContent = txt;
+    }
+  }
+
+  /** Relance l'animation « gain » sur une valeur (retire + reflow + ré-ajoute la classe). */
+  private popValue(el: HTMLElement): void {
+    el.classList.remove("gain");
+    void el.offsetWidth; // force un reflow -> l'animation CSS repart à zéro
+    el.classList.add("gain");
   }
 
   setFire(label: string): void {
@@ -183,6 +230,11 @@ export class Hud {
 
   setPopulation(text: string): void {
     this.popEl.textContent = text;
+  }
+
+  /** Affiche/masque le bloc Feu + Village (visible seulement DANS le village). */
+  setCampInfoVisible(visible: boolean): void {
+    this.campInfoEl.style.display = visible ? "" : "none";
   }
 
   setRenderer(label: string): void {
@@ -606,6 +658,32 @@ export class Hud {
     this.muteBtn.addEventListener("click", () => {
       this.setMuteVisual(!this.audioMuted);
       cb(this.audioMuted);
+    });
+  }
+
+  // ---- Section « Confort » (FOV + sensibilité souris) ----
+
+  /** Initialise les curseurs de confort. `fov` en RADIANS (affiché en degrés), `sens` = multiplicateur. */
+  setComfortValues(fov: number, sens: number): void {
+    const deg = Math.round((fov * 180) / Math.PI);
+    this.fovSlider.value = String(deg);
+    this.fovVal.textContent = `${deg}°`;
+    const pct = Math.round(sens * 100);
+    this.sensSlider.value = String(pct);
+    this.sensVal.textContent = `${pct}%`;
+  }
+
+  /** Curseurs de confort -> callback. `fov` renvoyé en RADIANS, `sens` en multiplicateur (0..). */
+  onComfort(cb: (kind: "fov" | "sens", value: number) => void): void {
+    this.fovSlider.addEventListener("input", () => {
+      const deg = Number(this.fovSlider.value);
+      this.fovVal.textContent = `${deg}°`;
+      cb("fov", (deg * Math.PI) / 180);
+    });
+    this.sensSlider.addEventListener("input", () => {
+      const pct = Number(this.sensSlider.value);
+      this.sensVal.textContent = `${pct}%`;
+      cb("sens", pct / 100);
     });
   }
 

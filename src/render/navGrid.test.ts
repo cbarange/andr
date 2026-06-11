@@ -6,8 +6,11 @@
 
 import { describe, it, expect } from "vitest";
 import { NavGrid, type NavPt } from "./navGrid";
-import { campLayout, trees as treeSlots } from "../../data/world";
+import { pathIntensity } from "./campGround";
+import { campLayout, trees as treeSlots, type CampPath } from "../../data/world";
 import { createRng, nextFloat } from "../sim/rng";
+
+const PATH_PREFER = 0.35; // même valeur que render/villagers.ts
 
 const WALK_SPEED = 1.35, ARRIVE = 0.4, DT = 1 / 20, BUDGET = 40, WP_REACH = 0.7;
 const RADIUS: Record<string, number> = {
@@ -76,21 +79,40 @@ describe("NavGrid — pathfinding A* des villageois", () => {
   });
 
   it("produit un DÉTOUR valide quand la ligne droite est bloquée par un bâtiment", () => {
-    const obs = obstacles();
-    const nav = new NavGrid(obs);
-    const lm = landmarks();
-    let found = false;
-    // Cherche une paire de repères dont la ligne droite traverse une emprise (robuste au layout).
-    for (let i = 0; i < lm.length && !found; i++) for (let j = i + 1; j < lm.length && !found; j++) {
-      const a = { ...lm[i] }, b = { ...lm[j] };
-      pushOut(a, obs, ARRIVE + 0.4); pushOut(b, obs, ARRIVE + 0.4);
-      if (Math.hypot(a.x - b.x, a.z - b.z) < 6) continue;
-      if (nav.segClear(a.x, a.z, b.x, b.z)) continue; // ligne droite déjà dégagée -> pas un cas de détour
-      const path = nav.findPath(a, b);
-      expect(path.length).toBeGreaterThan(1); // contourne, pas une ligne droite
-      for (let k = 0; k + 1 < path.length; k++) expect(nav.segClear(path[k].x, path[k].z, path[k + 1].x, path[k + 1].z)).toBe(true); // chaque segment dégagé
-      found = true;
+    // Scénario CONTRÔLÉ (indépendant du layout) : une emprise centrale entre deux points alignés.
+    const nav = new NavGrid([{ x: 0, z: 0, r: 2.5 }]);
+    const a = { x: -8, z: 0 }, b = { x: 8, z: 0 };
+    expect(nav.segClear(a.x, a.z, b.x, b.z)).toBe(false); // la ligne droite traverse l'emprise
+    const path = nav.findPath(a, b);
+    expect(path.length).toBeGreaterThan(1); // A* contourne (pas une ligne droite)
+    for (let k = 0; k + 1 < path.length; k++) {
+      expect(nav.segClear(path[k].x, path[k].z, path[k + 1].x, path[k + 1].z)).toBe(true); // chaque segment dégagé
     }
-    expect(found).toBe(true); // il existe bien des trajets nécessitant un détour dans ce camp
+  });
+
+  // --- Biais « préférer les sentiers » + caractère DYNAMIQUE (data-driven) ---------------
+  // Un bâtiment au centre force un détour ; un sentier dessiné d'un côté doit aiguiller le
+  // contournement de CE côté. Changer le tracé du sentier doit changer l'itinéraire -> preuve
+  // que le biais est piloté par la donnée (campLayout.paths) et qu'une grille reconstruite s'adapte.
+  const withPath = (pts: [number, number][]): NavGrid => {
+    const path: CampPath[] = [{ pts, w: 0.6 }];
+    return new NavGrid([{ x: 0, z: 0, r: 2.5 }], (x, z) => 1 - PATH_PREFER * pathIntensity(x, z, path));
+  };
+  const minZ = (wp: NavPt[]): number => Math.min(...wp.map((w) => w.z));
+  const maxZ = (wp: NavPt[]): number => Math.max(...wp.map((w) => w.z));
+
+  it("biais : le détour suit le sentier dessiné (côté sud vs nord)", () => {
+    const south = withPath([[-10, 0], [0, -5], [10, 0]]).findPath({ x: -10, z: 0 }, { x: 10, z: 0 });
+    const north = withPath([[-10, 0], [0, 5], [10, 0]]).findPath({ x: -10, z: 0 }, { x: 10, z: 0 });
+    expect(minZ(south)).toBeLessThan(-2); // sentier au sud -> contourne par le sud
+    expect(maxZ(north)).toBeGreaterThan(2); // sentier au nord -> contourne par le nord
+  });
+
+  it("dynamique : déplacer le sentier change l'itinéraire (rien n'est figé)", () => {
+    const a = withPath([[-10, 0], [0, -5], [10, 0]]).findPath({ x: -10, z: 0 }, { x: 10, z: 0 });
+    const b = withPath([[-10, 0], [0, 5], [10, 0]]).findPath({ x: -10, z: 0 }, { x: 10, z: 0 });
+    expect(minZ(a)).toBeLessThan(0); // itinéraire A passe au sud
+    expect(maxZ(b)).toBeGreaterThan(0); // itinéraire B passe au nord
+    expect(Math.abs(minZ(a) - minZ(b))).toBeGreaterThan(2); // les deux itinéraires DIFFÈRENT
   });
 });

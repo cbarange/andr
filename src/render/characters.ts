@@ -93,9 +93,10 @@ export function animateWalk(rig: Rig, phase: number, intensity: number): void {
   rig.head.rotation.y = Math.sin(phase * 0.5) * WALK_HEAD_AMP * intensity;
 }
 
-/** La constructrice : silhouette encapuchonnée distincte, marteau planté. Renvoie la racine
- *  + les pivots de PIEDS (les bras tiennent le marteau : on n'anime qu'un pas, cf. stranger.ts). */
-export function buildConstructrice(K: Kit, parent: TransformNode | null): { root: TransformNode; hipL: TransformNode; hipR: TransformNode } {
+/** La constructrice : silhouette encapuchonnée distincte, marteau en main. Renvoie la racine,
+ *  les pivots de PIEDS (un pas à la marche) et le pivot d'ÉPAULE droite `armR` (le bras + le
+ *  marteau y sont groupés -> elle peut « frapper » sur un chantier, cf. stranger.ts). */
+export function buildConstructrice(K: Kit, parent: TransformNode | null): { root: TransformNode; hipL: TransformNode; hipR: TransformNode; armR: TransformNode } {
   const root = K.node(parent);
   const robe = P.cloak, robeDk = P.cloakDark;
   // pieds sous un pivot (sous la robe) : ils avancent/reculent légèrement à la marche.
@@ -117,18 +118,21 @@ export function buildConstructrice(K: Kit, parent: TransformNode | null): { root
   K.box(root, P.wood, [0.3, 0.26, 0.18], [-0.34, 0.78, 0.16], { rot: [0, 0.3, 0] });
   K.box(root, P.cloakTrim, [0.32, 0.06, 0.2], [-0.34, 0.92, 0.16], { rot: [0, 0.3, 0] });
   K.box(root, robeDk, [0.07, 0.95, 0.05], [0.04, 1.05, 0.2], { rot: [0, 0, 0.32] });
-  K.cyl(root, robe, { h: 0.62, dt: 0.1, db: 0.14 }, [-0.28, 1.06, 0.04], { rot: [0, 0, 0.06] });
-  K.sph(root, P.skin, { d: 0.14 }, [-0.3, 0.76, 0.06]);
-  K.cyl(root, P.woodLight, { h: 0.72, d: 0.06 }, [0.31, 0.42, 0.22]); // manche du marteau
-  K.box(root, P.metalDark, [0.28, 0.16, 0.16], [0.31, 0.82, 0.22]); // tête
-  K.box(root, P.metal, [0.12, 0.18, 0.18], [0.41, 0.82, 0.22]); // face de frappe
-  K.cyl(root, robe, { h: 0.58, dt: 0.1, db: 0.14 }, [0.3, 1.06, 0.1], { rot: [-0.12, 0, -0.1] });
-  K.sph(root, P.skin, { d: 0.14 }, [0.31, 0.93, 0.2]);
-  return { root, hipL, hipR };
+  K.cyl(root, robe, { h: 0.62, dt: 0.1, db: 0.14 }, [-0.28, 1.06, 0.04], { rot: [0, 0, 0.06] }); // bras gauche
+  K.sph(root, P.skin, { d: 0.14 }, [-0.3, 0.76, 0.06]); // main gauche
+  // Bras droit + marteau groupés sous un PIVOT d'épaule (en [0.3, 1.1, 0.1]) -> ils tournent
+  // ensemble pour « frapper ». Au repos (rotation 0) le marteau reste planté comme avant.
+  const armR = K.node(root, [0.3, 1.1, 0.1]);
+  K.cyl(armR, P.woodLight, { h: 0.72, d: 0.06 }, [0.01, -0.68, 0.12]); // manche du marteau
+  K.box(armR, P.metalDark, [0.28, 0.16, 0.16], [0.01, -0.28, 0.12]); // tête
+  K.box(armR, P.metal, [0.12, 0.18, 0.18], [0.11, -0.28, 0.12]); // face de frappe
+  K.cyl(armR, robe, { h: 0.58, dt: 0.1, db: 0.14 }, [0.0, -0.04, 0.0], { rot: [-0.12, 0, -0.1] }); // bras droit
+  K.sph(armR, P.skin, { d: 0.14 }, [0.01, -0.17, 0.1]); // main droite
+  return { root, hipL, hipR, armR };
 }
 
-/** Le joueur : tunique chaude, écharpe, sac à dos (le « sac »), hachette. */
-export function buildPlayer(K: Kit, parent: TransformNode | null): { root: TransformNode; rig: Rig } {
+/** Le joueur : tunique chaude, écharpe, sac à dos (le « sac »), hachette, + torche (M9, masquée). */
+export function buildPlayer(K: Kit, parent: TransformNode | null): { root: TransformNode; rig: Rig; torch: TransformNode; flame: TransformNode } {
   const { root, rig } = buildHumanoid(K, parent, { tunic: P.player, hat: "cap", hair: [0.32, 0.24, 0.16] });
   K.tor(root, P.cloakTrim, { d: 0.42, thick: 0.09, t: 14 }, [0, 1.18, 0]); // écharpe
   K.box(root, P.cloakTrim, [0.12, 0.4, 0.06], [0.1, 0.98, 0.18], { rot: [0, 0, 0.2] });
@@ -138,7 +142,16 @@ export function buildPlayer(K: Kit, parent: TransformNode | null): { root: Trans
   K.box(root, P.cloakDark, [0.07, 0.7, 0.05], [0.16, 0.95, -0.05], { rot: [0.1, 0, -0.1] });
   K.cyl(root, P.woodLight, { h: 0.4, d: 0.05 }, [-0.32, 0.6, 0.12], { rot: [0.4, 0, 0] }); // hachette
   K.box(root, P.metal, [0.04, 0.18, 0.16], [-0.33, 0.74, 0.22], { rot: [0.4, 0, 0] });
-  return { root, rig };
+  // TORCHE (M9) — tenue dans la main droite : sous le pivot d'ÉPAULE `armR` -> suit le bras
+  // (oscille à la marche = « attachée naturellement »). Masquée par défaut (apparaît si dans le sac).
+  const torch = K.node(rig.armR, [0.06, -0.52, 0.16]); // à la main droite (sous l'épaule)
+  K.cyl(torch, P.woodDark, { h: 0.5, d: 0.05, t: 6 }, [0, 0.22, 0]); // manche, monte de la main
+  K.box(torch, P.wood, [0.09, 0.06, 0.09], [0, 0.48, 0]); // liure (étoffe imbibée)
+  const flame = K.node(torch, [0, 0.58, 0]);
+  K.ico(flame, P.ember, { d: 0.2, sub: 1 }, [0, 0, 0], { emi: 1.9, unlit: true });
+  K.ico(flame, P.emberHot, { d: 0.11, sub: 1 }, [0, 0.05, 0], { emi: 2.0, unlit: true });
+  torch.setEnabled(false);
+  return { root, rig, torch, flame };
 }
 
 // Variantes de villageois (cosmétique stable par index).

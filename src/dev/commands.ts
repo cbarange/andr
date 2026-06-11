@@ -14,7 +14,7 @@ import {
 import { standProfile, type WorldMap } from "../sim/worldgen";
 import {
   config, biomes, biomeById, jobs, jobById, craftables, craftableById, sites, RESOURCE_LABELS,
-  events,
+  events, storageCap,
 } from "../../data/world";
 
 /** Tout ce dont les commandes ont besoin (fourni par main.ts). */
@@ -123,6 +123,18 @@ const COMMANDS: Record<string, Command> = {
       if (target !== "self" && target !== "storage") return "cible : self | storage";
       ctx.emit(debugClear(ctx.self(), target));
       return `${target} vidé`;
+    },
+  },
+
+  fill: {
+    usage: "/fill",
+    help: "remplit l'entrepôt au MAX de chaque ressource (plafond du palier de cabane courant)",
+    run(_args, ctx) {
+      const tier = ctx.getState().cabinTier;
+      const ids = Object.keys(RESOURCE_LABELS);
+      for (const id of ids) ctx.emit(debugSet(ctx.self(), "storage", id, storageCap(tier, id)));
+      const note = tier < 1 ? " — répare la cabane (/repair) pour voir les coffres" : "";
+      return `entrepôt rempli au max : ${ids.length} ressources (palier ${tier})${note}`;
     },
   },
 

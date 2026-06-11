@@ -12,9 +12,25 @@
 
 import { joinRoom, selfId, type Room } from "trystero";
 import type { PlayerTransformMsg, GameActionMsg, StateSyncMsg } from "./messages";
-import { resolveHostOnSync } from "./host";
+import { resolveSync, shouldTakeOver } from "./host";
 
 const APP_ID = "darkroom3d-poc-v1";
+
+// Serveurs ICE pour WebRTC. STUN publics (gratuits) : améliorent la traversée de NAT. Pour les
+// réseaux très restrictifs (NAT symétrique, pare-feu d'entreprise), un STUN ne suffit pas -> il
+// faut un serveur TURN (relais média, à héberger via coturn ou un service payant) : décommenter et
+// renseigner urls/username/credential. Trystero passe `rtcConfig` tel quel à RTCPeerConnection.
+const RTC_CONFIG: RTCConfiguration = {
+  iceServers: [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    // { urls: "turn:VOTRE_TURN:3478", username: "USER", credential: "SECRET" },
+  ],
+};
+
+// Heartbeat d'hôte : un hôte diffuse l'état toutes les ~500 ms. Au-delà de ce silence, on considère
+// qu'il a disparu (onglet en arrière-plan, réseau coupé sans `onPeerLeave`) et le plus petit pair
+// vivant reprend l'autorité (failover). 6 s = ~12 snapshots manqués -> clairement mort, pas un hoquet.
+const HOST_TIMEOUT_MS = 6000;
 
 export interface RoomCallbacks {
   onPeerJoin?: (id: string) => void;
@@ -36,6 +52,12 @@ export class NetRoom {
   // (les autres adoptent SON état). Sinon, on défère à l'hôte qui diffuse l'état (cf. sync).
   private forcedHost = false;
   private announcedHost: string | null = null; // dernier hôte connu via une diffusion d'état
+  // Époque (terme d'autorité, façon Raft-lite). `hostEpoch` = terme sous lequel JE diffuse si je suis
+  // hôte ; `seenEpoch` = plus haute époque observée. `lastHostSyncMs` = horloge monotone du dernier
+  // état reçu de l'hôte annoncé (heartbeat -> détection de silence). Cf. net/host.ts.
+  private hostEpoch = 0;
+  private seenEpoch = 0;
+  private lastHostSyncMs = 0;
   private cb: RoomCallbacks = {};
   private senders?: {
     xform: (data: PlayerTransformMsg) => void;
@@ -54,6 +76,11 @@ export class NetRoom {
   /** A-t-on « ouvert » la partie (hôte autoritaire fixé) ? Sert à revendiquer l'autorité dans le snapshot. */
   get isForcedHost(): boolean {
     return this.forcedHost;
+  }
+
+  /** Époque (terme d'autorité) sous laquelle on diffuse — incluse dans le `host` du snapshot. */
+  get epoch(): number {
+    return this.hostEpoch;
   }
 
   getHostId(): string {
@@ -89,8 +116,11 @@ export class NetRoom {
     this.cb = cb;
     this.forcedHost = asHost;
     this.announcedHost = null;
+    this.hostEpoch = 0;
+    this.seenEpoch = 0;
+    this.lastHostSyncMs = 0;
 
-    const room = joinRoom({ appId: APP_ID }, code);
+    const room = joinRoom({ appId: APP_ID, rtcConfig: RTC_CONFIG }, code);
     this.room = room;
     this.peers.clear();
     this.hostId = this.selfId; // seul jusqu'à preuve du contraire -> hôte
@@ -110,12 +140,16 @@ export class NetRoom {
     act.onMessage = (data, ctx) => this.cb.onGameAction?.(data as GameActionMsg, ctx.peerId);
     sync.onMessage = (data, ctx) => {
       const msg = data as unknown as StateSyncMsg;
-      // Décision d'autorité (pure, testée) : s'aligner, ignorer, ou céder (split-brain).
-      const decision = resolveHostOnSync(this.selfId, this.forcedHost, ctx.peerId, msg.host?.forced ?? false);
-      if (decision === "ignore") return; // je reste l'autorité -> j'ignore cet état
+      const senderEpoch = msg.host?.epoch ?? 0;
+      // Décision d'autorité (pure, testée) : époque (terme) d'abord, puis hôte-fixé / split-brain.
+      const decision = resolveSync(this.selfId, this.forcedHost, this.hostEpoch, ctx.peerId, msg.host?.forced ?? false, senderEpoch);
+      if (decision === "ignore") return; // je reste l'autorité (ou l'émetteur est périmé) -> j'ignore
       if (decision === "yield") { this.forcedHost = false; this.cb.onSplitBrain?.(); } // je cède
-      // defer / yield : l'émetteur fait foi -> on s'aligne sur lui et on adopte son état.
+      // defer / yield : l'émetteur fait foi -> on s'aligne sur lui et on adopte son état + son terme.
+      this.seenEpoch = Math.max(this.seenEpoch, senderEpoch);
+      this.hostEpoch = Math.max(this.hostEpoch, senderEpoch); // si promu plus tard, on rediffuse au bon terme
       this.announcedHost = ctx.peerId;
+      this.lastHostSyncMs = performance.now(); // heartbeat : on vient d'avoir des nouvelles de l'hôte
       if (this.hostId !== ctx.peerId) {
         this.hostId = ctx.peerId;
         this.cb.onHostChange?.(this.isHost, this.hostId);
@@ -159,6 +193,28 @@ export class NetRoom {
     }
   }
 
+  /**
+   * Heartbeat d'hôte : si l'hôte annoncé s'est tu trop longtemps (`HOST_TIMEOUT_MS`), le plus petit
+   * pair vivant reprend l'autorité (failover). À appeler chaque frame côté CLIENT connecté ; `nowMs`
+   * = horloge monotone (`performance.now()`). Renvoie `true` si CE pair vient de prendre la main
+   * (l'appelant doit alors diffuser son état). Décision pure : `shouldTakeOver` (testée).
+   */
+  checkLiveness(nowMs: number): boolean {
+    if (!this.room || this.isHost) return false; // hors-ligne ou déjà hôte : rien à surveiller
+    const since = nowMs - this.lastHostSyncMs;
+    if (!shouldTakeOver(this.selfId, [...this.peers], this.announcedHost, since, HOST_TIMEOUT_MS)) return false;
+    // Reprise : nouveau terme (> tout ce qu'on a vu) -> on supplante l'hôte silencieux. L'ancien hôte,
+    // s'il revient, diffusera sous une époque PLUS BASSE et sera ignoré (resolveSync).
+    this.hostEpoch = this.seenEpoch + 1;
+    this.seenEpoch = this.hostEpoch;
+    this.announcedHost = null;
+    this.hostId = this.selfId;
+    this.lastHostSyncMs = nowMs; // évite un re-déclenchement immédiat
+    this.cb.onHostChange?.(true, this.hostId);
+    this.updateStatus();
+    return true;
+  }
+
   private updateStatus(): void {
     const n = this.peers.size;
     const role = this.isHost ? "hôte" : "client";
@@ -186,6 +242,9 @@ export class NetRoom {
       this.hostId = this.selfId;
       this.forcedHost = false;
       this.announcedHost = null;
+      this.hostEpoch = 0;
+      this.seenEpoch = 0;
+      this.lastHostSyncMs = 0;
     }
   }
 }

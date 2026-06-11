@@ -82,6 +82,12 @@ export const config = {
     growMaxSeconds: 25, // intervalle maxi (tiré via le RNG à graine)
     incomeSeconds: 10, // période d'application des revenus des métiers (valeur d'ADR)
   },
+  // --- Construction : chantiers VISUELS. La constructrice bâtit UN bâtiment à la fois
+  //     (file séquentielle, déterministe -> P2P-safe). Le bâtiment ne compte dans la sim
+  //     (capacité, métiers, plafonds) qu'une fois le chantier ACHEVÉ (« fonctionnel à la fin »).
+  construction: {
+    defaultSeconds: 12, // durée d'un chantier sans réglage propre (cf. Craftable.buildSeconds)
+  },
   // Appât : chaque appât consommé à la relève = une prise supplémentaire (comme ADR).
   baitPerExtraCatch: 1,
 
@@ -108,6 +114,7 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   wood: "standard", fur: "standard", meat: "standard", "cured meat": "standard", bait: "standard",
   leather: "rare", coal: "rare", iron: "rare", scales: "rare", teeth: "rare",
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
+  "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
 };
 
 /** Plafond de base (palier ×1) par rareté. */
@@ -178,6 +185,75 @@ export interface CampPath {
   pts: Array<[number, number]>;
 }
 
+// Position de la cabane (point focal, placée à la main) — partagée par le layout calculé.
+const CAMP_CABIN = { x: -1.5, z: -5.8 };
+
+// === PLACEMENT MATHÉMATIQUE DES BÂTIMENTS (Chantier C — C) =================================
+// Le campement reste FIXE & déterministe, mais HARMONIEUX : le feu (0,0) et la cabane sont des
+// points focaux placés à la main ; les AUTRES bâtiments sont répartis par PRINCIPES MATHÉMATIQUES
+// — phyllotaxie de Vogel (angle d'or 137,5°) pour les huttes, rayons au NOMBRE D'OR/Fibonacci,
+// filtrés par QUARTIER (chasse=N, industrie=E, artisanat=O, habitat=S, cf. plan-campement.md) +
+// une passe de RELAXATION anti-chevauchement. PUR (aucun aléatoire) -> identique chez tous les
+// pairs. Voir docs/refonte-monde-campement.md §C.
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // 137,50776°
+// Angle des quartiers ; repère (x,z)=(cos a·r, sin a·r) -> +X=E(0), +Z=S(π/2), −X=O(π), −Z=N(−π/2).
+const QUARTER = { hunt: -Math.PI / 2, industry: 0, crafts: Math.PI, home: Math.PI / 2 };
+// Bâtiments uniques : quartier (angle de base ± décalage) + rayon (tiers ~Fibonacci 6,5/9/10/…/17).
+const SINGLE_BUILDINGS: Array<{ id: string; ang: number; r: number; face?: "fire" | "south" }> = [
+  { id: "cart", ang: QUARTER.home + 0.55, r: 6.5 },               // dépôt, près du feu (SE)
+  { id: "trading post", ang: QUARTER.home, r: 9, face: "south" }, // échanges, s'ouvre vers la friche (S)
+  { id: "workshop", ang: QUARTER.crafts - 0.42, r: 10 },          // artisanat (O)
+  { id: "tannery", ang: QUARTER.crafts + 0.42, r: 13 },           // artisanat (O)
+  { id: "armoury", ang: QUARTER.industry + 0.42, r: 11 },         // industrie (E)
+  { id: "steelworks", ang: QUARTER.industry - 0.42, r: 15 },      // industrie sale, tenue à l'écart (E)
+  { id: "smokehouse", ang: QUARTER.hunt + 0.5, r: 12 },           // fumage (N, près de la chasse)
+  { id: "lodge", ang: QUARTER.hunt - 0.38, r: 17 },               // pavillon de chasse, clairière (N)
+];
+
+/** Génère les ancres des bâtiments (phyllotaxie + nombre d'or, par quartier) puis relaxe les
+ *  chevauchements. PUR & déterministe. Remplace le placement manuel (harmonisation maths). */
+export function generateCampLayout(): Record<string, CampAnchor[]> {
+  interface LNode { id: string; x: number; z: number; minD: number; face?: "fire" | "south" }
+  const nodes: LNode[] = [];
+  const add = (id: string, x: number, z: number, minD: number, face?: "fire" | "south") => nodes.push({ id, x, z, minD, face });
+
+  for (const b of SINGLE_BUILDINGS) add(b.id, Math.cos(b.ang) * b.r, Math.sin(b.ang) * b.r, 3.6, b.face);
+  // Huttes (20) : spirale de Vogel dans la bande 10..22 u, orientée habitat (S) -> nappe régulière.
+  for (let n = 0; n < 20; n++) {
+    const r = 10 + 12 * Math.sqrt(n / 19);
+    const a = QUARTER.home + n * GOLDEN_ANGLE;
+    add("hut", Math.cos(a) * r, Math.sin(a) * r, 3.3);
+  }
+  // Pièges (10) : arc large autour de la forêt nord (terrains de chasse), r 18..27 u.
+  for (let n = 0; n < 10; n++) {
+    const a = QUARTER.hunt + (n - 4.5) * 0.42; // NO -> N -> NE
+    add("trap", Math.cos(a) * (19 + (n % 3) * 3), Math.sin(a) * (19 + (n % 3) * 3), 1.6);
+  }
+
+  // Relaxation : écarte les paires trop proches + dégage le feu (r≥5) et la cabane (≥4,5).
+  const clearOf = (n: LNode, ox: number, oz: number, minD: number): void => {
+    const dx = n.x - ox, dz = n.z - oz, d = Math.hypot(dx, dz);
+    if (d < minD && d > 1e-4) { n.x = ox + (dx / d) * minD; n.z = oz + (dz / d) * minD; }
+  };
+  for (let pass = 0; pass < 5; pass++) {
+    for (let i = 0; i < nodes.length; i++) {
+      clearOf(nodes[i], 0, 0, 5); // dégager le feu
+      clearOf(nodes[i], CAMP_CABIN.x, CAMP_CABIN.z, 4.5); // dégager la cabane
+      clearOf(nodes[i], 0, 8, 3.5); // dégager le point d'apparition du joueur (cf. player.ts)
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz) || 1e-4;
+        const want = a.minD + b.minD;
+        if (d < want) { const p = (want - d) / 2, ux = dx / d, uz = dz / d; a.x -= ux * p; a.z -= uz * p; b.x += ux * p; b.z += uz * p; }
+      }
+    }
+  }
+
+  const out: Record<string, CampAnchor[]> = {};
+  for (const n of nodes) (out[n.id] ??= []).push({ x: Math.round(n.x * 10) / 10, z: Math.round(n.z * 10) / 10, face: n.face ?? "fire" });
+  return out;
+}
+
 export const campLayout: {
   cabin: { x: number; z: number; face?: number };
   buildings: Record<string, CampAnchor[]>;
@@ -186,67 +262,71 @@ export const campLayout: {
   // Layout du campement — dessiné à la main via l'éditeur de spawn (F2) puis exporté ici.
   // `cabin.face` = orientation de la cabane en radians (0 = façade vers +Z, défaut). L'éditeur
   // l'exporte quand on tourne la cabane ; cabin.ts l'applique (visuel + colliders + ancres).
-  cabin: { x: -1.5, z: -5.8, face: 0.262 },
-  buildings: {
-    // Terrains de chasse : pièges disséminés autour du village. Deux pièges trop centraux
-    // (ex-(0.7,3.9) sur la place et ex-(0,-9.6) dans le village) repoussés dans les bois :
-    // l'un plein est (24,1), l'autre plein nord (-2,-24), pour compléter l'anneau.
-    trap: [
-      { x: 12.8, z: -20, face: -2.055 }, { x: -21, z: -10.9, face: 1.831 },
-      { x: -17.3, z: 14.5, face: -0.574 }, { x: 24, z: 1 },
-      { x: 20.8, z: 10.7, face: 0.131 }, { x: -19.9, z: -16.8, face: 1.397 },
-      { x: -10.3, z: 22.1, face: -1.275 }, { x: -2, z: -24 },
-      { x: 19.7, z: -12.1, face: 1.264 }, { x: 5, z: 26.4, face: 1.482 },
-    ],
-    cart: [{ x: 3.8, z: 0.3, face: 2.304 }],
-    hut: [
-      { x: -10.2, z: 6, face: 1.745 }, { x: 10.8, z: 4.4 }, { x: 7.5, z: 9.1, face: -2.795 },
-      { x: -7.5, z: 10.4, face: 2.66 }, { x: 5.9, z: 16.8, face: -2.136 }, { x: -15.8, z: 2.4, face: 2.005 },
-      { x: 1.5, z: 19, face: 3.01 }, { x: -16.4, z: -9.6, face: 0.087 }, { x: 6.3, z: -10.8, face: 0.299 },
-      { x: -11.3, z: -9.6, face: -0.262 }, { x: 14.5, z: 7.8, face: 2.307 }, { x: -5.5, z: -13.4, face: -2.182 },
-      { x: -11.8, z: 11.5, face: -1.708 }, { x: 5.4, z: 21.5, face: 1.393 }, { x: -13.2, z: -13.8, face: 1.876 },
-      { x: 7, z: -16, face: -2.099 }, { x: -0.5, z: -13.4, face: 1.267 }, { x: -18.5, z: 6.1, face: 1.485 },
-      { x: 11.9, z: 11.2, face: 0.125 }, { x: -21, z: 0.8, face: -2.015 },
-    ],
-    lodge: [{ x: 12.4, z: -4.9, face: -0.961 }],
-    "trading post": [{ x: -2.6, z: 3.6, face: -0.784 }],
-    tannery: [{ x: 3.4, z: 11.5, face: 1.073 }],
-    smokehouse: [{ x: -2.8, z: 10.2, face: 2.754 }],
-    workshop: [{ x: 3.5, z: 4, face: -2.658 }],
-    steelworks: [{ x: -10.7, z: -1, face: 1.218 }],
-    armoury: [{ x: -9.5, z: -5, face: 0.785 }],
-  },
-  // Chemins dessinés (axes principaux du village). Tracés via l'éditeur de spawn (F2) puis
-  // collés ici. Vide = aucun sentier peint (juste la clairière). Peints par render/campPaths.ts.
-  paths: [
-    { pts: [[10.2, -3.5], [7.5, -3], [5.7, -1.9], [2.7, -1.9], [0.9, -1.7], [-0.6, -2.5]] },
-    { pts: [[-7.2, 6.8], [-5.2, 6.4], [-3.5, 7.6], [-2.2, 7.6], [-0.3, 6.8], [-0.2, 5.8], [0.1, 3.8], [-0.1, 2.4]] },
-    { pts: [[7.7, 5.5], [5.6, 6.2], [4.1, 6.6], [2.5, 7.3], [1.4, 6.8], [0.1, 6.1]] },
-    { pts: [[-12.7, 1.7], [-10.4, 1.7], [-8.9, 1.2], [-8.7, -0.3], [-8.3, -1.4], [-6.5, -1.7], [-3.9, -2], [-2.4, -1.8]] },
-    { pts: [[-6.8, -2.1], [-8, -3.6]] },
-  ],
+  cabin: { ...CAMP_CABIN, face: 0.262 },
+  // Bâtiments CALCULÉS par principes mathématiques (phyllotaxie + nombre d'or, par quartier) —
+  // remplace l'ancien placement manuel pour gagner en harmonie. Cf. generateCampLayout() ci-dessus.
+  buildings: generateCampLayout(),
+  // Chemins du village : GÉNÉRÉS AU RUNTIME (cf. campPathsFor) à partir des bâtiments réellement
+  // bâtis -> plus il y a de bâtiments, plus le réseau de sentiers s'étoffe (reliant chaque structure
+  // au feu et, de proche en proche, aux voisines). Vide au départ ; rempli par main.ts puis peint
+  // (render/campPaths.ts) et suivi par les villageois (biais navGrid). Voir docs/plan-campement.md.
+  paths: [],
 };
+
+/**
+ * Réseau de SENTIERS du camp : arbre couvrant minimal (Prim) reliant le FEU `(0,0)` (racine) et
+ * chaque position fournie (cabane + bâtiments construits). Chaque structure est ainsi reliée au
+ * centre ET, de proche en proche, à ses voisines — un vrai maillage de village qui CROÎT avec les
+ * constructions. PUR & déterministe. Cosmétique + biais de déplacement (aucun impact sim/réseau).
+ */
+export function campPathsFor(positions: Array<{ x: number; z: number }>): CampPath[] {
+  const nodes: Array<{ x: number; z: number }> = [{ x: 0, z: 0 }, ...positions]; // 0 = le feu (racine)
+  if (nodes.length < 2) return [];
+  const inTree = nodes.map(() => false);
+  inTree[0] = true;
+  const out: CampPath[] = [];
+  for (let added = 1; added < nodes.length; added++) {
+    let bi = -1, bj = -1, best = Infinity;
+    for (let i = 0; i < nodes.length; i++) {
+      if (!inTree[i]) continue;
+      for (let j = 0; j < nodes.length; j++) {
+        if (inTree[j]) continue;
+        const dx = nodes[i].x - nodes[j].x, dz = nodes[i].z - nodes[j].z, d = dx * dx + dz * dz;
+        if (d < best) { best = d; bi = i; bj = j; }
+      }
+    }
+    if (bj < 0) break;
+    inTree[bj] = true;
+    out.push({ pts: [[nodes[bi].x, nodes[bi].z], [nodes[bj].x, nodes[bj].z]] });
+  }
+  return out;
+}
 
 const clampN = (v: number, a: number, b: number): number => (v < a ? a : v > b ? b : v);
 
-// Anneau de MONTAGNES qui borne le monde (M7) : le relief grimpe fortement à l'approche
-// du bord (worldRadius), formant un mur infranchissable + horizon de crêtes. Au-delà du
-// bord, ça continue de monter (le streaming, lui, s'arrête peu après — cf. render/terrain.ts).
-function mountainEdge(r: number, x: number, z: number): number {
-  const WR = worldgen.radiusCells * worldgen.cellSize; // bord du monde (unités)
-  const start = WR * 0.8;
-  if (r < start) return 0;
-  const t = (r - start) / (WR - start); // 0 au début de la montée, 1 au bord, >1 au-delà
-  const ang = Math.atan2(z, x);
-  const ridge = 0.75 + 0.35 * Math.sin(ang * 9) + 0.15 * Math.sin(ang * 23 + 1.3); // crête irrégulière
-  return 70 * (t * t) * ridge; // montée accélérée -> mur
+// (Bordures du monde : voir le bloc « BORDURES DU MONDE » plus bas, après la config `worldgen`
+//  dont elles dépendent — terrainHeight() les utilise via la fonction hoistée `borderField`.)
+
+// PLATEAUX d'aplanissement (M9) : autour des sites grotte/mine, on APLANIT le terrain en plateau
+// pour que le RELIEF de la carte = le SOL PLAT de l'intérieur (sinon le terrain ressort à travers le
+// plancher de la grotte + incohérence de collision). Réglés au boot/seed depuis la liste des sites
+// (`setTerrainPlateaus`, appelé par main.ts). État de RENDU (≠ sim ; le sim n'utilise pas terrainHeight).
+export interface TerrainPlateau {
+  x: number; z: number; // centre monde
+  ri: number; // rayon INTÉRIEUR : terrain parfaitement plat (= h) — couvre le sol de l'intérieur
+  ro: number; // rayon EXTÉRIEUR : raccord lissé vers le relief naturel
+  h: number; // hauteur du plateau (= relief naturel au centre du site)
+}
+let terrainPlateaus: TerrainPlateau[] = [];
+/** Fixe les plateaux d'aplanissement (autour des sites). Déterministe (dérivés de la graine). */
+export function setTerrainPlateaus(p: TerrainPlateau[]): void {
+  terrainPlateaus = p;
 }
 
-// Hauteur déterministe du terrain en (x, z). Utilisée À LA FOIS pour déformer le maillage
-// du sol ET pour poser les arbres/le personnage dessus -> cohérence garantie. PURE (pas
-// d'aléatoire). Le camp (centre) reste plat ; le relief s'accentue avec la distance, par
-// régions ; le bord du monde est ceinturé de montagnes.
-export function terrainHeight(x: number, z: number): number {
+// Hauteur déterministe du terrain en (x, z), AVANT aplanissement (relief naturel pur). PURE.
+// Le camp (centre) reste plat ; le relief s'accentue avec la distance, par régions ; le bord
+// du monde est ceinturé de montagnes.
+export function terrainBaseHeight(x: number, z: number): number {
   const r = Math.hypot(x, z);
   // 1) CHAMP D'INTENSITÉ de relief (basse fréquence, 2 échelles) : de grandes régions tantôt
   //    PLATES (intensity ~0), tantôt VALLONNÉES (intensity ~1). Contraste poussé -> fini la monotonie.
@@ -266,8 +346,30 @@ export function terrainHeight(x: number, z: number): number {
       0.32 * Math.sin(x * 0.047 + z * 0.041) + // relief moyen
       0.22 * Math.sin(x * 0.09 - z * 0.085)) * // ondulations locales (visibles)
     A * intensity;
-  // 4) anneau de montagnes (bord du monde).
-  return base + hills + mountainEdge(r, x, z);
+  // 4) BORDURES du monde (montagnes/océans par côté, au-delà de la zone jouable).
+  const bf = borderField(x, z);
+  const h = base + hills;
+  // Dans la zone jouable (bf == 0) : on garde le sol AU-DESSUS de l'eau (plancher) -> le plan d'eau
+  // global (faux océan) ne transparaît jamais dans une cuvette intérieure ; il n'apparaît que là où
+  // une bordure « océan » fait plonger le terrain sous SEA_LEVEL.
+  if (bf === 0) return h < SEA_LEVEL + 0.6 ? SEA_LEVEL + 0.6 : h;
+  return h + bf;
+}
+
+// Hauteur FINALE du terrain : relief naturel APLANI en plateau autour des sites (grotte/mine) ->
+// le sol de la carte rejoint celui de l'intérieur, sans relief qui transperce. Tous les
+// consommateurs (maillage du sol, colliders, pose du joueur, intérieurs) passent par ici -> cohérent.
+export function terrainHeight(x: number, z: number): number {
+  let h = terrainBaseHeight(x, z);
+  for (const p of terrainPlateaus) {
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d >= p.ro) continue; // hors d'influence
+    // t : 0 au cœur (terrain = h du plateau, PLAT) -> 1 au bord externe (relief naturel). Lissé (smoothstep).
+    const u = clampN((d - p.ri) / Math.max(0.001, p.ro - p.ri), 0, 1);
+    const t = u * u * (3 - 2 * u);
+    h = p.h * (1 - t) + h * t;
+  }
+  return h;
 }
 
 // --- Libellés narratifs (contenu, indexés par niveau ; M1) ---
@@ -300,6 +402,8 @@ export interface Craftable {
   cost: Record<string, number>;
   /** Surcoût par exemplaire déjà construit (optionnel). */
   costPerLevel?: Record<string, number>;
+  /** Durée du chantier en secondes (défaut : config.construction.defaultSeconds). */
+  buildSeconds?: number;
   /** Ce que débloque le bâtiment (affiché dans l'UI ; les effets viennent en M3/M4). */
   desc: string;
   /** Message narratif (porté d'ADR) affiché au survol quand le bâtiment vient d'être révélé. */
@@ -308,42 +412,47 @@ export interface Craftable {
 
 export const craftables: Craftable[] = [
   { id: "trap", name: "piège", type: "building", maximum: 10,
-    cost: { wood: 10 }, costPerLevel: { wood: 10 },
+    cost: { wood: 10 }, costPerLevel: { wood: 10 }, buildSeconds: 10,
     desc: "capture des créatures (fourrure, viande…)",
     availableMsg: "elle dit qu'elle peut fabriquer des pièges pour attraper les créatures encore en vie dehors." },
   { id: "cart", name: "charrette", type: "building", maximum: 1,
-    cost: { wood: 30 }, desc: "double la capacité de transport du sac",
+    cost: { wood: 30 }, buildSeconds: 11, desc: "double la capacité de transport du sac",
     availableMsg: "elle dit qu'elle peut bricoler une charrette pour rapporter plus de bois." },
   { id: "hut", name: "hutte", type: "building", maximum: 20,
-    cost: { wood: 100 }, costPerLevel: { wood: 50 }, // chiffres ADR (100 + n×50)
+    cost: { wood: 100 }, costPerLevel: { wood: 50 }, buildSeconds: 14, // chiffres ADR (100 + n×50)
     desc: "abrite des villageois (+4 places)",
     availableMsg: "elle dit qu'il y a d'autres errants. ils travailleront, eux aussi." },
   { id: "lodge", name: "loge", type: "building", maximum: 1,
-    cost: { wood: 200, fur: 10, meat: 5 }, desc: "permet d'assigner des chasseurs",
+    cost: { wood: 200, fur: 10, meat: 5 }, buildSeconds: 16, desc: "permet d'assigner des chasseurs",
     availableMsg: "les villageois pourraient chasser, avec le bon équipement." },
   { id: "trading post", name: "poste de traite", type: "building", maximum: 1,
-    cost: { wood: 400, fur: 100 }, desc: "ouvre le commerce avec les nomades",
+    cost: { wood: 400, fur: 100 }, buildSeconds: 16, desc: "ouvre le commerce avec les nomades",
     availableMsg: "un poste de traite faciliterait le commerce." },
   { id: "tannery", name: "tannerie", type: "building", maximum: 1,
-    cost: { wood: 500, fur: 50 }, desc: "transforme la fourrure en cuir",
+    cost: { wood: 500, fur: 50 }, buildSeconds: 16, desc: "transforme la fourrure en cuir",
     availableMsg: "elle dit que le cuir serait utile. les villageois pourraient en faire." },
   { id: "smokehouse", name: "fumoir", type: "building", maximum: 1,
-    cost: { wood: 600, meat: 50 }, desc: "fume la viande (viande séchée)",
+    cost: { wood: 600, meat: 50 }, buildSeconds: 16, desc: "fume la viande (viande séchée)",
     availableMsg: "il faudrait fumer la viande avant qu'elle ne pourrisse. elle peut arranger ça." },
   { id: "workshop", name: "atelier", type: "building", maximum: 1,
-    cost: { wood: 800, leather: 100, scales: 10 }, desc: "débloque l'artisanat avancé",
+    cost: { wood: 800, leather: 100, scales: 10 }, buildSeconds: 18, desc: "débloque l'artisanat avancé",
     availableMsg: "elle dit qu'elle ferait de plus belles choses, avec les bons outils." },
   { id: "steelworks", name: "aciérie", type: "building", maximum: 1,
-    cost: { wood: 1500, iron: 100, coal: 100 }, desc: "produit de l'acier",
+    cost: { wood: 1500, iron: 100, coal: 100 }, buildSeconds: 20, desc: "produit de l'acier",
     availableMsg: "elle dit que les villageois pourraient produire de l'acier, avec l'outillage." },
   { id: "armoury", name: "armurerie", type: "building", maximum: 1,
-    cost: { wood: 3000, steel: 100, sulphur: 50 }, desc: "produit des balles",
+    cost: { wood: 3000, steel: 100, sulphur: 50 }, buildSeconds: 20, desc: "produit des balles",
     availableMsg: "elle dit qu'une source régulière de balles serait utile." },
 ];
 
 export const craftableById: Record<string, Craftable> = Object.fromEntries(
   craftables.map((c) => [c.id, c]),
 );
+
+/** Durée d'un chantier (secondes) : réglage propre du craftable, sinon le défaut global. */
+export function buildSecondsFor(id: string): number {
+  return craftableById[id]?.buildSeconds ?? config.construction.defaultSeconds;
+}
 
 // --- M3 : MÉTIERS (_INCOME d'A Dark Room). `stores` = production/consommation par
 //     période de revenu (config.population.incomeSeconds). `building` = prérequis
@@ -354,6 +463,11 @@ export interface Job {
   name: string;
   building: string | null;
   stores: Record<string, number>;
+  /**
+   * M9 — prérequis SITE : ce métier n'est assignable qu'une fois une mine de ce TYPE
+   * (`ironmine`/`coalmine`/`sulphurmine`) SÉCURISÉE (action `SECURE_MINE`). Absent = pas de prérequis site.
+   */
+  siteType?: string;
 }
 
 export const jobs: Job[] = [
@@ -362,11 +476,34 @@ export const jobs: Job[] = [
   { id: "trapper", name: "piégeur", building: "trap", stores: { meat: -1, bait: 1 } },
   { id: "tanner", name: "tanneur", building: "tannery", stores: { fur: -5, leather: 1 } },
   { id: "charcutier", name: "charcutier", building: "smokehouse", stores: { meat: -5, wood: -5, "cured meat": 1 } },
+  // Mineurs (M9) : débloqués en sécurisant la mine correspondante (pas de bâtiment requis ; la mine
+  // EST le lieu de travail). Consomment de la viande séchée, façon A Dark Room.
+  { id: "iron_miner", name: "mineur de fer", building: null, siteType: "ironmine", stores: { "cured meat": -1, iron: 1 } },
+  { id: "coal_miner", name: "mineur de charbon", building: null, siteType: "coalmine", stores: { "cured meat": -1, coal: 1 } },
+  { id: "sulphur_miner", name: "mineur de soufre", building: null, siteType: "sulphurmine", stores: { "cured meat": -1, sulphur: 1 } },
   { id: "steelworker", name: "sidérurgiste", building: "steelworks", stores: { iron: -1, coal: -1, steel: 1 } },
   { id: "armourer", name: "armurier", building: "armoury", stores: { steel: -1, sulphur: -1, bullets: 1 } },
 ];
 
 export const jobById: Record<string, Job> = Object.fromEntries(jobs.map((j) => [j.id, j]));
+
+// --- M9 / M10 : OBJETS fabriqués (≠ bâtiments). La torche est avancée ici (M9 P1) car elle GATE
+//     l'entrée des grottes ; l'atelier (M10) en sera plus tard la station officielle. Recette = stocks
+//     de l'ENTREPÔT ; l'objet va dans le SAC du joueur. `building: null` = fabricable sans bâtiment (v1). ---
+export interface CraftableItem {
+  id: string;
+  name: string;
+  type: "good" | "tool" | "weapon";
+  building: string | null; // prérequis bâtiment (M10 : "workshop") ; null = aucun (v1)
+  recipe: Record<string, number>; // coût en ressources de l'entrepôt
+}
+
+export const craftableItems: CraftableItem[] = [
+  // ADR : torche = bois + étoffe ; requise pour entrer dans le noir (cf. mines-grottes-*).
+  { id: "torch", name: "torche", type: "tool", building: null, recipe: { wood: 1, cloth: 1 } },
+];
+
+export const craftableItemById: Record<string, CraftableItem> = Object.fromEntries(craftableItems.map((i) => [i.id, i]));
 
 /** Coût effectif du prochain exemplaire (base + count × incrément). PUR. */
 export function craftableCost(c: Craftable, count: number): Record<string, number> {
@@ -399,6 +536,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   wood: "bois", fur: "fourrure", meat: "viande", "cured meat": "viande séchée",
   leather: "cuir", scales: "écailles", teeth: "dents", cloth: "étoffe", charm: "charme",
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
+  "alien alloy": "alliage", "energy cell": "cellule",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG
@@ -660,7 +798,7 @@ export const eventById: Record<string, GameEvent> = Object.fromEntries(events.ma
 // ============================================================================
 
 /** Biomes : indices STABLES (sérialisables, indexent `biomes`). `camp` = centre forcé. */
-export const Biome = { Camp: 0, Forest: 1, Field: 2, Barren: 3 } as const;
+export const Biome = { Camp: 0, Forest: 1, Field: 2, Barren: 3, Swamp: 4 } as const;
 export type BiomeId = (typeof Biome)[keyof typeof Biome];
 
 /** Tous les « boutons » de la génération. `seed` = graine du MONDE (≠ rngSeed gameplay). */
@@ -679,9 +817,63 @@ export const worldgen = {
   relief: { octaves: 4, baseFrequency: 0.015, amplitude: 10, lacunarity: 2, gain: 0.5 }, // amplitude = hauteur des collines (zones vallonnées)
 } as const;
 
+// === BORDURES DU MONDE (Chantier C — B) ====================================================
+// Le monde est un grand CARRÉ. Sur ses 4 côtés, exactement 2 « fausses montagnes » (mur qui
+// monte) et 2 « faux océans » (terrain qui plonge sous l'eau), répartis ALÉATOIREMENT par la
+// graine (parfois opposés, parfois adjacents). La bordure commence AU-DELÀ de la zone jouable
+// (l'intérieur reste plat/praticable) ; le joueur est confiné en deçà (cf. render/player.ts).
+// Placé APRÈS `worldgen` (dont WR dépend) ; `terrainHeight()` plus haut y accède via le hoisting.
+const WR = worldgen.radiusCells * worldgen.cellSize; // bord de la zone jouable (unités) = 768
+export const BORDER_START = WR; // la bordure commence ICI, AU-DELÀ de la zone jouable
+export const BORDER_BAND = 180; // largeur (u) de la bande de bordure (montée/descente)
+export const SEA_LEVEL = -3; // niveau de l'eau du faux océan (sous le sol jouable)
+export const PLAY_HALF = WR - 8; // limite de confinement du joueur (juste avant la bordure)
+const MOUNTAIN_H = 95; // hauteur du mur de montagne au bord
+const OCEAN_DEPTH = 30; // profondeur de descente du faux océan
+
+export type BorderSide = "mountain" | "ocean";
+export interface BorderSides { e: BorderSide; w: BorderSide; n: BorderSide; s: BorderSide; }
+// Par défaut : ceinture de montagnes (sûr tant que `configureBorders` n'a pas tourné).
+let borderSides: BorderSides = { e: "mountain", w: "mountain", n: "mountain", s: "mountain" };
+// Les 6 sous-ensembles possibles de 2 côtés (océan) parmi 4 -> couvre opposés ET adjacents.
+const OCEAN_PAIRS: Array<[keyof BorderSides, keyof BorderSides]> = [
+  ["e", "w"], ["e", "n"], ["e", "s"], ["w", "n"], ["w", "s"], ["n", "s"],
+];
+
+/** Tire DÉTERMINISTE 2 côtés « océan » (parmi 6 paires) depuis la graine ; les 2 autres = montagnes.
+ *  À appeler à chaque (re)génération du monde AVANT de bâtir le terrain (cf. main.ts). */
+export function configureBorders(seed: number): void {
+  const k = (Math.imul((seed >>> 0) ^ 0x9e3779b9, 0x85ebca6b) >>> 0) % 6;
+  const [a, b] = OCEAN_PAIRS[k];
+  borderSides = { e: "mountain", w: "mountain", n: "mountain", s: "mountain" };
+  borderSides[a] = "ocean";
+  borderSides[b] = "ocean";
+}
+/** Répartition courante des bordures (pour le rendu / debug). */
+export function getBorderSides(): BorderSides {
+  return borderSides;
+}
+
+const smooth01 = (t: number): number => { const x = t < 0 ? 0 : t > 1 ? 1 : t; return x * x * (3 - 2 * x); };
+
+// Champ de bordure : monte (montagne) ou descend (océan) AU-DELÀ de la zone jouable, par côté,
+// avec mélange doux aux coins (somme pondérée par la pénétration -> cap/promontoire naturel).
+// Renvoie 0 partout DANS la zone jouable (intérieur plat préservé).
+function borderField(x: number, z: number): number {
+  const P = BORDER_START, B = BORDER_BAND;
+  const peE = (x - P) / B, peW = (-x - P) / B, peN = (z - P) / B, peS = (-z - P) / B; // pénétration par côté
+  const tE = peE > 0 ? peE : 0, tW = peW > 0 ? peW : 0, tN = peN > 0 ? peN : 0, tS = peS > 0 ? peS : 0;
+  const wSum = tE + tW + tN + tS;
+  if (wSum < 1e-4) return 0; // entièrement dans la zone jouable -> plat
+  const mtn = MOUNTAIN_H * clampN(0.8 + Math.sin(x * 0.04) * 0.3 + Math.sin(z * 0.055) * 0.2, 0.55, 1.3); // crête irrégulière
+  const c = (t: number, side: BorderSide): number => (t <= 0 ? 0 : (side === "ocean" ? -OCEAN_DEPTH : mtn) * smooth01(t));
+  const sum = tE * c(tE, borderSides.e) + tW * c(tW, borderSides.w) + tN * c(tN, borderSides.n) + tS * c(tS, borderSides.s);
+  return sum / wSum;
+}
+
 export interface BiomeDef {
   id: BiomeId;
-  key: "camp" | "forest" | "field" | "barren";
+  key: "camp" | "forest" | "field" | "barren" | "swamp";
   label: string;
   /** Multiplie l'amplitude du relief (appliqué au rendu, plus tard). */
   reliefMul: number;
@@ -699,6 +891,9 @@ export const biomes: BiomeDef[] = [
     scatter: { grass: 18, flower: 5, bush: 1, tree: 0.6, rock: 0.4 } },
   { id: Biome.Barren, key: "barren", label: "lande", reliefMul: 1.3,
     scatter: { rock: 3, drybush: 2, tree: 0.5, bones: 0.25, grass: 1 } },
+  // Marais (région, ≠ point) : roseaux + fougères + champignons + cyprès/arbres morts épars.
+  { id: Biome.Swamp, key: "swamp", label: "marais", reliefMul: 0.35,
+    scatter: { reed: 10, fern: 3, mushroom: 2, grass: 2, drybush: 1, tree: 1.2 } },
 ];
 export const biomeById: Record<number, BiomeDef> = Object.fromEntries(biomes.map((b) => [b.id, b]));
 
@@ -720,8 +915,8 @@ export const treeSpecies: TreeSpecies[] = [
   { id: "chene", type: "oak", biomes: ["forest", "field"], weight: 3, minScale: 0.9, maxScale: 1.2 },
   { id: "bouleau", type: "birch", biomes: ["forest"], weight: 2, minScale: 0.9, maxScale: 1.2 },
   { id: "automne", type: "autumn", biomes: ["forest"], weight: 2, minScale: 0.9, maxScale: 1.2 },
-  { id: "cypres", type: "cypress", biomes: ["forest", "barren"], weight: 2, minScale: 0.9, maxScale: 1.3 },
-  { id: "arbre-mort", type: "dead", biomes: ["forest", "barren"], weight: 1, minScale: 0.8, maxScale: 1.2, canDominate: false },
+  { id: "cypres", type: "cypress", biomes: ["forest", "barren", "swamp"], weight: 2, minScale: 0.9, maxScale: 1.3 },
+  { id: "arbre-mort", type: "dead", biomes: ["forest", "barren", "swamp"], weight: 1, minScale: 0.8, maxScale: 1.2, canDominate: false },
 ];
 
 // Sites / points d'intérêt par ANNEAUX de distance (rayons en cellules ; cf. ADR minRadius/maxRadius).
@@ -733,14 +928,20 @@ export interface SiteDef {
   minRadiusCells: number;
   maxRadiusCells: number;
 }
+// Variété & nombre calqués sur A Dark Room, scalés à notre grille (rayon 64) — cf. docs/routes-sites.md.
+// La cité est le type le plus nombreux (gros donjon, alliage) ; borehole/battlefield = butin lointain.
 export const sites: SiteDef[] = [
-  { id: "cave", label: "grotte", count: 4, minRadiusCells: 4, maxRadiusCells: 12 },
-  { id: "house", label: "vieille maison", count: 5, minRadiusCells: 4, maxRadiusCells: 18 },
-  { id: "town", label: "ville", count: 2, minRadiusCells: 10, maxRadiusCells: 30 },
+  { id: "cave", label: "grotte", count: 6, minRadiusCells: 4, maxRadiusCells: 16 },
+  { id: "house", label: "vieille maison", count: 14, minRadiusCells: 5, maxRadiusCells: 50 },
+  { id: "town", label: "ville", count: 8, minRadiusCells: 12, maxRadiusCells: 38 },
+  { id: "city", label: "cité", count: 10, minRadiusCells: 26, maxRadiusCells: 60 }, // gros donjon lointain (alliage/laser)
   { id: "ironmine", label: "mine de fer", count: 1, minRadiusCells: 5, maxRadiusCells: 5 },
   { id: "coalmine", label: "mine de charbon", count: 1, minRadiusCells: 10, maxRadiusCells: 10 },
   { id: "sulphurmine", label: "mine de soufre", count: 1, minRadiusCells: 20, maxRadiusCells: 20 },
-  { id: "swamp", label: "marais", count: 1, minRadiusCells: 40, maxRadiusCells: 55 },
+  { id: "borehole", label: "forage", count: 8, minRadiusCells: 18, maxRadiusCells: 58 }, // alliage extraterrestre
+  { id: "battlefield", label: "champ de bataille", count: 4, minRadiusCells: 24, maxRadiusCells: 58 }, // armes lourdes
+  { id: "swamp", label: "marais", count: 1, minRadiusCells: 12, maxRadiusCells: 24 }, // posé AU CŒUR de la région de marais (cf. worldgen)
+  { id: "cache", label: "village détruit", count: 1, minRadiusCells: 16, maxRadiusCells: 52 }, // prestige (run précédente)
   { id: "ship", label: "épave", count: 1, minRadiusCells: 56, maxRadiusCells: 60 },
   { id: "executioner", label: "cuirassé", count: 1, minRadiusCells: 56, maxRadiusCells: 60 },
 ];

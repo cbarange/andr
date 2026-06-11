@@ -44,50 +44,60 @@ export interface WorldMap {
 }
 
 const UNDECIDED = 255;
-// index biome -> clé (pour relire les voisins) ; doit suivre l'ordre de `Biome`.
-const KEY_BY_BIOME = ["camp", "forest", "field", "barren"] as const;
-const BIOME_BY_KEY: Record<string, BiomeId> = {
-  camp: Biome.Camp, forest: Biome.Forest, field: Biome.Field, barren: Biome.Barren,
-};
 
-/** Tirage pondéré déterministe sur une map clé->poids (>0). Ordre des clés = stable. */
-function weightedPick(weights: Record<string, number>, rng: RngState): string {
-  const keys = Object.keys(weights);
-  let total = 0;
-  for (const k of keys) total += weights[k];
-  let r = nextFloat(rng) * total;
-  for (const k of keys) {
-    r -= weights[k];
-    if (r < 0) return k;
-  }
-  return keys[keys.length - 1];
+// === BIOMES EN RÉGIONS (bruit de valeur warpé) ============================================
+// Remplace l'ancienne « viscosité » (remplissage par voisins) qui donnait un moucheté uniforme.
+// Ici les biomes forment de GRANDES régions organiques (domain warping façon Inigo Quilez), et
+// le marais est une VRAIE région (≠ un point lointain). Tout est fonction PURE de (cx, cz, seed)
+// -> identique chez tous les pairs ; n'utilise PAS le RNG des sites. Voir docs/refonte-monde-campement.md §A.
+
+/** Hash entier (ix, iz, seed) -> [0,1). Déterministe. */
+function ihash(ix: number, iz: number, seed: number): number {
+  let h = (seed ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (ix | 0), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (iz | 0), 0xc2b2ae35) >>> 0;
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
 }
-
-/**
- * Le cœur : choisit le biome d'une cellule selon ses voisines DÉJÀ décidées (la VISCOSITÉ).
- * Chaque voisine « tire » la cellule vers son biome ; le camp impose la forêt autour de lui.
- */
-function chooseBiome(neighbors: number[], rng: RngState): BiomeId {
-  const w: Record<string, number> = {
-    forest: worldgen.baseBiomeWeights.forest,
-    field: worldgen.baseBiomeWeights.field,
-    barren: worldgen.baseBiomeWeights.barren,
-  };
-  for (const n of neighbors) {
-    if (n === Biome.Camp) return Biome.Forest; // règle ADR : le camp est niché dans les bois
-    const key = KEY_BY_BIOME[n];
-    if (key in w) w[key] += worldgen.stickiness;
-  }
-  return BIOME_BY_KEY[weightedPick(w, rng)];
+/** Bruit de valeur 2D (interpolation lisse des coins entiers) -> [0,1). */
+function vnoise(x: number, z: number, seed: number): number {
+  const x0 = Math.floor(x), z0 = Math.floor(z);
+  const fx = x - x0, fz = z - z0;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const a = ihash(x0, z0, seed) + (ihash(x0 + 1, z0, seed) - ihash(x0, z0, seed)) * sx;
+  const b = ihash(x0, z0 + 1, seed) + (ihash(x0 + 1, z0 + 1, seed) - ihash(x0, z0 + 1, seed)) * sx;
+  return a + (b - a) * sz;
 }
-
-/** Cellules d'un anneau carré (distance de Chebyshev = r), dans un ordre FIXE (déterminisme). */
-function ringCells(r: number): Array<[number, number]> {
-  if (r === 0) return [[0, 0]];
-  const out: Array<[number, number]> = [];
-  for (let cx = -r; cx <= r; cx++) { out.push([cx, -r]); out.push([cx, r]); }
-  for (let cz = -r + 1; cz <= r - 1; cz++) { out.push([-r, cz]); out.push([r, cz]); }
-  return out;
+/** fBm (3 octaves) -> [0,1). */
+function fbm(x: number, z: number, seed: number): number {
+  let v = 0, amp = 0.5, f = 1, norm = 0;
+  for (let o = 0; o < 3; o++) { v += amp * vnoise(x * f, z * f, (seed + o * 101) >>> 0); norm += amp; f *= 2; amp *= 0.5; }
+  return v / norm;
+}
+const BF = 0.09; // fréquence des régions : ~1 région par ~11 cellules
+/** Champ de biome DOMAIN-WARPÉ -> frontières organiques, pas de grille. */
+function biomeField(cx: number, cz: number, seed: number): number {
+  const wx = fbm(cx * BF + 5.2, cz * BF + 1.3, (seed ^ 0x111) >>> 0) - 0.5;
+  const wz = fbm(cx * BF + 8.3, cz * BF + 2.8, (seed ^ 0x222) >>> 0) - 0.5;
+  return fbm(cx * BF + wx * 2.5, cz * BF + wz * 2.5, seed);
+}
+/** Biome « de fond » (hors camp/collier/marais) : forêt / prairie / lande, en régions. */
+function noiseBiome(cx: number, cz: number, seed: number): BiomeId {
+  const v = biomeField(cx, cz, seed);
+  return v < 0.4 ? Biome.Barren : v < 0.66 ? Biome.Field : Biome.Forest;
+}
+/** Ancre déterministe de la RÉGION de marais : distance moyenne, angle tiré de la graine. */
+function swampAnchor(seed: number): { cx: number; cz: number } {
+  const ang = ihash(7, 13, (seed ^ 0x5151) >>> 0) * Math.PI * 2;
+  const rr = 14 + ihash(31, 17, (seed ^ 0x7373) >>> 0) * 8; // 14..22 cellules
+  return { cx: Math.round(Math.cos(ang) * rr), cz: Math.round(Math.sin(ang) * rr) };
+}
+const SWAMP_R = 7.5; // rayon ~7,5 cellules -> ~180 u de diamètre (une VRAIE zone, pas une flaque)
+/** La cellule est-elle dans la région de marais ? (bord rendu organique par un bruit local) */
+function inSwamp(cx: number, cz: number, anchor: { cx: number; cz: number }, seed: number): boolean {
+  const d = Math.hypot(cx - anchor.cx, cz - anchor.cz);
+  const wobble = 1 + 0.5 * (vnoise(cx * 0.25, cz * 0.25, (seed ^ 0x9999) >>> 0) - 0.5);
+  return d < SWAMP_R * wobble;
 }
 
 /**
@@ -105,22 +115,18 @@ export function generateWorld(seed: number): WorldMap {
   const index = (cx: number, cz: number) => (cz + R) * size + (cx + R);
   const inBounds = (cx: number, cz: number) => cx >= -R && cx <= R && cz >= -R && cz <= R;
 
-  // 1) Biomes par viscosité (le camp central est forcé).
-  for (let r = 0; r <= R; r++) {
-    for (const [cx, cz] of ringCells(r)) {
-      if (Math.max(Math.abs(cx), Math.abs(cz)) <= SR) {
-        grid[index(cx, cz)] = Biome.Camp;
-        continue;
-      }
-      const neigh: number[] = [];
-      const consider = (x: number, z: number) => {
-        if (!inBounds(x, z)) return;
-        const v = grid[index(x, z)];
-        if (v !== UNDECIDED) neigh.push(v);
-      };
-      consider(cx - 1, cz); consider(cx + 1, cz);
-      consider(cx, cz - 1); consider(cx, cz + 1);
-      grid[index(cx, cz)] = chooseBiome(neigh, rng);
+  // 1) Biomes en RÉGIONS (bruit warpé) — n'utilise PAS `rng` (réservé aux sites) :
+  //    camp central forcé + collier de forêt autour (camp niché dans les bois) + marais-région.
+  const swamp = swampAnchor(seed >>> 0);
+  for (let cz = -R; cz <= R; cz++) {
+    for (let cx = -R; cx <= R; cx++) {
+      const cheb = Math.max(Math.abs(cx), Math.abs(cz));
+      let b: BiomeId;
+      if (cheb <= SR) b = Biome.Camp; // retranchement central (zone sûre)
+      else if (cheb <= SR + 1) b = Biome.Forest; // collier de forêt (règle ADR : camp dans les bois)
+      else if (inSwamp(cx, cz, swamp, seed >>> 0)) b = Biome.Swamp; // région de marais
+      else b = noiseBiome(cx, cz, seed >>> 0); // forêt / prairie / lande en régions
+      grid[index(cx, cz)] = b;
     }
   }
 
@@ -128,6 +134,16 @@ export function generateWorld(seed: number): WorldMap {
   const placedSites: Site[] = [];
   const occupied = new Set<string>();
   for (const def of sites) {
+    // Le SITE marais (eau/roseaux) se pose AU CŒUR de la région de marais -> visuel cohérent
+    // (≠ un point isolé loin de tout). Hors camp et dans les bornes.
+    if (def.id === "swamp") {
+      const k = swamp.cx + "," + swamp.cz;
+      if (inBounds(swamp.cx, swamp.cz) && !occupied.has(k) && Math.max(Math.abs(swamp.cx), Math.abs(swamp.cz)) > SR) {
+        occupied.add(k);
+        placedSites.push({ type: "swamp", cx: swamp.cx, cz: swamp.cz });
+      }
+      continue;
+    }
     for (let k = 0; k < def.count; k++) {
       for (let tries = 0; tries < 200; tries++) {
         const rr = def.minRadiusCells + nextFloat(rng) * (def.maxRadiusCells - def.minRadiusCells);

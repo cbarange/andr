@@ -41,6 +41,9 @@ export const PALETTE = {
   fieldGroundLow: new Color3(0.17, 0.22, 0.13),
   barrenGround: new Color3(0.27, 0.25, 0.21),
   barrenGroundLow: new Color3(0.15, 0.14, 0.12),
+  swampGround: new Color3(0.18, 0.22, 0.15), // vert-brun boueux (région de marais)
+  swampGroundLow: new Color3(0.1, 0.13, 0.1),
+  road: new Color3(0.34, 0.29, 0.22), // terre damée d'une route sécurisée (camp <-> sites nettoyés)
 };
 
 /** Crée le moteur : WebGPU si supporté, sinon repli automatique WebGL2 (§2, §11). */

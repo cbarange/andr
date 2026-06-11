@@ -15,10 +15,13 @@ import { Terrain } from "./render/terrain";
 import { Trees } from "./render/trees";
 import { Decor } from "./render/scatter";
 import { CampDecor } from "./render/campDecor";
+import { CampLights } from "./render/campLights";
+import { CampRuins } from "./render/campRuins";
 import { CampPaths } from "./render/campPaths";
 import { Sites } from "./render/sites";
 import { Forest } from "./render/forest";
 import { Cabin } from "./render/cabin";
+import { Interiors } from "./render/interior";
 import { Player } from "./render/player";
 import { createCamera, cameraYaw } from "./render/camera";
 import { RemotePlayers } from "./render/remotePlayer";
@@ -34,25 +37,29 @@ import { NetRoom } from "./net/room";
 import type { StateSyncMsg } from "./net/messages";
 
 import {
-  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, type GameState,
+  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, type GameState,
 } from "./sim/state";
 import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
 import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
+  takeLoot, secureMine,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
-  craftables, craftableCost, craftableRevealed, jobs, terrainHeight, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
+  craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
+  configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
 } from "../data/world";
+import { createOcean } from "./render/ocean";
 
 // « Dans le village » = à l'intérieur du retranchement (zone sûre). Au-delà : EXPLORATION
 // (les événements ne bloquent plus — cf. reflectState).
 const VILLAGE_RADIUS = worldgen.safeRadiusCells * worldgen.cellSize;
-import { saveGame, loadGame, clearSave, saveDiscovered, loadDiscovered, saveAudioSettings, loadAudioSettings } from "./save";
+import { saveGame, loadGame, clearSave, saveDiscovered, loadDiscovered, saveAudioSettings, loadAudioSettings, saveComfortSettings, loadComfortSettings } from "./save";
 import { AudioManager } from "./render/audio";
+import { audioManifest } from "../data/audio";
 import { DevConsole } from "./dev/console";
 import { runCommand, type CommandCtx } from "./dev/commands";
 import { SpawnEditor } from "./dev/spawnEditor";
@@ -84,7 +91,7 @@ declare global {
       setHardwareScaling?: (level: number) => void;
       setAutoPerf?: (on: boolean) => void;
       getFocusVerb?: () => string | null;
-      getAudio?: () => { unlocked: boolean; music: string | null; master: number; musicVol: number; sfxVol: number; muted: boolean; disabledSfx: string[] };
+      getAudio?: () => { unlocked: boolean; music: string | null; eventMusic: string | null; master: number; musicVol: number; sfxVol: number; muted: boolean; disabledSfx: string[] };
       getActiveEvent?: () => { id: string; scene: string } | null;
       triggerEvent?: (id: string) => void;
       pauseEventScheduler?: () => void;
@@ -137,6 +144,11 @@ async function boot(): Promise<void> {
   // Caméra à capture de pointeur : orientation souris sans clic-glisser (phase libre),
   // curseur rendu en dialogue/UI.
   const pointerLook = new PointerLook(camera, canvas, document.getElementById("lockHint"));
+  // Réglages de CONFORT (FOV + sensibilité souris) — locaux, persistés (cf. save.ts). Le FOV est
+  // appliqué plus bas (après capture de `baseFov`) ; la sensibilité l'est ici.
+  const savedComfort = loadComfortSettings();
+  let sensMul = savedComfort?.sensitivity ?? 1;
+  pointerLook.setSensitivity(sensMul);
 
   // ---- AUDIO (PRÉSENTATION : musique + SFX) — hors sim, 100 % local (cf. docs/plan-audio.md).
   //      A1 socle (engine/bus/volumes/mute/déverrouillage) + A2 musique de l'état du feu. ----
@@ -150,6 +162,7 @@ async function boot(): Promise<void> {
     { key: "deposit", label: "Déposer au coffre" },
     { key: "checkTraps", label: "Relever les pièges" },
     { key: "footsteps", label: "Pas / déplacement" },
+    { key: "door", label: "Portes des huttes" },
   ];
   const savedAudio = loadAudioSettings();
   if (savedAudio) {
@@ -160,6 +173,7 @@ async function boot(): Promise<void> {
     for (const key of savedAudio.disabledSfx) audio.setSfxEnabled(key, false);
   }
   void audio.init(); // crée le moteur AudioV2 (échec silencieux : on n'a juste pas de son)
+  audio.attachListener(camera); // A4 : l'« oreille » spatiale suit la caméra (le feu s'atténue au loin)
   // Politique d'autoplay : on débloque le contexte au 1er geste utilisateur (le même clic
   // qui active le pointer lock). resumeAsync est idempotent.
   canvas.addEventListener("pointerdown", () => audio.resumeOnGesture(), { once: true });
@@ -182,6 +196,35 @@ async function boot(): Promise<void> {
     (key, enabled) => { audio.setSfxEnabled(key, enabled); persistAudio(); },
   );
 
+  // A5 — musique d'événement : nos ids M5 -> fichiers event-*.flac (overlay + ducking du fond).
+  const EVENT_MUSIC: Record<string, string> = {
+    noises_outside: audioManifest.events.noisesOutside,
+    noises_inside: audioManifest.events.noisesInside,
+    beggar: audioManifest.events.beggar,
+    nomad: audioManifest.events.nomad,
+    ruined_trap: audioManifest.events.ruinedTrap,
+    hut_fire: audioManifest.events.hutFire,
+    beast_attack: audioManifest.events.beastAttack,
+    wanderer_wood: audioManifest.events.mysteriousWanderer,
+    wanderer_fur: audioManifest.events.mysteriousWanderer,
+  };
+
+  // A6 — musique de fond = fonction du LIEU et de l'état : dehors -> exploration ; au camp ->
+  // musique de village selon la population (mélodique) ; tout début (sans villageois) ->
+  // ambiance de feu (spatialisée, lot A4). Renvoie le NOM de fichier voulu.
+  function pickMusic(): string {
+    const p = player.position;
+    if (Math.hypot(p.x, p.z) > VILLAGE_RADIUS) return audioManifest.music.exploration; // dehors
+    const pop = state.population;
+    if (pop >= 1) {
+      const tiers = audioManifest.music.village; // lonely-hut -> raucous-village
+      const i = pop >= 40 ? 4 : pop >= 20 ? 3 : pop >= 10 ? 2 : pop >= 4 ? 1 : 0;
+      return tiers[i];
+    }
+    const fire = audioManifest.music.fire; // 0..4
+    return fire[Math.max(0, Math.min(fire.length - 1, state.fire))];
+  }
+
   const world = createWorld(scene);
   // Registre d'arbres PARTAGÉ (un mesh de base par essence) : forêt du camp + décor sauvage.
   const treeMeshes = new Trees(scene);
@@ -189,8 +232,12 @@ async function boot(): Promise<void> {
   const decor = new Decor(scene);
   // Décor au sol du CAMP : fleurs/herbes/cailloux dans les poches vivables (Phase 2).
   const campDecor = new CampDecor(scene, decor);
-  // Chemins DESSINÉS du camp (campLayout.paths) : couche texture fine plaquée au sol.
-  new CampPaths(scene);
+  // Lanternes du camp : s'allument quand la cabane s'améliore (palier ≥5, plus à ≥10) — cf. campLights.ts.
+  const campLights = new CampLights(scene);
+  // Ruines : gravats sur ~1/3 des emplacements à venir (remplacés à la construction) + permanentes.
+  const campRuins = new CampRuins(scene);
+  // Chemins du camp : texture fine plaquée au sol, RE-cuite quand le réseau s'étoffe (cf. boucle).
+  const campPaths = new CampPaths(scene);
   const forest = new Forest(scene, treeMeshes);
   const cabin = new Cabin(scene);
   const player = new Player(scene);
@@ -198,6 +245,18 @@ async function boot(): Promise<void> {
   const stranger = new Stranger(scene);
   stranger.setHome(cabin.builderHome); // une fois la cabane réparée, elle « vit » dans son coin
   const village = new Village(scene);
+  // À la construction d'un bâtiment (début de chantier + achèvement) : dégage son emprise —
+  // les arbres du camp et le décor au sol qui s'y trouvent sont retirés, et plus aucun arbre n'y
+  // repoussera (cf. forest.clearFootprint). Rayons un peu plus larges que la silhouette visible.
+  const CLEAR_R: Record<string, number> = {
+    hut: 2.8, cart: 2.4, "trading post": 3.0, armoury: 2.6, tannery: 2.6,
+    workshop: 2.6, smokehouse: 2.4, lodge: 3.2, steelworks: 3.2, trap: 1.6,
+  };
+  village.setOnPlaced((id, x, z) => {
+    const r = CLEAR_R[id] ?? 2.6;
+    forest.clearFootprint(x, z, r);
+    campDecor.clearFootprint(x, z, r);
+  });
   const villagers = new Villagers(scene);
   // Repères que les villageois visitent pour « faire leur métier » (cosmétique, local).
   villagers.setLandmarks({
@@ -212,6 +271,20 @@ async function boot(): Promise<void> {
     ],
     cabin: { x: cabin.center.x, z: cabin.center.z },
     fire: { x: 0, z: 0 },
+  });
+  // Son de porte (entrée/sortie de hutte) — atténué par la distance au joueur + petit cooldown
+  // anti-spam (les portes peuvent s'enchaîner). 100 % présentation locale.
+  let lastDoorMs = 0;
+  const DOOR_MAX_DIST = 28; // au-delà : inaudible
+  villagers.setDoorSound((x, z) => {
+    const now = performance.now();
+    if (now - lastDoorMs < 90) return; // anti-chœur de portes
+    const dx = player.position.x - x, dz = player.position.z - z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > DOOR_MAX_DIST) return;
+    lastDoorMs = now;
+    const gain = Math.pow(1 - dist / DOOR_MAX_DIST, 1.5); // atténuation douce
+    audio.playDoor(gain);
   });
 
   // ---- RENDU CONDITIONNEL (LOD) : les entités sont (dé)chargées/animées selon la distance
@@ -244,12 +317,37 @@ async function boot(): Promise<void> {
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
   //      pairs) + sol STREAMÉ par chunks autour du joueur. Chargé d'emblée autour du centre
   //      pour que la capsule du joueur tombe sur le sol au boot. ----
+  configureBorders(state.worldSeed); // bordures (2 montagnes + 2 océans) tirées de la graine AVANT le terrain
+  // PLATEAUX d'aplanissement : autour des grottes/mines, le terrain est mis à PLAT (= sol de l'intérieur)
+  // -> plus de relief qui transperce le plancher, jonction propre. `ri` couvre le sol intérieur, `ro` lisse.
+  const PLATEAU_R: Record<string, { ri: number; ro: number }> = {
+    cave: { ri: 20, ro: 32 }, ironmine: { ri: 16, ro: 27 }, coalmine: { ri: 16, ro: 27 }, sulphurmine: { ri: 16, ro: 27 },
+  };
+  function registerPlateaus(map: typeof worldMap): void {
+    const plateaus: TerrainPlateau[] = [];
+    for (const s of map.sites) {
+      const rr = PLATEAU_R[s.type];
+      if (!rr) continue;
+      const w = map.cellToWorldCenter(s.cx, s.cz);
+      plateaus.push({ x: w.x, z: w.z, ri: rr.ri, ro: rr.ro, h: terrainBaseHeight(w.x, w.z) });
+    }
+    setTerrainPlateaus(plateaus);
+  }
   let worldMap = generateWorld(state.worldSeed); // mutable : /seed la remplace
+  registerPlateaus(worldMap); // AVANT le terrain : les chunks se déforment déjà aplanis aux sites
   const terrain = new Terrain(scene, worldMap, treeMeshes, decor);
+  // Faux océan : un grand plan d'eau plat, caché sauf là où une bordure « océan » plonge le terrain.
+  const ocean = createOcean(scene, SEA_LEVEL, BORDER_START + BORDER_BAND + 100);
   // SITES / repères (M7 Phase 5) : silhouettes des points d'intérêt, en LOD via l'EntityManager
   // (silhouette de loin -> détail de près -> masqué au-delà). Posées après l'init de `entities`.
   const sites = new Sites(scene);
   sites.placeAll(worldMap, entities);
+  // INTÉRIEURS souterrains (M9 R1) : bâtit/libère l'intérieur du site `cave`/`*mine` le plus proche
+  // quand on s'en approche (mesh + colliders localisés), + obscurité locale sous plafond. Aucune transition.
+  const interiors = new Interiors(scene);
+  interiors.setMap(worldMap);
+  let prevBlockedNoTorch = false; // front montant -> un seul toast « il fait trop noir »
+  const EMPTY_KEYS = new Set<string>(); // (réutilisé : pas d'alloc/frame quand aucun intérieur actif)
   // Switches dev (HUD debug, F3) : texture du sol + brouillard.
   hud.addDebugToggle("texture sol", terrain.groundTextureOn, (on) => terrain.setGroundTexture(on));
   hud.addDebugToggle("brouillard", scene.fogMode !== Scene.FOGMODE_NONE, (on) => {
@@ -295,7 +393,7 @@ async function boot(): Promise<void> {
   // + revendication d'autorité de l'émetteur (anti split-brain). `structuredClone` : défense contre
   // toute mutation entre l'émission et la sérialisation (coût négligeable, l'objet est petit).
   function snapshot(): StateSyncMsg {
-    return { state: structuredClone(state), host: { id: net.selfId, forced: net.isForcedHost } };
+    return { state: structuredClone(state), host: { id: net.selfId, forced: net.isForcedHost, epoch: net.epoch } };
   }
 
   function adoptSnapshot(s: StateSyncMsg): void {
@@ -303,9 +401,12 @@ async function boot(): Promise<void> {
     state = s.state; // remplacement INTÉGRAL (cabinTier, builderTendingUntil, échéances, rng… tout est là)
     // Si l'hôte a changé la graine du monde (/seed), on régénère la carte localement.
     if (seedChanged) {
+      configureBorders(s.state.worldSeed); // re-tirer les bordures pour la nouvelle graine
       worldMap = generateWorld(s.state.worldSeed);
+      registerPlateaus(worldMap); // aplanissement aux sites AVANT de regénérer le terrain
       terrain.regenerate(worldMap, player.position);
       sites.placeAll(worldMap, entities);
+      interiors.setMap(worldMap);
     }
   }
 
@@ -452,7 +553,9 @@ async function boot(): Promise<void> {
   function buildChoices(): DialogueChoice[] {
     const choices: DialogueChoice[] = [];
     for (const c of craftables) {
-      const count = state.buildings[c.id] ?? 0;
+      // Construit + EN CHANTIER : le coût/plafond suit le rang du prochain exemplaire commandé
+      // (sinon on pourrait enfiler plusieurs chantiers au même prix et dépasser le maximum).
+      const count = plannedCount(state, c.id);
       if (!discovered.has(c.id)) continue; // pas encore débloqué (révélation gérée par updateDiscovered)
       const cost = craftableCost(c, count);
       const affordable = Object.keys(cost).every((r) => (state.resources[r] ?? 0) >= cost[r]);
@@ -722,6 +825,24 @@ async function boot(): Promise<void> {
       }));
     }
 
+    // M9 — caches/filons de l'intérieur souterrain actif (butin 3D, premier-servi). On saute ceux
+    // déjà pris (état sim). Le filon d'une mine : « exploiter » = ramasser le minerai + SÉCURISER (métier).
+    for (const lt of interiors.activeLoot()) {
+      if (state.sites?.[lt.cx + "," + lt.cz]?.taken?.[lt.nodeId]) continue;
+      const d = Math.hypot(lt.x - p.x, lt.z - p.z);
+      const isFilon = lt.kind === "deep" && lt.siteType.endsWith("mine");
+      consider(d, 3.6, () => ({
+        world: new Vector3(lt.x, lt.y + 0.6, lt.z),
+        verb: isFilon ? "exploiter le filon" : "ramasser",
+        act: () => {
+          emit(takeLoot(self(), lt.cx, lt.cz, lt.siteType, lt.nodeId));
+          if (isFilon) { emit(secureMine(self(), lt.cx, lt.cz, lt.siteType)); hud.toast("filon sécurisé — un mineur peut être assigné au village."); }
+          else hud.toast("butin ramassé.");
+          audio.playSfx("checkTraps");
+        },
+      }));
+    }
+
     return best;
   }
 
@@ -729,10 +850,21 @@ async function boot(): Promise<void> {
   let cameraFollow = true;
   // Zoom « longue-vue » (maintien R, façon Minecraft/OptiFine) : resserre le FOV de la caméra
   // pour voir loin avec précision, + réduit la sensibilité souris. Transition lissée.
-  const BASE_FOV = camera.fov; // FOV normal (défaut Babylon ≈ 0.8 rad)
+  // FOV de base réglable (confort) : appliqué à la caméra + base du zoom « longue-vue ».
+  let baseFov = savedComfort?.fov ?? camera.fov; // RADIANS (défaut Babylon ≈ 0.8 rad)
+  camera.fov = baseFov;
   const ZOOM_FOV = 0.22; // FOV resserré (~12,6°) -> ~3,6× de grossissement
   const ZOOM_SPEED = 12; // vitesse de transition du zoom
   let zoomHeld = false;
+
+  // Câblage des curseurs « Confort » du menu (FOV + sensibilité) — persistés à chaque changement.
+  const persistComfort = (): void => saveComfortSettings({ fov: baseFov, sensitivity: sensMul });
+  hud.setComfortValues(baseFov, sensMul);
+  hud.onComfort((kind, v) => {
+    if (kind === "fov") baseFov = v;
+    else { sensMul = v; pointerLook.setSensitivity(v); }
+    persistComfort();
+  });
 
   // Spring-arm caméra : rapproche le rayon EFFECTIF si un mur de la cabane s'interpose (la caméra
   // passe alors sous le toit, à l'intérieur). Rapprochement rapide (anti-clip), éloignement plus doux.
@@ -749,11 +881,23 @@ async function boot(): Promise<void> {
   // (espace renfermé) + toggle manuel (touche V) partout. Réutilise l'ArcRotateCamera : en FPV la
   // cible passe devant les yeux le long de la direction d'orbite (alpha/beta) -> la caméra est à l'œil.
   const FPV_RADIUS = 0.06; // ~0 : la caméra colle à l'œil
-  const FPV_EYE_Y = 0.6; // hauteur des yeux au-dessus de la position joueur
+  const FPV_EYE_Y = 0.75; // hauteur des yeux au-dessus du CENTRE capsule (~1,65 m du sol)
   const FPV_SPEED = 6; // vitesse de la transition 3e<->1ere (lissage)
+  // Tangage FPV : le MÊME beta sert l'élévation d'orbite (3PV) et le regard (FPV). Au repos (3PV
+  // beta≈1.05, caméra par-dessus l'épaule), un regard FPV brut viserait ~30° vers le sol. On REMAPPE
+  // donc le beta voulu (souris) -> tangage FPV centré sur l'horizon (π/2) au repos, amplifié, borné.
+  const FPV_BETA_REST = 1.05; // beta voulu au repos -> regard horizontal en FPV
+  const FPV_PITCH_GAIN = 1.4; // amplification du tangage en FPV (regard haut/bas plus marqué)
+  const FPV_BETA_MIN = 0.5; // borne basse du tangage FPV (~62° vers le bas)
+  const FPV_BETA_MAX = 2.4; // borne haute du tangage FPV (~47° vers le haut)
+  // ArcRotate clampe `beta` aux limites caméra. On ÉLARGIT la limite haute pour que la FPV puisse
+  // viser l'horizon/le ciel (beta > π/2) ; le beta VOULU reste borné à [0.35,1.45] côté pointerLook
+  // (déjà capturé), donc la 3ᵉ personne ne descend pas sous l'horizon malgré cette limite élargie.
+  camera.upperBetaLimit = FPV_BETA_MAX;
   let fpv = 0; // 0 = 3e personne, 1 = 1ere personne (valeur lissée)
   let insideCabin = false; // hystérésis d'entrée/sortie de la cabane
   let forceFpv = false; // toggle manuel (V) : force la 1ʳᵉ personne partout
+  const ROOF_FADE_SPAN = 4; // largeur (u) de la bande de fondu du toit en 3PV (emprise -> opaque)
 
   function projectToScreen(world: Vector3): { x: number; y: number; visible: boolean } {
     const w = engine.getRenderWidth();
@@ -803,6 +947,8 @@ async function boot(): Promise<void> {
   let prevTier = state.cabinTier;
   let prevEventKey: string | null = null; // null au boot -> rouvre un événement restauré d'une sauvegarde
   let prevEventSig = "";
+  let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
+  let prevDialogueSig = ""; // signature de l'état dont dépendent les dialogues (resync MP, cf. plus bas)
   function reflectState(): void {
     // Déblocages (façon ADR) : révèle les craftables atteignables, de façon collante + persistée.
     const grew = updateDiscovered();
@@ -824,12 +970,40 @@ async function boot(): Promise<void> {
     const maxPop = (state.buildings["hut"] ?? 0) * config.population.hutRoom;
     hud.setPopulation(`${state.population}/${maxPop}`);
 
+    // HUD contextuel : le Feu + le Village ne s'affichent que DANS le village (zone sûre) ;
+    // en exploration on ne garde que le Sac. Bascule au franchissement du périmètre.
+    const inVillage = Math.hypot(player.position.x, player.position.z) <= VILLAGE_RADIUS;
+    if (inVillage !== prevInVillage) {
+      hud.setCampInfoVisible(inVillage);
+      prevInVillage = inVillage;
+    }
+
     world.setFireLevel(state.fire);
-    audio.setFireMusic(state.fire); // A2 : musique de fond = fonction du niveau de feu (idempotent)
+    audio.setBackgroundMusic(pickMusic()); // A2/A6 : fond = feu (spatial) / village / exploration (idempotent)
     stranger.setBuilder(state.builder);
     stranger.setActivity(state.cabinRepaired, state.tick < state.builderTendingUntil); // va réalimenter le feu (cosmétique)
     stranger.setNews(state.cabinRepaired && pendingReveal.size > 0); // « ! » : un nouveau bâtiment est dispo
-    village.sync(state.buildings);
+    village.sync(state.buildings, state.constructing);
+    campRuins.sync(state.buildings, state.constructing[0]?.id ?? null); // gravats des emplacements futurs
+    // Sentiers du village : RE-générés dès qu'un bâtiment (hors piège) est achevé — ou la cabane
+    // réparée. Le maillage (arbre couvrant : feu + cabane + bâtiments) s'étoffe avec le village ;
+    // peint par campPaths + suivi par les villageois (le biais navGrid se reconstruit tout seul).
+    let coreCount = state.cabinRepaired ? 1 : 0;
+    for (const c of craftables) if (c.id !== "trap") coreCount += state.buildings[c.id] ?? 0;
+    if (coreCount !== pathSig) {
+      pathSig = coreCount;
+      const sites: Array<{ x: number; z: number }> = [];
+      if (state.cabinRepaired) sites.push({ x: cabin.center.x, z: cabin.center.z });
+      for (const c of craftables) if (c.id !== "trap") for (const p of village.getBuildingPositions(c.id)) sites.push({ x: p.x, z: p.z });
+      campLayout.paths.length = 0;
+      campLayout.paths.push(...campPathsFor(sites));
+      campPaths.rebake();
+    }
+    terrain.setRoads(state.roads); // réseau de routes (teinte de sol) — no-op si inchangé
+    stranger.setBuildSite(village.getChantierSite()); // chantier actif -> elle va y frapper au marteau
+    // La montée du bâtiment ne démarre qu'une fois la constructrice ARRIVÉE sur le chantier
+    // (et se cale pour finir à l'achèvement sim). Évalué après setBuildSite -> arrivée vs site courant.
+    village.revealChantier(state.tick, stranger.isAtBuildSite());
     // Répartition des métiers -> chaque avatar se déplace selon son rôle (bûcheron = le reste).
     const roleCounts: Record<string, number> = { gatherer: freeWorkers(state) };
     for (const j of jobs) if (j.id !== "gatherer") roleCounts[j.id] = state.workers[j.id] ?? 0;
@@ -846,7 +1020,14 @@ async function boot(): Promise<void> {
     }
     village.setTrapsReady(readyTraps);
     cabin.setTier(state.cabinTier); // ruine (0) / réparée (1) / améliorée (5) / entrepôt (10)
+    campLights.setTier(state.cabinTier); // le village s'enrichit : lanternes dès le palier 5, plus à 10
     cabin.setStorage(state.resources); // étagères de l'entrepôt (révélation progressive)
+
+    // M9 — sites NETTOYÉS : une grotte vidée devient un avant-poste (rendu) et n'a plus d'intérieur.
+    const cleared = new Set<string>();
+    for (const k of Object.keys(state.sites ?? {})) if (state.sites[k].cleared) cleared.add(k);
+    sites.setCleared(cleared);
+    interiors.setClearedKeys(cleared);
     // Grand tableau : population + métiers DISPONIBLES (s'agrandit avec les bâtiments).
     cabin.setOrganisation(
       state.population,
@@ -875,6 +1056,18 @@ async function boot(): Promise<void> {
       camOccluders = cabin.occluders(); // la coque a changé -> rafraîchir les occulteurs caméra
     }
 
+    // SYNCHRO MULTIJOUEUR — un dialogue OUVERT (métiers, construction) doit refléter l'état
+    // AUTORITAIRE en continu : dès qu'il change (snapshot distant, OU action d'un AUTRE joueur
+    // appliquée par l'hôte), on ré-affiche. Sans ça, les effectifs/coûts/affordabilités se
+    // figeaient à l'ouverture — ex. les métiers assignés par l'autre joueur n'apparaissaient pas,
+    // et chez un client sa propre assignation (envoyée à l'hôte) ne se voyait qu'après réouverture.
+    // L'eventView a déjà son propre suivi (signature des stocks) -> on l'exclut ici.
+    if (currentDialogue && currentDialogue !== eventView) {
+      const sig = `${state.population}|${state.cabinTier}|${state.cabinRepaired}|${state.builder}|`
+        + `${JSON.stringify(state.workers)}|${JSON.stringify(state.buildings)}|${JSON.stringify(state.resources)}`;
+      if (sig !== prevDialogueSig) { refreshDialogue(); prevDialogueSig = sig; }
+    }
+
     // M5 — événement actif : ouvrir / rafraîchir / fermer le panneau de choix. On suit la
     // scène (id/scene) ; une signature des stocks rafraîchit l'affordabilité d'une boutique
     // qui RESTE ouverte (ex. le nomade), y compris quand l'état arrive par snapshot (P2P).
@@ -889,6 +1082,8 @@ async function boot(): Promise<void> {
         if (inVillage) {
           if (sc?.notification) hud.toast(sc.notification);
           showDialogue(eventView);
+          const track = EVENT_MUSIC[ae.id]; // A5 : musique d'événement (overlay + ducking), idempotent
+          if (track) audio.playEventMusic(track);
         } else if (sc) {
           // EXPLORATION : aucun panneau bloquant. Effet-seul (onLoad déjà appliqué par la sim)
           // -> simple toast de ce qui s'est passé ; sinon (offre/choix) -> ignoré. On clôt
@@ -901,8 +1096,9 @@ async function boot(): Promise<void> {
             sc.choices[0];
           if (decline) emit(resolveEventChoice(self(), decline.id));
         }
-      } else if (currentDialogue === eventView) {
-        closeInteractive(); // l'événement s'est résolu -> referme le panneau
+      } else {
+        if (currentDialogue === eventView) closeInteractive(); // l'événement s'est résolu -> referme le panneau
+        audio.stopEventMusic(); // A5 : restaure le fond (no-op si aucune musique d'événement)
       }
       prevEventKey = key;
       prevEventSig = JSON.stringify(state.resources);
@@ -932,6 +1128,7 @@ async function boot(): Promise<void> {
   let pingAcc = 0;
   let lastPing: number | null = null;
   let pinging = false;
+  let pathSig = -1; // signature « cabane réparée + nb de bâtiments (hors pièges) » -> régénère le réseau de sentiers
 
   // Plafond du delta par frame : empêche le « rattrapage » massif après un AFK / onglet en
   // arrière-plan (sinon `simAcc` accumule toute l'absence et la sim la rejoue à ~15× le temps réel
@@ -942,6 +1139,13 @@ async function boot(): Promise<void> {
     const dtMs = Math.min(engine.getDeltaTime(), MAX_FRAME_MS);
     const dtSec = dtMs / 1000;
     if (chopCooldown > 0) chopCooldown = Math.max(0, chopCooldown - dtSec);
+
+    // 0) Heartbeat d'hôte : si l'hôte s'est tu (onglet en arrière-plan, déco silencieuse), le plus
+    //    petit pair vivant reprend l'autorité (failover). On diffuse aussitôt notre état.
+    if (net.connected && !net.isHost && net.checkLiveness(performance.now())) {
+      net.broadcastStateSync(snapshot());
+      hud.toast("hôte injoignable — tu prends le relais");
+    }
 
     // 1) Simulation à pas fixe — uniquement côté autorité (hôte/hors-ligne).
     const authoritative = !net.connected || net.isHost;
@@ -1004,12 +1208,29 @@ async function boot(): Promise<void> {
       // Entrée/sortie de la cabane avec HYSTÉRÉSIS (pas de clignotement dans l'embrasure).
       if (insideCabin) { if (distCabin > cabin.footprintRadius + 0.8) insideCabin = false; }
       else if (distCabin < cabin.footprintRadius - 0.3) insideCabin = true;
-      const wantFpv = forceFpv || insideCabin;
+      // 1ʳᵉ personne aussi SOUS TERRE (grottes/mines) : on réutilise toute la machinerie FPV (§8).
+      const wantFpv = forceFpv || insideCabin || interiors.isLocalPlayerInside();
       fpv += ((wantFpv ? 1 : 0) - fpv) * Math.min(1, dtSec * FPV_SPEED);
 
-      // a) Pose 3ᵉ personne : cible = tête, rayon = voulu, rapproché par le spring-arm si un mur gêne.
+      // Fondu du toit : transparent en 3PV quand on approche/est sous l'emprise (on voit l'intérieur),
+      // opaque au loin ; en FPV (sous le toit) on le garde opaque (regard vers le haut). `max(fpv, …)`.
+      const roofFade = Math.max(0, Math.min(1, (distCabin - cabin.footprintRadius) / ROOF_FADE_SPAN));
+      cabin.setRoofOpacity(Math.max(fpv, roofFade));
+
+      // Tangage : `camera.beta` = beta VOULU (souris) en 3PV, remappé vers l'horizon en FPV, mélangé
+      // par `fpv`. Comme la caméra regarde toujours selon beta, c'est le SEUL moyen d'orienter la FPV.
+      const betaUser = pointerLook.desiredBeta;
+      const betaFpv = Math.max(
+        FPV_BETA_MIN,
+        Math.min(FPV_BETA_MAX, Math.PI / 2 + (betaUser - FPV_BETA_REST) * FPV_PITCH_GAIN),
+      );
+      camera.beta = betaUser + (betaFpv - betaUser) * fpv;
+
+      // a) Rayon 3ᵉ personne : voulu, rapproché par le spring-arm si un mur s'interpose. On le SAUTE
+      //    en 1ʳᵉ personne (fpv haut) : à l'œil, il n'y a pas de « bras » caméra-cible à protéger, et
+      //    le raycast cible->caméra (dirigé vers l'ARRIÈRE) accrochait le mur derrière -> oscillation.
       let r3 = pointerLook.desiredRadius;
-      if (distCabin < cabin.footprintRadius + SPRING_NEAR) {
+      if (fpv < 0.9 && distCabin < cabin.footprintRadius + SPRING_NEAR) {
         camera.position.subtractToRef(camera.target, camDir);
         const len = camDir.length();
         if (len > 1e-3) {
@@ -1022,25 +1243,31 @@ async function boot(): Promise<void> {
         }
       }
 
-      // b) Pose 1ʳᵉ personne : œil + direction « avant » dérivée d'alpha/beta (sans latence de matrice).
-      const a = camera.alpha, b = camera.beta;
-      const fx = -Math.cos(a) * Math.sin(b), fy = -Math.cos(b), fz = -Math.sin(a) * Math.sin(b);
-      const eyeY = pp.y + FPV_EYE_Y;
-      const tFx = pp.x + fx * FPV_RADIUS, tFy = eyeY + fy * FPV_RADIUS, tFz = pp.z + fz * FPV_RADIUS;
-
-      // c) Blend cible + rayon ; le rayon garde un lissage propre (spring-arm réactif).
-      camera.target.copyFromFloats(pp.x + (tFx - pp.x) * fpv, (pp.y + 1.0) + (tFy - (pp.y + 1.0)) * fpv, pp.z + (tFz - pp.z) * fpv);
+      // b) RAYON d'abord (lissage spring-arm), PUIS on cale la cible 1ʳᵉ personne dessus : la caméra
+      //    retombe EXACTEMENT sur l'œil quel que soit le rayon (position = cible − rayon·avant = œil).
+      //    Avant, la cible utilisait FPV_RADIUS pendant que le rayon lissait ailleurs -> léger décalage
+      //    avant-arrière permanent. En liant la cible au rayon RÉEL de la caméra, l'erreur s'annule.
       const rWanted = r3 + (FPV_RADIUS - r3) * fpv;
       const k = rWanted < camera.radius ? SPRING_IN : SPRING_OUT;
       camera.radius += (rWanted - camera.radius) * Math.min(1, dtSec * k);
+
+      // c) Pose 1ʳᵉ personne : œil + direction « avant » (alpha/beta), décalée du RAYON RÉEL de la caméra.
+      const a = camera.alpha, b = camera.beta;
+      const fx = -Math.cos(a) * Math.sin(b), fy = -Math.cos(b), fz = -Math.sin(a) * Math.sin(b);
+      const r = camera.radius;
+      const eyeY = pp.y + FPV_EYE_Y;
+      const tFx = pp.x + fx * r, tFy = eyeY + fy * r, tFz = pp.z + fz * r;
+
+      // d) Blend de la cible : la tête en 3PV -> l'œil-avant en 1ʳᵉ personne.
+      camera.target.copyFromFloats(pp.x + (tFx - pp.x) * fpv, (pp.y + 1.0) + (tFy - (pp.y + 1.0)) * fpv, pp.z + (tFz - pp.z) * fpv);
       player.setVisible(fpv < 0.6); // masquer le corps une fois nettement en 1ʳᵉ personne
     }
 
     // 3a-bis) Zoom « longue-vue » (maintien R) : FOV resserré + sensibilité souris réduite,
     // transition lissée. Désactivé hors suivi (éditeur/showcase) -> revient au FOV normal.
-    const fovTarget = zoomHeld && cameraFollow ? ZOOM_FOV : BASE_FOV;
+    const fovTarget = zoomHeld && cameraFollow ? ZOOM_FOV : baseFov;
     camera.fov += (fovTarget - camera.fov) * Math.min(1, dtSec * ZOOM_SPEED);
-    pointerLook.setLookScale(camera.fov / BASE_FOV);
+    pointerLook.setLookScale(camera.fov / baseFov);
 
     // 3b) Étiquette d'interaction projetée au niveau de l'objet.
     if (!uiOpen && currentFocus) {
@@ -1061,6 +1288,17 @@ async function boot(): Promise<void> {
     ]);
     forest.update(dtSec);
     village.update(dtSec);
+    cabin.update(dtSec); // montée « construction » de la cabane (réparation / amélioration)
+    // M9 : build/free de l'intérieur proche + obscurité locale + gate de torche ; torche sur le modèle.
+    const hasTorch = carriedOf(state, self(), "torch") > 0;
+    interiors.update(player.position, dtSec, hasTorch);
+    interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
+    const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
+    sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
+    player.setTorch(hasTorch, interiors.isLocalPlayerInside());
+    const blockedNow = interiors.isBlockedNoTorch();
+    if (blockedNow && !prevBlockedNoTorch) hud.toast("il fait trop noir — il te faut une torche.");
+    prevBlockedNoTorch = blockedNow;
     reflectState();
     audio.update(dtSec); // applique le fondu enchaîné musical (cibles posées par reflectState)
     stranger.update(dtSec);
@@ -1155,7 +1393,7 @@ async function boot(): Promise<void> {
     setAutoPerf: (on: boolean) => { autoPerf = on; perfAcc = 0; },
     getFocusVerb: () => currentFocus?.verb ?? null,
     getAudio: () => ({
-      unlocked: audio.unlocked, music: audio.currentMusic,
+      unlocked: audio.unlocked, music: audio.currentMusic, eventMusic: audio.currentEventMusic,
       master: audio.master, musicVol: audio.musicVolume, sfxVol: audio.sfxVolume, muted: audio.muted,
       disabledSfx: audio.getDisabledSfx(),
     }),
@@ -1245,9 +1483,12 @@ async function boot(): Promise<void> {
       isNoclip: () => player.isNoclip,
       reseed: (n) => {
         emit(debugSetSeed(n));
+        configureBorders(n >>> 0); // re-tirer les bordures pour la nouvelle graine
         worldMap = generateWorld(n >>> 0);
+        registerPlateaus(worldMap); // aplanissement aux sites pour la nouvelle graine
         terrain.regenerate(worldMap, player.position);
         sites.placeAll(worldMap, entities);
+        interiors.setMap(worldMap);
       },
     };
     devConsole = new DevConsole(
@@ -1267,9 +1508,68 @@ async function boot(): Promise<void> {
       cabin: { x: cabin.center.x, z: cabin.center.z },
       setFollow: (on) => { cameraFollow = on; },
       setLookEnabled: (on) => pointerLook.setEnabled(on),
-      setWorldHidden: (h) => { village.setVisible(!h); cabin.setHidden(h); villagers.setVisible(!h); campDecor.setVisible(!h); },
+      setWorldHidden: (h) => { village.setVisible(!h); cabin.setHidden(h); villagers.setVisible(!h); campDecor.setVisible(!h); campLights.setVisible(!h); campRuins.setVisible(!h); ocean.setEnabled(!h); },
     });
     if (window.__game) window.__game.editSpawn = () => spawnEditor?.toggle();
+
+    // DEBUG (DEV) : pilotage de frames + inspection du chantier, pour vérifier le rendu de la
+    // construction quand l'onglet d'aperçu n'est pas visible (rAF figé). Hors build de prod.
+    const dbg = window.__game as unknown as Record<string, unknown>;
+    if (dbg) {
+      dbg.renderFrame = (n = 1): void => { for (let i = 0; i < n; i++) scene.render(); };
+      dbg.getConstructing = (): Array<{ id: string; doneAt: number }> => state.constructing.map((c) => ({ ...c }));
+      dbg.getChantierSite = (): { x: number; z: number } | null => village.getChantierSite();
+      dbg.getChantierProgress = (): number => village.getChantierProgress();
+      dbg.builderTeleport = (x: number, z: number): void => stranger.teleport(x, z);
+      // Faux joueur distant (test des avatars + étiquette de nom en solo) : posé DEVANT le joueur.
+      dbg.spawnRemote = (id = "TESTPEER", ahead = 3): void => {
+        const p = player.position;
+        remotes.setTransform(id, { x: p.x, y: p.y - 0.9, z: p.z + ahead, ry: Math.PI });
+      };
+      dbg.setRemoteName = (id: string, name: string): void => remotes.setName(id, name);
+      dbg.stepCabin = (sec = 0.25): void => cabin.update(sec); // avance la montée de la cabane (anim render)
+      dbg.cabinRise = (): number => cabin.getRiseProgress(); // avancement de la montée (0..1, -1 si aucune)
+      dbg.campPathCount = (): number => campLayout.paths.length; // nb de segments de sentier (réseau du village)
+      dbg.treesOnBuildings = (): number => { // arbres restant SUR une emprise (doit valoir 0 après construction)
+        let n = 0; const trees = forest.getTrees();
+        for (const c of craftables) { const r = CLEAR_R[c.id] ?? 2.6; for (const p of village.getBuildingPositions(c.id)) for (const t of trees) if ((t.x - p.x) ** 2 + (t.z - p.z) ** 2 < r * r) n++; }
+        return n;
+      };
+      dbg.interiorStats = (): { built: number; active: string | null; inside: boolean; colliders: number; dark: number } => interiors.stats;
+      dbg.fpv = (): number => fpv; // facteur 1ʳᵉ personne lissé (0 = 3PV, 1 = FPV)
+      dbg.th = (x: number, z: number): number => terrainHeight(x, z); // hauteur terrain (aplanie aux sites)
+      dbg.interiorSites = (): Array<{ type: string; cx: number; cz: number; x: number; z: number }> => interiors.debugSites();
+      dbg.inspect = (cx: number, cz: number, top = false, dist = 19): void => {
+        cameraFollow = false;
+        scene.fogMode = Scene.FOGMODE_NONE;
+        camera.upperRadiusLimit = 600; camera.lowerBetaLimit = 0.001;
+        const w = worldMap.cellToWorldCenter(cx, cz); const gy = terrainHeight(w.x, w.z);
+        camera.setTarget(new Vector3(w.x, gy + (top ? 0 : 1.4), w.z));
+        if (top) { camera.alpha = -Math.PI / 2; camera.beta = 0.1; camera.radius = 46; }
+        else { const L = Math.hypot(w.x, w.z) || 1; camera.setPosition(new Vector3(w.x - (w.x / L) * dist, gy + dist * 0.28, w.z - (w.z / L) * dist)); }
+      };
+      dbg.takeAllLoot = (): number => {
+        const ls = interiors.activeLoot(); let n = 0;
+        for (const lt of ls) {
+          emit(takeLoot(self(), lt.cx, lt.cz, lt.siteType, lt.nodeId));
+          if (lt.kind === "deep" && lt.siteType.endsWith("mine")) emit(secureMine(self(), lt.cx, lt.cz, lt.siteType));
+          n++;
+        }
+        return n;
+      };
+      dbg.takeNearestLoot = (): unknown => {
+        const pp = player.position; let best: ReturnType<typeof interiors.activeLoot>[number] | null = null; let bd = Infinity;
+        for (const lt of interiors.activeLoot()) { const d = Math.hypot(lt.x - pp.x, lt.z - pp.z); if (d < bd) { bd = d; best = lt; } }
+        if (!best) return null;
+        emit(takeLoot(self(), best.cx, best.cz, best.siteType, best.nodeId));
+        if (best.kind === "deep" && best.siteType.endsWith("mine")) emit(secureMine(self(), best.cx, best.cz, best.siteType));
+        return best;
+      };
+      // Gel/reprise de la boucle de rendu : permet de capturer une frame d'animation à l'arrêt
+      // (sinon le temps réel défile entre deux commandes et l'anim se termine).
+      dbg.stopLoop = (): void => engine.stopRenderLoop();
+      dbg.startLoop = (): void => engine.runRenderLoop(() => scene.render());
+    }
   }
 }
 

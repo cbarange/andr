@@ -54,10 +54,20 @@ const BUILD_PER_FRAME = 1; // amortit la génération (sol + décor) -> pas de m
 // (cf. syncPhysics) -> tout pair a du sol solide sous lui, pas seulement l'hôte local.
 const PHYS_R = 1; // 1 chunk -> bloc 3×3 autour de chaque joueur (anti-chute aux frontières)
 const PROPS_PER_FRAME = 2; // rebuilds de props (changement de palier LOD) amortis par frame (P3)
-// Le monde est BORNÉ : on ne génère pas de chunks au-delà du bord (les montagnes du
-// terrain — cf. data/terrainHeight — forment le mur ; on déborde d'un chunk pour leur base).
+// Rayon (unités) où le décor sauvage est SUPPRIMÉ autour de chaque site (sol dégagé, pas d'arbres).
+// Grottes/mines : large (couvre le massif d'entrée) ; autres sites : selon leur emprise.
+const SITE_CLEAR_RADIUS: Record<string, number> = {
+  cave: 18, ironmine: 16, coalmine: 16, sulphurmine: 16,
+  house: 6, town: 9, city: 13, swamp: 8, ship: 11, executioner: 13, outpost: 7,
+  borehole: 9, battlefield: 10, cache: 8,
+};
+// Le monde est BORNÉ : on génère jusqu'à la zone jouable PLUS la bande de bordure (montagnes/
+// océans, cf. data/terrainHeight `borderField`) qui vit AU-DELÀ ; on déborde d'un peu pour la base.
 const WORLD_RADIUS = worldgen.radiusCells * worldgen.cellSize;
-const MAX_CHUNK_DIST = WORLD_RADIUS + CHUNK_SIZE * 1.5;
+// Demi-étendue PAR AXE du monde rendu (clip CARRÉ, pas circulaire — sinon les coins du carré
+// jouable manquent de tuiles « en escalier » et on peut tomber par le coin). Couvre la zone
+// jouable (±PLAY_HALF) PLUS la bande de bordure (montagnes/océans, cf. data/terrainHeight).
+const MAX_CHUNK_DIST = WORLD_RADIUS + CHUNK_SIZE * 4;
 
 // Coupe des arbres sauvages : MÊME comportement que la forêt du camp (cf. forest.ts ; taille
 // initiale aléatoire via initialChops/chopScale, partagés dans trees.ts).
@@ -92,10 +102,14 @@ export class Terrain {
   private readonly ground: Record<number, BiomeGround>;
   private readonly anim: WildTree[] = []; // arbres sauvages en cours de secousse/chute
   private textureOn = true; // mouchetage du sol (switch dans le HUD debug)
+  private roads = new Set<string>(); // cellules de route (clé "cx,cz") -> teinte « terre damée »
   private loadR: number = LOAD; // rayon de chargement (chunks) — réglable via "view range"
   private unloadR: number = UNLOAD; // rayon de déchargement (hystérésis)
   private pcx = 0; // chunk du joueur local (pour le palier LOD des props, P3)
   private pcz = 0;
+  // Zones DÉGAGÉES autour des sites : on n'y disperse PAS d'arbres/fleurs/herbe (une grotte/mine
+  // ne pousse pas dans une forêt). Recalculées avec la carte. (x, z monde ; r2 = rayon²).
+  private clearZones: Array<{ x: number; z: number; r2: number }> = [];
 
   constructor(
     private readonly scene: Scene,
@@ -113,7 +127,10 @@ export class Terrain {
       [Biome.Forest]: { low: PALETTE.forestGroundLow, high: PALETTE.forestGround },
       [Biome.Field]: { low: PALETTE.fieldGroundLow, high: PALETTE.fieldGround },
       [Biome.Barren]: { low: PALETTE.barrenGroundLow, high: PALETTE.barrenGround },
+      [Biome.Swamp]: { low: PALETTE.swampGroundLow, high: PALETTE.swampGround },
     };
+
+    this.computeClearZones();
 
     // Charge d'emblée le voisinage IMMÉDIAT du centre (le joueur y apparaît et tombe
     // dessus) ; le reste du rayon se remplit en quelques frames via update() (amorti).
@@ -157,7 +174,8 @@ export class Terrain {
         const cx2 = ccx + dx;
         const cz2 = ccz + dz;
         if (this.chunks.has(cx2 + "," + cz2)) continue;
-        if (Math.hypot(cx2 * CHUNK_SIZE, cz2 * CHUNK_SIZE) > MAX_CHUNK_DIST) continue; // hors monde
+        // Clip CARRÉ (par axe) -> monde parfaitement carré, coins remplis (plus d'escalier ni de trou).
+        if (Math.abs(cx2 * CHUNK_SIZE) > MAX_CHUNK_DIST || Math.abs(cz2 * CHUNK_SIZE) > MAX_CHUNK_DIST) continue;
         missing.push({ x: cx2, z: cz2, d: Math.max(Math.abs(dx), Math.abs(dz)) });
       }
     }
@@ -249,6 +267,18 @@ export class Terrain {
     return this.textureOn;
   }
 
+  /** Cellules de ROUTE (état sim) -> teintées « terre damée » par paintGround. Re-colore les chunks
+   *  chargés quand le réseau change (rare : seulement au nettoyage/sécurisation d'un site). */
+  setRoads(roads: Record<string, true>): void {
+    const keys = Object.keys(roads);
+    if (keys.length === this.roads.size && keys.every((k) => this.roads.has(k))) return; // inchangé -> no-op
+    this.roads = new Set(keys);
+    for (const [key, ch] of this.chunks) {
+      const comma = key.indexOf(",");
+      this.paintGround(ch.mesh, Number(key.slice(0, comma)) * CHUNK_SIZE, Number(key.slice(comma + 1)) * CHUNK_SIZE);
+    }
+  }
+
   /** Règle la « view range » = rayon de chunks chargés (plus grand = voir plus loin, plus coûteux). */
   setLoadRadius(chunks: number): void {
     this.loadR = Math.max(1, Math.floor(chunks));
@@ -290,9 +320,16 @@ export class Terrain {
       const g = this.ground[this.map.biomeAt(cell.cx, cell.cz)] ?? this.ground[Biome.Barren];
       const t = clamp01((cyw + 2) / 4);
       const tint = this.textureOn ? groundTint(cxw, czw) : 1; // mouchetage désactivable
-      const r = clamp01(lerp(g.low.r, g.high.r, t) * tint);
-      const gg = clamp01(lerp(g.low.g, g.high.g, t) * tint);
-      const b = clamp01(lerp(g.low.b, g.high.b, t) * tint);
+      let r = clamp01(lerp(g.low.r, g.high.r, t) * tint);
+      let gg = clamp01(lerp(g.low.g, g.high.g, t) * tint);
+      let b = clamp01(lerp(g.low.b, g.high.b, t) * tint);
+      // ROUTE : terre damée (mélange vers PALETTE.road) là où la cellule est une route sécurisée.
+      if (this.roads.size > 0 && this.roads.has(cell.cx + "," + cell.cz)) {
+        const RD = PALETTE.road, m = 0.72;
+        r = clamp01(lerp(r, RD.r * tint, m));
+        gg = clamp01(lerp(gg, RD.g * tint, m));
+        b = clamp01(lerp(b, RD.b * tint, m));
+      }
       const v0 = f / 3;
       for (let k = 0; k < 3; k++) {
         const ci = (v0 + k) * 4;
@@ -314,6 +351,7 @@ export class Terrain {
     }
     this.chunks.clear();
     this.map = newMap;
+    this.computeClearZones();
     const ccx = Math.round(around.x / CHUNK_SIZE);
     const ccz = Math.round(around.z / CHUNK_SIZE);
     this.pcx = ccx; // palier LOD des props relatif au point de régénération (P3)
@@ -331,7 +369,8 @@ export class Terrain {
 
     const ox = ccx * CHUNK_SIZE; // centre monde du chunk
     const oz = ccz * CHUNK_SIZE;
-    if (Math.hypot(ox, oz) > MAX_CHUNK_DIST) return; // au-delà du bord du monde : pas de chunk
+    // Clip CARRÉ (par axe) : monde carré, coins inclus (cohérent avec le confinement carré du joueur).
+    if (Math.abs(ox) > MAX_CHUNK_DIST || Math.abs(oz) > MAX_CHUNK_DIST) return;
     const mesh = MeshBuilder.CreateGround(
       "chunk-" + key,
       { width: CHUNK_SIZE, height: CHUNK_SIZE, subdivisions: SUBDIV, updatable: true },
@@ -371,6 +410,26 @@ export class Terrain {
 
   /** Disperse le décor SAUVAGE déterministe du chunk selon son palier LOD (P3) : arbres (Trees) +
    *  décor (Decor) issus de sim/worldgen.scatterCell. `near` = complet + coupable ; `far` = allégé. */
+  /** Recense les zones à DÉGAGER (autour des sites) — appelé quand la carte change. */
+  private computeClearZones(): void {
+    this.clearZones = [];
+    for (const s of this.map.sites) {
+      const r = SITE_CLEAR_RADIUS[s.type];
+      if (!r) continue;
+      const w = this.map.cellToWorldCenter(s.cx, s.cz);
+      this.clearZones.push({ x: w.x, z: w.z, r2: r * r });
+    }
+  }
+
+  /** Un point (monde) tombe-t-il dans la zone dégagée d'un site ? (pas de décor sauvage). */
+  private inClearZone(x: number, z: number): boolean {
+    for (const c of this.clearZones) {
+      const dx = x - c.x, dz = z - c.z;
+      if (dx * dx + dz * dz < c.r2) return true;
+    }
+    return false;
+  }
+
   private buildProps(chunk: Chunk, ccx: number, ccz: number, band: PropBand): void {
     const node = chunk.props;
     const cc = worldgen.chunkCells;
@@ -385,6 +444,7 @@ export class Terrain {
         for (const p of scatterCell(cellX, cellZ, biome, this.map.seed)) {
           const idx = p.kind === "tree" ? treeIdx++ : 0;
           if (!keepProp(p.kind, band, idx)) continue; // petit décor masqué / arbres éclaircis au loin
+          if (this.inClearZone(p.x, p.z)) continue; // sol dégagé autour des sites (grotte/mine = pas de forêt)
           const y = terrainHeight(p.x, p.z);
           let inst: InstancedMesh | null = null;
           let choppable = false;

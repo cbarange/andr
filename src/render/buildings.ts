@@ -10,8 +10,9 @@
 // ============================================================================
 
 import { Scene, Mesh, MeshBuilder, TransformNode, PhysicsAggregate, PhysicsShapeType } from "@babylonjs/core";
-import { craftables, terrainHeight, campLayout, type CampAnchor } from "../../data/world";
+import { craftables, terrainHeight, campLayout, config, type CampAnchor } from "../../data/world";
 import { makeKit, P, type Kit } from "./lowpoly";
+import { prepareReveal, applyReveal, clamp01, type RevealEl } from "./reveal";
 
 // Emplacement réservé : chaque type occupe une plage de créneaux stable (repli `ringSlot`).
 const SLOT_OFFSET: Record<string, number> = {};
@@ -52,6 +53,22 @@ const OBSTACLE_RADIUS: Record<string, number> = {
   workshop: 1.9, smokehouse: 1.5, lodge: 2.3, steelworks: 2.4, trap: 0,
 };
 const COLLIDER_H = 3; // hauteur du collider statique d'un bâtiment (le joueur ne le traverse plus)
+
+// --- CHANTIER (M2 — construction visuelle « assemblage par éléments ») -------------------
+//  Un bâtiment ne surgit plus d'un coup : ses pièces APPARAISSENT du bas vers le haut au fil
+//  de l'avancement (fondation -> murs -> détails -> toit), chacune avec un petit « pop » de
+//  mise à l'échelle. La progression vient de la SIM (file `constructing`) -> identique chez
+//  tous les pairs. À l'achèvement, la sim incrémente `buildings` et le vrai bâtiment (complet,
+//  avec collider + fumée) remplace le chantier. Voir docs/plan-campement.md.
+// La montée « assemblage par éléments » (tri par hauteur + pop) est mutualisée dans ./reveal.
+// FILET ANTI-POP : si la construction est sur le point de se terminer et que la constructrice
+// n'est toujours pas arrivée (trajet plus long que le chantier), on lance quand même la montée
+// sur ces dernières secondes -> le bâtiment ne surgit JAMAIS d'un coup (au pire, montée rapide).
+const MIN_RISE_TICKS = Math.round(2 * config.simTickHz);
+
+// `revealStart` : tic où la montée DÉMARRE (= arrivée de la constructrice ; -1 tant qu'elle n'est
+// pas là -> rien ne sort de terre). `doneAt` : tic d'achèvement (sim) -> la montée se cale dessus.
+interface Chantier { id: string; idx: number; root: TransformNode; els: RevealEl[]; revealStart: number; doneAt: number; }
 
 // ---------------------------------------------------------------------------
 //  HUTTE habitable PARAMÉTRÉE (portée du labo) — 3 variantes légères. Chaque hutte du
@@ -459,6 +476,12 @@ export class Village {
   private readonly traps: Array<{ armed: TransformNode; sprung: TransformNode }> = [];
   private activeIds = new Set<string>();
   private time = 0;
+  // Chantier ACTIF (le bâtiment de tête de la file `constructing`), animé pièce par pièce.
+  private chantier: Chantier | null = null;
+  private chantierProgress = -1; // dernier avancement appliqué (-1 = pas de chantier) — debug/DEV
+  // Notifié quand un bâtiment est POSÉ (début de chantier + achèvement) : sert à dégager l'emprise
+  // (arbres/décor) côté jeu (cf. main.ts -> forest/campDecor.clearFootprint).
+  private onPlaced?: (id: string, x: number, z: number) => void;
 
   constructor(private readonly scene: Scene) {
     this.K = makeKit(scene);
@@ -472,6 +495,19 @@ export class Village {
   /** Positions (x,z) des bâtiments d'un type donné (ex. pour y faire travailler les villageois). */
   getBuildingPositions(id: string): Array<{ x: number; z: number }> {
     return this.buildingPositions[id] ?? [];
+  }
+
+  /** Callback appelé quand un bâtiment est POSÉ (début de chantier + achèvement) : `(id, x, z)`.
+   *  Sert à dégager l'emprise (arbres/décor) côté jeu. */
+  setOnPlaced(cb: (id: string, x: number, z: number) => void): void {
+    this.onPlaced = cb;
+  }
+
+  /** Centre (x,z) du CHANTIER en cours, ou `null` s'il n'y en a pas — pour y envoyer la constructrice. */
+  getChantierSite(): { x: number; z: number } | null {
+    if (!this.chantier) return null;
+    const p = this.chantier.root.position;
+    return { x: p.x, z: p.z };
   }
 
   /** Emprises (cercle x,z,r) des bâtiments construits — pour l'évitement des villageois.
@@ -525,8 +561,15 @@ export class Village {
   }
 
   /** Crée les meshes manquants pour refléter la map `buildings` de la sim. Chaque exemplaire
-   *  se pose à son ANCRE FIXE (campLayout) et regarde le feu (sauf `face` explicite). */
-  sync(buildings: Record<string, number>): void {
+   *  se pose à son ANCRE FIXE (campLayout) et regarde le feu (sauf `face` explicite).
+   *  `constructing`/`tick` (optionnels) pilotent le CHANTIER animé du bâtiment en cours :
+   *  ses pièces apparaissent du bas vers le haut au fil de l'avancement. */
+  sync(
+    buildings: Record<string, number>,
+    constructing?: Array<{ id: string; doneAt: number }>,
+  ): void {
+    // 1) Bâtiments ACHEVÉS : on instancie ceux qui manquent (un chantier terminé devient
+    //    ici un vrai bâtiment complet — collider + fumée — à la même ancre).
     for (const c of craftables) {
       const target = buildings[c.id] ?? 0;
       let have = this.spawned[c.id] ?? 0;
@@ -541,16 +584,76 @@ export class Village {
         (this.buildingPositions[c.id] ??= []).push({ x, z });
         this.roots.push(root);
         this.addCollider(c.id, x, z); // le joueur ne traverse plus le bâtiment (pièges exclus)
+        this.onPlaced?.(c.id, x, z); // dégage l'emprise (arbres/décor) — couvre le chargement de save
         have++;
       }
       this.spawned[c.id] = have;
     }
+
+    // 2) CHANTIER actif = tête de la file qui a démarré (doneAt > 0). Une seule construction
+    //    visible à la fois (la constructrice bâtit séquentiellement).
+    const head = constructing && constructing.length > 0 && constructing[0].doneAt > 0 ? constructing[0] : null;
+    const activeId = head ? head.id : null;
+    const activeIdx = activeId ? (this.spawned[activeId] ?? 0) : -1; // ancre = créneau suivant de ce type
+    // Le chantier en cours ne correspond plus (terminé -> bâtiment complet posé en 1), ou la file
+    // a changé : on le retire. (Pas de doublon : le vrai bâtiment occupe désormais le créneau.)
+    if (this.chantier && (!activeId || this.chantier.id !== activeId || this.chantier.idx !== activeIdx)) {
+      this.chantier.root.dispose();
+      this.chantier = null;
+    }
+    if (activeId && !this.chantier && !this.hidden) {
+      this.chantier = this.makeChantier(activeId, activeIdx);
+    }
+    if (this.chantier && head) this.chantier.doneAt = head.doneAt; // échéance d'achèvement (sim)
+  }
+
+  /** Fait MONTER le chantier courant. La montée ne démarre qu'à l'ARRIVÉE de la constructrice
+   *  (`builderArrived`) puis se déroule de l'arrivée jusqu'à l'achèvement (`doneAt`) -> elle finit
+   *  pile quand le bâtiment devient fonctionnel (pas de « pop »). À appeler après `setBuildSite`. */
+  revealChantier(tick: number, builderArrived: boolean): void {
+    const ch = this.chantier;
+    if (!ch) { this.chantierProgress = -1; return; }
+    // Démarre la montée à l'arrivée de la constructrice — OU au plus tard quand l'achèvement
+    // approche (filet anti-pop : jamais d'apparition instantanée même si elle est en retard).
+    const aboutToFinish = ch.doneAt > 0 && ch.doneAt - tick <= MIN_RISE_TICKS;
+    if ((builderArrived || aboutToFinish) && ch.revealStart < 0) ch.revealStart = tick;
+    let progress = 0;
+    if (ch.revealStart >= 0) {
+      const span = Math.max(1, ch.doneAt - ch.revealStart);
+      progress = clamp01((tick - ch.revealStart) / span);
+    }
+    this.chantierProgress = progress;
+    applyReveal(ch.els, progress);
+  }
+
+  /** Avancement visuel du chantier courant (0..1), ou -1 s'il n'y en a pas. DEBUG/DEV. */
+  getChantierProgress(): number {
+    return this.chantier ? this.chantierProgress : -1;
+  }
+
+  /** Instancie le bâtiment `id` à son ancre (créneau `idx`) en mode CHANTIER : prêt à être
+   *  révélé pièce par pièce. Ne s'enregistre NI en fumée NI en piège (un chantier n'agit pas). */
+  private makeChantier(id: string, idx: number): Chantier {
+    const anchor = campLayout.buildings[id]?.[idx];
+    const x = anchor?.x ?? ringSlot(SLOT_OFFSET[id] + idx).x;
+    const z = anchor?.z ?? ringSlot(SLOT_OFFSET[id] + idx).z;
+    const s = this.smoke.length, t = this.traps.length;
+    const root = this.makeBuilding(id, x, z);
+    this.smoke.length = s; this.traps.length = t; // un chantier ne fume pas, ne s'arme pas
+    root.rotation.y = anchor ? faceYaw(x, z, anchor.face) : (idx * 1.3) % (Math.PI * 2);
+    this.onPlaced?.(id, x, z); // dès le DÉBUT du chantier : dégage arbres/décor sur l'emplacement
+    // Pièces triées par hauteur pour une révélation bas-en-haut (cf. ./reveal).
+    const els = prepareReveal(root);
+    const ch: Chantier = { id, idx, root, els, revealStart: -1, doneAt: 0 };
+    applyReveal(els, 0); // rien ne sort de terre tant que la constructrice n'est pas arrivée
+    return ch;
   }
 
   /** Affiche/masque TOUS les bâtiments construits (utilisé par l'éditeur de spawn). */
   setVisible(v: boolean): void {
     this.hidden = !v;
     for (const r of this.roots) r.setEnabled(v);
+    if (!v && this.chantier) { this.chantier.root.dispose(); this.chantier = null; } // chantier recréé à la sortie d'édition
   }
 
   /** ÉDITEUR : instancie un modèle ISOLÉ d'un type (hors sync), pour l'outil de layout.

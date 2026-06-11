@@ -36,8 +36,9 @@ function paint(mesh: Mesh, col: number[]): void {
 export interface VOpt {
   rot?: number[];
   scale?: number | number[];
-  // Acceptés pour copier verbatim la géométrie du labo, mais IGNORÉS ici : le mesh est fusionné
-  // en un seul matériau (couleur portée par les vertex colors) -> pas d'unlit/émissif par pièce.
+  // emi/unlit : honorés UNIQUEMENT si l'appelant fournit un `glowSink` à makeVCKit (cf. sites.ts) —
+  // les pièces ainsi marquées sont alors collectées à part pour un 2e mesh ÉMISSIF (non éclairé).
+  // Sans glowSink (ex. décor scatter), ils restent IGNORÉS : tout va dans un seul mesh éclairé.
   unlit?: boolean;
   emi?: number;
 }
@@ -52,9 +53,12 @@ interface Dim {
 }
 
 /** Kit « vertex colors » : MÊME signature que le kit du labo, mais peint les faces et
- *  collecte les meshes pour fusion (au lieu d'un matériau par pièce). Partagé avec sites.ts. */
-export function makeVCKit(scene: Scene, sink: Mesh[]) {
-  const place = (m: Mesh, parent: TransformNode | null, pos?: number[], opt?: VOpt): Mesh => {
+ *  collecte les meshes pour fusion (au lieu d'un matériau par pièce). Partagé avec sites.ts.
+ *  `glowSink` (optionnel) : si fourni, les pièces marquées `emi`/`unlit` y sont routées (au lieu
+ *  de `sink`) -> l'appelant les fusionne en un 2e mesh ÉMISSIF non éclairé (vrais accents lumineux).
+ *  Leur couleur est boostée par `emi` (puis clampée à [0,1]) pour qu'elles « luisent » (bloom). */
+export function makeVCKit(scene: Scene, sink: Mesh[], glowSink?: Mesh[]) {
+  const place = (m: Mesh, parent: TransformNode | null, pos: number[] | undefined, opt: VOpt | undefined, target: Mesh[]): Mesh => {
     if (parent) m.parent = parent;
     if (pos) m.position.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
     if (opt?.rot) m.rotation.set(opt.rot[0] || 0, opt.rot[1] || 0, opt.rot[2] || 0);
@@ -63,12 +67,18 @@ export function makeVCKit(scene: Scene, sink: Mesh[]) {
       if (Array.isArray(s)) m.scaling.set(s[0], s[1], s[2]);
       else m.scaling.setAll(s);
     }
-    sink.push(m);
+    target.push(m);
     return m;
   };
   const ret = (m: Mesh, col: number[], parent: TransformNode | null, pos?: number[], opt?: VOpt): Mesh => {
+    // Accent émissif (emi)/non éclairé (unlit) -> mesh « glow » à part, couleur boostée puis clampée.
+    if (glowSink && ((opt?.emi ?? 0) > 0 || opt?.unlit === true)) {
+      const e = opt?.emi ?? 1;
+      paint(m, [Math.min(1, col[0] * e), Math.min(1, col[1] * e), Math.min(1, col[2] * e)]);
+      return place(m, parent, pos, opt, glowSink);
+    }
     paint(m, col);
-    return place(m, parent, pos, opt);
+    return place(m, parent, pos, opt, sink);
   };
   return {
     node(parent: TransformNode | null, pos?: number[]): TransformNode {

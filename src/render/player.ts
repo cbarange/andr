@@ -15,8 +15,9 @@ import {
   TransformNode,
   PhysicsAggregate,
   PhysicsShapeType,
+  PointLight,
 } from "@babylonjs/core";
-import { config, terrainHeight } from "../../data/world";
+import { config, terrainHeight, PLAY_HALF } from "../../data/world";
 import { PALETTE } from "./scene";
 import { makeKit } from "./lowpoly";
 import { buildPlayer, animateWalk, type Rig } from "./characters";
@@ -41,6 +42,10 @@ export class Player {
   private readonly aggregate: PhysicsAggregate;
   private readonly yawNode: TransformNode;
   private readonly rig: Rig; // membres articulés (cycle de marche)
+  private readonly torch: TransformNode; // torche tenue (M9) — masquée si pas dans le sac
+  private readonly torchLight: PointLight; // lueur portée (allumée sous terre)
+  private torchLit = false;
+  private torchFlick = 0;
   private walkPhase = 0;
   private walkInt = 0;
   private facing = 0;
@@ -71,7 +76,19 @@ export class Player {
     this.yawNode.parent = this.mesh;
     const K = makeKit(scene);
     const model = K.node(this.yawNode, [0, -HALF_HEIGHT, 0]);
-    this.rig = buildPlayer(K, model).rig;
+    const built = buildPlayer(K, model);
+    this.rig = built.rig;
+    this.torch = built.torch;
+    // Lueur portée par la torche. ATTENTION : on la parente à la CAPSULE (corps physique, toujours
+    // actif) et NON au modèle — car en 1ʳᵉ personne le modèle est masqué (`yawNode.setEnabled(false)`),
+    // ce qui ÉTEINDRAIT une lumière parentée dessous (cascade) -> grotte noire. Ici elle reste allumée.
+    this.torchLight = new PointLight("torchLight", new Vector3(0, 0, 0), scene);
+    this.torchLight.parent = this.mesh;
+    this.torchLight.position.set(0, 0.5, 0); // ~hauteur torche, près du joueur
+    this.torchLight.diffuse = new Color3(1.0, 0.72, 0.36);
+    this.torchLight.specular = new Color3(0, 0, 0);
+    this.torchLight.intensity = 0;
+    this.torchLight.range = 16;
 
     // Corps dynamique. Inertie nulle -> ne bascule pas (reste debout).
     this.aggregate = new PhysicsAggregate(
@@ -93,6 +110,13 @@ export class Player {
   /** Affiche/masque le corps visible (on le masque en 1ʳᵉ personne pour ne pas voir l'intérieur). */
   setVisible(v: boolean): void {
     this.yawNode.setEnabled(v);
+  }
+
+  /** M9 — torche : visible si dans le sac (`carried`) ; sa lueur s'allume sous terre (`lit`). */
+  setTorch(carried: boolean, lit: boolean): void {
+    this.torch.setEnabled(carried);
+    this.torchLit = carried && lit;
+    if (!this.torchLit) this.torchLight.intensity = 0;
   }
 
   get isFlying(): boolean {
@@ -186,8 +210,19 @@ export class Player {
       if (intent.jump && this.isGrounded()) vy = config.jumpSpeed;
     }
 
+    // Confinement : on ne peut pas QUITTER la zone jouable (annule la vitesse vers l'extérieur au
+    // bord) — la bordure (montagnes/océans) est au-delà, infranchissable. `/noclip` (debug) l'ignore.
+    if (!this.noclip) {
+      const p = this.mesh.position;
+      if ((p.x >= PLAY_HALF && vx > 0) || (p.x <= -PLAY_HALF && vx < 0)) vx = 0;
+      if ((p.z >= PLAY_HALF && vz > 0) || (p.z <= -PLAY_HALF && vz < 0)) vz = 0;
+    }
+
     body.setLinearVelocity(new Vector3(vx, vy, vz));
     this.yawNode.rotation.y = this.facing;
+
+    // Filet anti-chute (cas limites : sortie de vol/noclip en l'air, glitch physique) -> retour au camp.
+    if (this.mesh.position.y < -60) this.teleport(0, 8);
 
     // Cycle de marche des membres : la phase avance avec la distance horizontale parcourue ;
     // l'intensité fond vers 1 en mouvement, 0 à l'arrêt. Cosmétique (sous le nœud de yaw).
@@ -196,6 +231,12 @@ export class Player {
     const target = hspeed > 0.4 ? 1 : 0;
     this.walkInt += (target - this.walkInt) * Math.min(1, dtSec * 12);
     animateWalk(this.rig, this.walkPhase, this.walkInt);
+
+    // Scintillement de la torche (cosmétique) quand elle est allumée.
+    if (this.torchLit) {
+      this.torchFlick += dtSec * 11;
+      this.torchLight.intensity = 2.0 + 0.35 * Math.sin(this.torchFlick) + 0.18 * Math.sin(this.torchFlick * 2.3);
+    }
   }
 
   getTransform(): PlayerTransform {

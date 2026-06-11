@@ -27,8 +27,8 @@ export class CampPaths {
   private tex?: DynamicTexture;
 
   constructor(scene: Scene) {
-    // Aucun chemin dessiné -> on ne crée AUCUN mesh/texture (pas de plan transparent à rasteriser).
-    if (!campLayout.paths || campLayout.paths.length === 0) return;
+    // Les chemins sont GÉNÉRÉS au runtime (campPathsFor) et s'étoffent avec les bâtiments : on crée
+    // toujours le plan + la texture (vides au départ = invisibles), puis `rebake()` les redessine.
     // Plan drapé sur le terrain (suit le relief doux du camp) + léger offset anti-z-fight.
     const plane = MeshBuilder.CreateGround("camp-paths", { width: SIZE, height: SIZE, subdivisions: 48, updatable: true }, scene);
     const pos = plane.getVerticesData(VertexBuffer.PositionKind)!;
@@ -54,7 +54,13 @@ export class CampPaths {
     this.bake();
   }
 
-  /** Cuit les polylignes (campLayout.paths) dans la texture (une fois ; chemins fixes). */
+  /** Re-cuit la texture depuis l'état COURANT de campLayout.paths (à appeler quand le réseau
+   *  change — un bâtiment de plus = un sentier de plus). Coût modéré, rare (à chaque construction). */
+  rebake(): void {
+    this.bake();
+  }
+
+  /** Cuit les polylignes (campLayout.paths) dans la texture. */
   private bake(): void {
     if (!this.tex) return;
     const img = new ImageData(TEX, TEX);

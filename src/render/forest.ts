@@ -26,6 +26,7 @@ interface Slot {
   x: number;
   z: number;
   occupied: boolean;
+  excluded?: boolean; // emplacement sous un bâtiment : aucun arbre n'y (re)pousse jamais
 }
 
 interface LiveTree {
@@ -176,8 +177,27 @@ export class Forest {
     this.nextRegrow -= dtSec;
     if (this.nextRegrow <= 0) {
       this.nextRegrow = config.gather.treeRegrowSeconds;
-      const free = this.slots.findIndex((s) => !s.occupied);
+      const free = this.slots.findIndex((s) => !s.occupied && !s.excluded); // jamais sous un bâtiment
       if (free >= 0) this.spawnAt(free);
+    }
+  }
+
+  /** Dégage l'emprise d'un bâtiment : retire les arbres du camp qui s'y trouvent et EXCLUT
+   *  définitivement ces emplacements (plus aucune repousse dedans). Appelé à la construction. */
+  clearFootprint(x: number, z: number, r: number): void {
+    const r2 = r * r;
+    for (let i = 0; i < this.slots.length; i++) {
+      const s = this.slots[i];
+      if ((s.x - x) ** 2 + (s.z - z) ** 2 > r2) continue;
+      s.excluded = true; // ne repoussera plus jamais ici
+      // Retire l'arbre vivant éventuel posé sur cet emplacement.
+      for (const t of this.trees.values()) {
+        if (t.slot !== i) continue;
+        if (t.falling <= 0) { t.aggregate.dispose(); t.collider.dispose(); }
+        t.mesh.dispose();
+        this.trees.delete(t.id);
+        break;
+      }
     }
   }
 

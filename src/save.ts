@@ -15,20 +15,45 @@ const DISC_KEY = "darkroom3d.discovered";
 
 export function saveGame(state: GameState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ version: VERSION, state }));
+    // On NE sérialise PAS `carried` (le sac de chaque pair) : il est re-vidé au chargement
+    // (`selfId` change à chaque session) -> inutile de gonfler le blob avec les sacs de tous.
+    const slim: GameState = { ...state, carried: {} };
+    localStorage.setItem(KEY, JSON.stringify({ version: VERSION, state: slim }));
   } catch {
     /* quota / mode privé : on ignore */
   }
 }
 
-/** Charge la sauvegarde, ou null si absente/incompatible. */
+/**
+ * Migration de sauvegarde : transforme une save d'une version ANCIENNE vers la version courante,
+ * au lieu de la JETER (perte de progression). Règle (cf. docs/roadmap-v2.md A4) :
+ *  - AJOUT ADDITIF d'un champ d'état -> NE PAS bumper VERSION : le spread
+ *    `{ ...createInitialState(), ...saved }` au boot (main.ts) back-fille le champ manquant par son
+ *    défaut. Rien à faire ici.
+ *  - CHANGEMENT CASSANT (renommer/restructurer/changer d'unité) -> bumper VERSION et ajouter une
+ *    étape `if (v === N) { ...transforme s...; v = N + 1; }` ci-dessous.
+ * Renvoie l'état migré, ou `null` si la save est irrécupérable (plus récente que le code).
+ * PURE (pas de localStorage) -> testable.
+ */
+export function migrateSave(state: GameState, fromVersion: number): GameState | null {
+  if (fromVersion > VERSION) return null; // save plus récente que le code : on n'écrase pas à l'aveugle
+  const s = state;
+  let v = fromVersion;
+  // (aucune migration CASSANTE à ce jour — les ajouts additifs sont back-fillés au boot.)
+  // Exemple futur (M7, ajout de la survie) :
+  //   if (v === 2) { s = { ...s, water: 10, food: 0 } as GameState; v = 3; }
+  void v;
+  return s;
+}
+
+/** Charge la sauvegarde (migrée si besoin), ou null si absente/illisible/trop récente. */
 export function loadGame(): GameState | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as { version?: number; state?: GameState };
-    if (!data || data.version !== VERSION || !data.state) return null;
-    return data.state;
+    if (!data || !data.state || typeof data.version !== "number") return null;
+    return migrateSave(data.state, data.version);
   } catch {
     return null;
   }
@@ -77,6 +102,35 @@ export function saveAudioSettings(s: AudioSettings): void {
     localStorage.setItem(AUDIO_KEY, JSON.stringify(s));
   } catch {
     /* ignore */
+  }
+}
+
+// Réglages de CONFORT (FOV + sensibilité souris). Préférence LOCALE (≠ GameState, ≠ réseau),
+// persistée à part — comme l'audio. Accessibilité de base (GAG : FOV + sensibilité réglables).
+const COMFORT_KEY = "darkroom3d.comfort";
+export interface ComfortSettings {
+  fov: number; // champ de vision de base (RADIANS)
+  sensitivity: number; // multiplicateur de sensibilité souris (1 = défaut)
+}
+
+export function saveComfortSettings(s: ComfortSettings): void {
+  try {
+    localStorage.setItem(COMFORT_KEY, JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Charge les réglages de confort, ou null si absents/illisibles (-> défauts du moteur). */
+export function loadComfortSettings(): ComfortSettings | null {
+  try {
+    const raw = localStorage.getItem(COMFORT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<ComfortSettings>;
+    if (typeof d?.fov !== "number" || typeof d?.sensitivity !== "number") return null;
+    return { fov: d.fov, sensitivity: d.sensitivity };
+  } catch {
+    return null;
   }
 }
 

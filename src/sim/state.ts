@@ -36,8 +36,16 @@ export interface GameState {
    * (cabinTier >= 1) — conservé pour compat des appels existants.
    */
   cabinTier: number;
-  /** Bâtiments construits (map id -> nombre). M2. */
+  /** Bâtiments ACHEVÉS (map id -> nombre). Un bâtiment ne compte ici — donc dans la sim
+   *  (capacité, métiers, plafonds) — qu'une fois son chantier terminé. M2. */
   buildings: Record<string, number>;
+  /**
+   * File de CHANTIERS en cours (la constructrice en bâtit un à la fois, dans l'ordre).
+   * Le 1ᵉʳ élément est ACTIF ; `doneAt` = tic d'achèvement (les suivants ont `doneAt: 0`
+   * tant qu'ils attendent leur tour). À l'échéance : `buildings[id]++`, on retire la tête,
+   * et le suivant démarre. Déterministe (tics) -> rejouable et synchronisable en P2P.
+   */
+  constructing: Array<{ id: string; doneAt: number }>;
 
   // --- M3 : population & métiers ---
   /** Nombre total de villageois. */
@@ -85,6 +93,42 @@ export interface GameState {
    * pairs — seule cette graine voyage sur le réseau. Stable pour toute la partie.
    */
   worldSeed: number;
+
+  // --- M9 : exploration des sites (mines & grottes) ---
+  /**
+   * État D'EXPLORATION par site, indexé par `siteKey(cx,cz)`. La DISPOSITION et le BUTIN sont
+   * dérivés de `worldSeed` (cf. sim/dungeon.ts — rien à stocker) ; ICI ne vit que ce qui CHANGE :
+   * ce qui a été découvert / pris / sécurisé / nettoyé. Autoritaire (snapshot + sauvegarde),
+   * d'où le « butin commun à toute la carte » (premier-servi : `taken` partagé). Champ ADDITIF
+   * (back-fillé `{}` au boot pour les vieilles sauvegardes) -> pas de bump de save VERSION.
+   */
+  sites: Record<string, SiteProgress>;
+
+  // --- Routes (extension M9, cf. docs/routes-sites.md) : cellules de route tracées quand on
+  //     NETTOIE un site / SÉCURISE une mine. Réseau qui FUSIONNE (route vers le point connectif le
+  //     plus proche). Clé = `siteKey(cx,cz)`. Déterministe (géométrique) -> P2P via snapshot. Additif. ---
+  roads: Record<string, true>;
+}
+
+/** Progression d'exploration d'UN site (mine/grotte). Tous les champs sont optionnels/diffus. */
+export interface SiteProgress {
+  /** Type du site (`cave`/`ironmine`/…), renseigné à la 1ʳᵉ interaction — sert au gating métier. */
+  type?: string;
+  /** Le joueur a découvert le site (cosmétique / fog-of-war). */
+  discovered?: boolean;
+  /** Nœuds dont le BUTIN a déjà été pris (nodeId -> true). PREMIER-SERVI global. */
+  taken?: Record<string, boolean>;
+  /** Nœuds dont l'éboulement a été dégagé (nodeId -> true). */
+  hazards?: Record<string, boolean>;
+  /** Mine : le filon a été sécurisé ⇒ débloque le métier de mineur correspondant. */
+  secured?: boolean;
+  /** Grotte : entièrement nettoyée ⇒ se convertit en avant-poste (rendu). */
+  cleared?: boolean;
+}
+
+/** Clé d'un site dans `state.sites` à partir de ses coordonnées de cellule. */
+export function siteKey(cx: number, cz: number): string {
+  return cx + "," + cz;
 }
 
 /** Accès sûr à un stock (0 si la clé n'existe pas encore). */
@@ -129,6 +173,17 @@ export function carryCapacity(state: GameState): number {
   return config.carryCapBase + cart;
 }
 
+/**
+ * Nombre de bâtiments d'un type qui COMPTENT pour le maximum et le coût escaladant :
+ * les exemplaires ACHEVÉS plus ceux EN CHANTIER (déjà payés). Évite de dépasser le `maximum`
+ * en enfilant plusieurs chantiers du même bâtiment avant qu'ils ne soient finis.
+ */
+export function plannedCount(state: GameState, id: string): number {
+  let n = state.buildings[id] ?? 0;
+  for (const c of state.constructing) if (c.id === id) n++;
+  return n;
+}
+
 export function createInitialState(seed: number, initialWood: number): GameState {
   return {
     tick: 0,
@@ -137,6 +192,7 @@ export function createInitialState(seed: number, initialWood: number): GameState
     cabinRepaired: false,
     cabinTier: 0,
     buildings: {},
+    constructing: [],
     population: 0,
     workers: {},
     producing: {},
@@ -157,5 +213,7 @@ export function createInitialState(seed: number, initialWood: number): GameState
     incomeAt: 0,
     rng: createRng(seed),
     worldSeed: worldgen.seed,
+    sites: {},
+    roads: {},
   };
 }

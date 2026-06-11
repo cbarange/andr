@@ -1882,33 +1882,182 @@
 
   add({
     id:'ship', name:'Vaisseau alien échoué', cat:'Sites', grid:false,
-    desc:"[site ship · M9 / M11] LE vaisseau « wanderer » : une SOUCOUPE lenticulaire (les « familiar curves » du texte d'ADR), plantée de travers dans la cendre. Dôme décentré, anneau-mécanisme ventral luisant (« les indigènes ne savent pas s'en servir »), brèche aux côtes exposées, modules asymétriques (espèce à « plusieurs mains »). Pas de fusée ni d'ailerons.",
+    desc:"[site ship · M9 / M11] LE « Old Starship » d'ADR (le wanderer) : soucoupe alien ÉCHOUÉE de travers dans un sillon de crash. Coque iridescente CLAIRE (visible), jante d'alliage + couronne de FEUX de position (cyan/ambre), dôme-canopée LUISANT + mât-balise (hauteur/silhouette), anneau-mécanisme ventral cyan, SAS OUVERT à lueur magenta avec rampe (on y entre pour le récupérer), nacelles-moteurs à poussée cyan, train d'atterrissage (un pied plié), débris + traînée scorchée. Couleur + détails à la hauteur des autres modèles.",
     build(K) {
       const root = K.node();
-      // Soucoupe inclinée et à demi enfouie (une tranche plonge dans la cendre).
-      const hull = K.node(root, [0, 1.0, 0]); hull.rotation.z = 0.34; hull.rotation.y = 0.5;
-      // corps lenticulaire (ellipsoïde très aplati) = la « courbe familière »
-      K.sph(hull, P.alienHull, { d:4.4, seg:14 }, [0, 0, 0], { scale:[1, 0.3, 1] });
-      K.tor(hull, P.alienAlloy, { d:4.3, thick:0.3, t:24 }, [0, 0, 0]); // jante de coque (tranche)
-      // dôme bas décentré sur le dessus
-      K.sph(hull, P.alienAlloy, { d:1.9, seg:10 }, [0.35, 0.42, -0.25], { scale:[1, 0.55, 1] });
-      K.tor(hull, P.alienHull, { d:1.7, thick:0.12, t:16 }, [0.35, 0.3, -0.25]); // col du dôme
-      // anneau-mécanisme ventral + lueur cyan (le « mécanisme » inscrutable)
-      K.tor(hull, P.alienAlloy, { d:2.3, thick:0.2, t:18 }, [0, -0.32, 0]);
-      K.cyl(hull, P.alienGlow, { h:0.12, d:1.3, t:16 }, [0, -0.42, 0], { emi:1.7, unlit:true });
-      // couture lumineuse + brèche sombre avec côtes intérieures exposées
-      K.box(hull, P.alienGlow, [0.08, 0.16, 1.7], [1.75, 0.06, 0.4], { emi:1.4, unlit:true });
-      K.box(hull, P.scorch, [1.5, 0.45, 1.0], [-1.25, 0.06, 0.7], { unlit:true });
-      for (let i = 0; i < 3; i++) K.box(hull, P.alienAlloy, [0.06, 0.42, 0.55], [-1.15 + i*0.24, 0.04, 0.8]);
-      // modules asymétriques (motif « plusieurs mains ») groupés d'un côté
-      K.sph(hull, P.alienAlloy, { d:0.6, seg:6 }, [-1.5, 0.05, -1.0], { scale:[1,0.8,1] });
-      K.sph(hull, P.alienAlloy, { d:0.45, seg:6 }, [-1.85, -0.02, -0.5], { scale:[1,0.8,1] });
-      K.cyl(hull, P.alienAlloy, { h:0.5, d:0.18, t:6 }, [-1.7, 0.05, -1.4], { rot:[1.2,0,0.3] });
-      // cendre/ensablement + traînée scorchée + débris (panneaux arrachés)
-      K.cyl(root, [0.16, 0.15, 0.14], { h:0.3, d:4.8, t:20 }, [0, 0.15, 0]);
-      K.cyl(root, P.scorch, { h:0.02, d:2.6, t:16 }, [2.2, 0.16, 1.4], { unlit:true, scale:[1.7, 1, 0.8] });
-      K.box(root, P.alienHull, [0.55, 0.08, 0.4], [2.7, 0.18, 0.5], { rot:[0.2, 0.5, 0.1] });
-      K.box(root, P.alienHull, [0.42, 0.07, 0.32], [-2.5, 0.16, -1.3], { rot:[0.1, 1.0, 0.3] });
+      const hullMain=[0.30,0.37,0.52], hullDark=P.alienHull, alloy=P.alienAlloy,
+            glow=P.alienGlow, glowHot=[0.62,1.0,0.95], magenta=[0.86,0.34,0.78],
+            amber=[1.0,0.62,0.3], scorch=P.scorch, ash=[0.17,0.16,0.15];
+
+      // --- SITE DE CRASH : monticule de cendre + traînée scorchée + débris de coque ---
+      K.cyl(root, ash, { h:0.42, dt:5.4, db:6.4, t:28 }, [0, 0.2, 0]);
+      K.cyl(root, scorch, { h:0.02, d:3.2, t:18 }, [3.6, 0.41, 2.1], { unlit:true, scale:[2.1, 1, 1.0] });
+      K.box(root, hullMain, [0.7, 0.1, 0.5], [3.8, 0.45, 0.9], { rot:[0.2, 0.5, 0.1] });
+      K.box(root, alloy,    [0.5, 0.08, 0.4], [-3.4, 0.43, -1.8], { rot:[0.1, 1.0, 0.3] });
+      K.box(root, hullDark, [0.45, 0.08, 0.36], [2.7, 0.43, -3.0], { rot:[0.15, 2.0, 0.2] });
+
+      // --- COQUE échouée de travers ---
+      const ship = K.node(root, [0, 1.25, 0]); ship.rotation.z = 0.2; ship.rotation.x = -0.08; ship.rotation.y = 0.6;
+
+      // sous-ventre conique (volume sous la soucoupe) + anneau-mécanisme ventral luisant
+      K.cyl(ship, hullDark, { h:1.1, dt:4.8, db:1.5, t:26 }, [0, -0.62, 0]);
+      K.tor(ship, alloy, { d:2.5, thick:0.22, t:22 }, [0, -1.0, 0]);
+      K.cyl(ship, glow, { h:0.14, d:1.7, t:20 }, [0, -1.08, 0], { emi:1.9, unlit:true });
+
+      // corps lenticulaire (teinte iridescente CLAIRE = visible) + jante + COURONNE DE FEUX
+      K.sph(ship, hullMain, { d:5.2, seg:20 }, [0, 0, 0], { scale:[1, 0.34, 1] });
+      K.tor(ship, alloy, { d:5.2, thick:0.36, t:30 }, [0, 0, 0]);
+      for (let i = 0; i < 18; i++) { const a = i/18*Math.PI*2;
+        K.box(ship, i%2 ? glow : amber, [0.16, 0.12, 0.16], [Math.cos(a)*2.6, 0, Math.sin(a)*2.6], { emi:1.7, unlit:true, rot:[0, a, 0] }); }
+
+      // coutures de plaques radiales (détail de coque) sur le dessus
+      for (let i = 0; i < 8; i++) { const s = K.node(ship, [0, 0.4, 0]); s.rotation.y = i/8*Math.PI*2; K.box(s, hullDark, [0.05, 0.05, 1.9], [0, 0, 0.95]); }
+
+      // collerette + DÔME-CANOPÉE luisant + mât-balise (hauteur + silhouette)
+      K.cyl(ship, alloy, { h:0.55, dt:2.0, db:2.9, t:24 }, [0, 0.52, 0]);
+      K.tor(ship, alloy, { d:1.95, thick:0.12, t:18 }, [0, 0.72, 0]);
+      K.sph(ship, glowHot, { d:1.7, seg:14 }, [0, 1.02, 0], { scale:[1, 0.8, 1], emi:1.25, unlit:true, alpha:0.9 });
+      K.cyl(ship, alloy, { h:1.5, dt:0.05, db:0.16, t:6 }, [0, 1.85, 0]);
+      K.sph(ship, glow, { d:0.24 }, [0, 2.65, 0], { emi:2.0, unlit:true });
+
+      // SAS OUVERT (un côté) : ouverture sombre + lueur magenta + montants + RAMPE
+      const door = K.node(ship, [2.5, -0.05, 0.2]); door.rotation.y = -0.1;
+      K.box(door, scorch, [0.12, 1.0, 1.3], [0, 0.2, 0], { unlit:true });
+      K.box(door, magenta, [0.05, 0.85, 1.1], [-0.05, 0.2, 0], { emi:1.5, unlit:true });
+      for (const dz of [-0.6, 0.6]) K.box(door, alloy, [0.1, 0.95, 0.12], [0, 0.2, dz]);
+      K.box(door, alloy, [0.12, 0.12, 1.34], [0, 0.72, 0]); // linteau
+      K.box(door, alloy, [1.3, 0.08, 1.0], [0.7, -0.7, 0], { rot:[0, 0, 0.5] }); // rampe descendante
+
+      // NACELLES-MOTEURS (3) en débord de jante + bouche de poussée cyan
+      for (const a of [Math.PI*0.78, Math.PI*1.2, Math.PI*1.62]) { const r = 2.55, x = Math.cos(a)*r, z = Math.sin(a)*r;
+        K.sph(ship, alloy, { d:0.95, seg:8 }, [x, 0.02, z], { scale:[1.5, 0.85, 1], rot:[0, -a, 0] });
+        K.cyl(ship, glow, { h:0.1, d:0.5, t:12 }, [Math.cos(a)*(r+0.55), 0, Math.sin(a)*(r+0.55)], { emi:1.6, unlit:true, rot:[Math.PI/2, 0, a] }); }
+
+      // TRAIN D'ATTERRISSAGE : 2 pieds déployés (patins) + 1 plié (échoué)
+      for (const a of [Math.PI*0.15, Math.PI*1.75]) { const r = 1.9, x = Math.cos(a)*r, z = Math.sin(a)*r;
+        K.cyl(ship, alloy, { h:1.3, d:0.13, t:6 }, [x, -0.75, z], { rot:[Math.sin(a)*0.4, 0, -Math.cos(a)*0.4] });
+        K.box(ship, alloy, [0.42, 0.1, 0.42], [x*1.2, -1.32, z*1.2]); }
+      K.cyl(ship, alloy, { h:0.85, d:0.13, t:6 }, [-1.7, -0.5, 1.3], { rot:[0.9, 0, 0.6] }); // pied plié (cassé)
+      return root;
+    },
+  });
+
+  // ===== VAISSEAU — PROPOSITIONS DE STYLE (≠ soucoupe) : on en choisira une pour le jeu =====
+  add({
+    id:'ship-arrow', name:'Vaisseau — A : Dard (intercepteur)', cat:'Sites', grid:false,
+    desc:"PROPOSITION A (alien, SYMÉTRIQUE + finition) : « Dard », lame-intercepteur ALIEN plantée nez dans la cendre. Fuseau FACETTÉ effilé (veines dorsale+ventrale, coutures de panneaux), ailes en CROISSANT balayées vers l'AVANT (ÉGALES) + canards + pods sous voilure (les deux côtés), ANNEAU-MÉCANISME cyan, VISEUR-fente + 2 blisters magenta, DRIVE exotique cyan/violet cerclé à 4 vannes, épine à nodules + ailerons de queue en V, double patin. Bilatéralement symétrique ; seuls les débris au sol restent épars (épave).",
+    build(K) {
+      const root = K.node();
+      const hull=[0.20,0.33,0.38], hullDk=[0.13,0.21,0.25], alloy=P.alienAlloy,
+            cyan=[0.45,0.95,0.9], cyanHot=[0.72,1.0,0.97], violet=[0.62,0.42,0.92], magenta=[0.95,0.46,0.88], scorch=P.scorch, ash=[0.17,0.16,0.15];
+      // crash : monticule + sillon + débris épars (seule asymétrie : l'épave éparpillée)
+      K.cyl(root, ash, { h:0.3, dt:3.0, db:4.0, t:24 }, [0,0.14,0]);
+      K.cyl(root, scorch, { h:0.02, d:4.6, t:10 }, [0,0.29,2.7], { unlit:true, scale:[0.5,1,1.6] });
+      K.box(root, hull, [0.6,0.1,0.4], [2.1,0.2,-1.6], { rot:[0.2,0.6,0.1] });
+      K.box(root, alloy, [0.5,0.08,0.35], [-2.3,0.18,0.9], { rot:[0.1,1.0,0.3] });
+      // fuselage : nez planté, queue dressée ; PAS de roulis -> bilatéralement symétrique
+      const ship = K.node(root, [0,1.0,-0.2]); ship.rotation.x=-0.5; ship.rotation.y=0.2;
+      // fuseau FACETTÉ effilé + nez pointu + pointe d'extrémité + arêtes/veines (dorsale & ventrale)
+      K.cyl(ship, hull, { h:3.4, dt:0.5, db:0.95, t:6 }, [0,0,-0.25], { rot:[Math.PI/2,0,0] });
+      K.cone(ship, hull, { h:1.5, d:0.5, t:6 }, [0,0,2.0], { rot:[Math.PI/2,0,0] });
+      K.cone(ship, alloy, { h:0.45, d:0.16, t:6 }, [0,0,2.78], { rot:[Math.PI/2,0,0] }); // pointe affinée
+      K.box(ship, hullDk, [0.22,0.28,2.9], [0,0.42,-0.15]); // arête dorsale
+      K.box(ship, cyan, [0.06,0.06,2.7], [0,0.56,-0.15], { emi:1.6, unlit:true }); // veine dorsale
+      K.box(ship, cyan, [0.06,0.06,2.3], [0,-0.5,-0.2], { emi:1.4, unlit:true }); // veine ventrale
+      for (const sx of [1,-1]) K.box(ship, hullDk, [0.04,0.32,2.3], [sx*0.34,0.0,-0.2]); // coutures de panneaux latérales
+      // ANNEAU-MÉCANISME alien ceinturant le fuseau (mi-corps)
+      K.tor(ship, alloy, { d:1.35, thick:0.14, t:18 }, [0,0,0.15], { rot:[Math.PI/2,0,0] });
+      K.tor(ship, cyan, { d:1.08, thick:0.07, t:18 }, [0,0,0.15], { rot:[Math.PI/2,0,0], emi:1.7, unlit:true });
+      // VISEUR-fente lumineux central + 2 BLISTERS magenta + capteurs + CANARDS (les deux côtés)
+      K.box(ship, cyanHot, [0.5,0.1,0.5], [0,0.4,1.25], { emi:1.6, unlit:true, rot:[0.35,0,0] });
+      for (const sx of [1,-1]) {
+        K.sph(ship, magenta, { d:0.26, seg:6 }, [sx*0.38,0.28,1.35], { emi:1.4, unlit:true }); // blister capteur
+        K.cyl(ship, alloy, { h:0.5, dt:0.02, db:0.06, t:5 }, [sx*0.22,0.5,1.7], { rot:[1.15,0,0] }); // antenne
+        K.box(ship, hull, [0.9,0.08,0.5], [sx*0.62,0.04,1.15], { rot:[0, sx*0.35, sx*-0.1] }); // canard avant
+        K.box(ship, cyan, [0.7,0.04,0.06], [sx*0.62,-0.01,1.32], { rot:[0, sx*0.35, sx*-0.1], emi:1.3, unlit:true });
+      }
+      // AILES en CROISSANT BALAYÉES VERS L'AVANT — ÉGALES (symétriques) + veine + winglet + pod sous voilure
+      for (const sx of [1,-1]) {
+        K.box(ship, hull, [2.4,0.14,1.3], [sx*1.2,-0.05,0.35], { rot:[0, sx*-0.5, sx*-0.12] });
+        K.box(ship, cyan, [2.0,0.05,0.1], [sx*1.2,-0.12,0.72], { rot:[0, sx*-0.5, sx*-0.12], emi:1.5, unlit:true });
+        K.box(ship, hullDk, [0.26,0.4,0.66], [sx*2.3,0.05,0.78], { rot:[0, sx*-0.5, 0] }); // winglet
+        K.sph(ship, alloy, { d:0.42, seg:8 }, [sx*1.5,-0.2,0.3], { scale:[1.5,0.7,1] }); // pod sous voilure
+        K.cyl(ship, cyan, { h:0.08, d:0.26, t:10 }, [sx*1.5,-0.2,-0.05], { rot:[Math.PI/2,0,0], emi:1.4, unlit:true }); // bouche du pod
+      }
+      // DRIVE exotique central : carénage + cerclage + cœur violet + noyau cyan + 4 VANNES (±45/±135)
+      K.cyl(ship, alloy, { h:0.5, dt:1.25, db:0.95, t:8 }, [0,0,-1.95], { rot:[Math.PI/2,0,0] });
+      K.tor(ship, alloy, { d:1.12, thick:0.08, t:16 }, [0,0,-2.12], { rot:[Math.PI/2,0,0] });
+      K.cyl(ship, violet, { h:0.16, d:1.0, t:14 }, [0,0,-2.2], { rot:[Math.PI/2,0,0], emi:1.6, unlit:true });
+      K.cyl(ship, cyanHot, { h:0.1, d:0.52, t:12 }, [0,0,-2.26], { rot:[Math.PI/2,0,0], emi:2.0, unlit:true });
+      for (const a of [0.785,2.356,3.927,5.498]) K.box(ship, alloy, [0.12,0.5,0.4], [Math.cos(a)*0.72, Math.sin(a)*0.72, -2.0], { rot:[0,0,a] });
+      // ÉPINE dorsale à NODULES (central) + AILERONS DE QUEUE EN V (symétriques) + double PATIN
+      for (let i=0;i<3;i++) K.sph(ship, cyan, { d:0.16 }, [0,0.56,-0.8-i*0.5], { emi:1.6, unlit:true });
+      for (const sx of [1,-1]) K.box(ship, hull, [0.1,0.62,0.7], [sx*0.45,0.32,-1.7], { rot:[0.25,0,sx*0.5] });
+      for (const sx of [1,-1]) K.cyl(ship, alloy, { h:0.7, d:0.1, t:6 }, [sx*0.6,-0.5,-0.6], { rot:[0,0,sx*0.6] });
+      return root;
+    },
+  });
+
+  add({
+    id:'ship-pod', name:'Vaisseau — B : Coquille (capsule biomécanique)', cat:'Sites', grid:false,
+    desc:"PROPOSITION B : capsule alien ORGANIQUE en forme de coque/cocon iridescente, FENDUE (sas magenta intérieur + côtes), posée sur 6 pattes insectoïdes, avec coutures luisantes entre les plaques et une antenne-œil. Étrangeté « plusieurs mains » d'ADR. Violet iridescent + veines cyan/magenta.",
+    build(K) {
+      const root = K.node();
+      const chitin=[0.31,0.24,0.43], chitinDk=[0.20,0.15,0.29], alloy=P.alienAlloy, cyan=[0.45,0.95,0.9], magenta=[0.95,0.46,0.88], scorch=P.scorch, ash=[0.17,0.16,0.15];
+      K.cyl(root, ash, { h:0.3, dt:3.6, db:4.4, t:24 }, [0,0.14,0]);
+      K.cyl(root, scorch, { h:0.02, d:2.4, t:14 }, [2.6,0.29,1.4], { unlit:true, scale:[1.6,1,0.9] });
+      // coque inclinée, à demi posée
+      const pod = K.node(root, [0,1.2,0]); pod.rotation.z=0.22; pod.rotation.y=0.5; pod.rotation.x=-0.06;
+      K.sph(pod, chitin, { d:3.6, seg:16 }, [0,0,0], { scale:[1,0.92,1.45] }); // cocon (œuf)
+      K.cyl(pod, magenta, { h:0.12, d:1.2, t:16 }, [0,-1.5,0], { emi:1.7, unlit:true }); // ventre luisant
+      // plaques de carapace + coutures luisantes
+      for (let i=0;i<4;i++){ const a=i/4*6.283; K.sph(pod, chitinDk, { d:1.7, seg:8 }, [Math.cos(a)*0.7,0.7,Math.sin(a)*1.0], { scale:[1,0.5,1.2], rot:[0,a,0] }); }
+      for (let i=0;i<4;i++){ const a=i/4*6.283+0.4; const s=K.node(pod,[0,0.4,0]); s.rotation.y=a; K.box(s, i%2?cyan:magenta, [0.05,0.06,2.4], [0,0.5,0], { emi:1.4, unlit:true }); }
+      // FENTE/SAS : ouverture sombre + lueur magenta + côtes
+      K.box(pod, scorch, [0.12,1.5,1.0], [1.55,0.1,0.6], { unlit:true });
+      K.box(pod, magenta, [0.05,1.3,0.82], [1.5,0.1,0.6], { emi:1.6, unlit:true });
+      for (let i=0;i<4;i++) K.box(pod, alloy, [0.14,0.18,0.9], [1.55,0.7-i*0.4,0.6]);
+      // antenne-œil (capteur courbé)
+      K.cyl(pod, chitinDk, { h:1.3, d:0.1, t:6 }, [-0.6,1.4,0.4], { rot:[0.3,0,0.2] });
+      K.sph(pod, cyan, { d:0.4, seg:10 }, [-0.85,2.05,0.6], { emi:1.8, unlit:true });
+      // 6 PATTES insectoïdes (fémur sortant + tibia descendant + pied)
+      for (let i=0;i<6;i++){ const a=i/6*6.283+0.25; const hip=K.node(pod,[Math.cos(a)*1.4,-0.5,Math.sin(a)*1.7]); hip.rotation.y=a;
+        K.cyl(hip, chitinDk, { h:1.0, d:0.13, t:6 }, [0.45,0.15,0], { rot:[0,0,1.0] });
+        K.cyl(hip, chitinDk, { h:1.1, d:0.11, t:6 }, [0.9,-0.5,0], { rot:[0,0,0.25] });
+        K.box(hip, chitinDk, [0.16,0.1,0.26], [1.02,-1.05,0]); }
+      return root;
+    },
+  });
+
+  add({
+    id:'ship-tripod', name:'Vaisseau — C : Marcheur (tripode)', cat:'Sites', grid:false,
+    desc:"PROPOSITION C : MARCHEUR alien tripode (≠ soucoupe), TRÈS haut et visible — nacelle-tête à gros ŒIL cyan luisant sur 3 longues pattes articulées, bandes d'énergie, antennes, noyau ventral cyan. Échoué, une patte pliée. Acier bleuté + accents cyan/ambre.",
+    build(K) {
+      const root = K.node();
+      const hull=[0.30,0.34,0.42], hullDk=[0.18,0.21,0.27], alloy=P.alienAlloy, cyan=[0.45,0.95,0.9], amber=[1.0,0.62,0.32], scorch=P.scorch, ash=[0.17,0.16,0.15];
+      K.cyl(root, ash, { h:0.26, dt:3.4, db:4.2, t:24 }, [0,0.12,0]);
+      K.cyl(root, scorch, { h:0.02, d:3.0, t:16 }, [1.6,0.25,-1.4], { unlit:true, scale:[1.3,1,1.0] });
+      const hubY = 2.5;
+      // 3 PATTES (cuisse sortante + genou + tibia au sol + pied) ; la 3e (i=2) pliée -> léger gîte
+      for (let i=0;i<3;i++){ const a=Math.PI/2 + i*2.094; const hip=K.node(root,[0,hubY,0]); hip.rotation.y=a;
+        const bent = i===2;
+        K.cyl(hip, alloy, { h:1.5, d:0.2, t:8 }, [0.6,-0.45,0], { rot:[0,0,0.95] });
+        K.sph(hip, alloy, { d:0.34 }, [1.1,-1.05,0]);
+        K.cyl(hip, hull, { h: bent?1.0:1.8, d:0.16, t:7 }, bent?[1.45,-1.55,0]:[1.25,-1.95,0], { rot:[0,0, bent?0.9:0.2] });
+        K.box(hip, alloy, [0.5,0.14,0.6], bent?[1.9,-2.0,0]:[1.4,-2.85,0]); }
+      // NACELLE-TÊTE (capsule) + bandes d'énergie + gros ŒIL cyan
+      const head = K.node(root, [0,hubY,0]); head.rotation.z=0.08;
+      K.cyl(head, hull, { h:1.3, dt:1.5, db:1.9, t:14 }, [0,0.25,0]);
+      K.sph(head, hull, { d:1.9, seg:12 }, [0,0.9,0], { scale:[1,0.8,1] });
+      K.tor(head, alloy, { d:1.95, thick:0.12, t:18 }, [0,0.55,0]);
+      K.cyl(head, cyan, { h:0.1, d:1.3, t:18 }, [0,-0.42,0], { emi:1.8, unlit:true }); // noyau ventral
+      K.sph(head, cyan, { d:1.0, seg:12 }, [0,0.75,0.85], { scale:[1.2,1,0.5], emi:1.6, unlit:true }); // ŒIL
+      K.tor(head, alloy, { d:1.05, thick:0.1, t:16 }, [0,0.75,0.92], { rot:[Math.PI/2,0,0] }); // cerclage de l'œil
+      for (const sx of [1,-1]) K.box(head, amber, [0.1,0.4,0.1], [sx*0.7,0.6,0.6], { emi:1.5, unlit:true }); // feux de joue
+      // antennes sur le dessus
+      K.cyl(head, alloy, { h:1.1, dt:0.03, db:0.08, t:6 }, [0.2,1.7,0], { rot:[0,0,-0.15] });
+      K.sph(head, cyan, { d:0.16 }, [0.05,2.3,0], { emi:1.9, unlit:true });
+      K.cyl(head, alloy, { h:0.7, dt:0.03, db:0.06, t:6 }, [-0.3,1.55,0.2], { rot:[0.2,0,0.3] });
       return root;
     },
   });

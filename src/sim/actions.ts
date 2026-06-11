@@ -79,6 +79,60 @@ export type ResolveEventChoiceAction = {
   choice: string; // id du choix dans la scène active
 };
 
+// ---- M9 : exploration des mines & grottes (cf. docs/mines-grottes-implementation.md) ----
+
+/** Découvre un site (cosmétique / fog-of-war) ; mémorise son type. */
+export type DiscoverSiteAction = {
+  type: "DISCOVER_SITE";
+  playerId: string;
+  cx: number;
+  cz: number;
+  siteType: string;
+};
+
+/** Ramasse le butin d'un nœud : objet 3D -> SAC du joueur. PREMIER-SERVI global (cf. reducer). */
+export type TakeLootAction = {
+  type: "TAKE_LOOT";
+  playerId: string;
+  cx: number;
+  cz: number;
+  siteType: string; // pour dériver le butin (dungeon.ts)
+  nodeId: string;
+};
+
+/** Dégage un éboulement (nœud `hazard`). */
+export type ClearHazardAction = {
+  type: "CLEAR_HAZARD";
+  playerId: string;
+  cx: number;
+  cz: number;
+  nodeId: string;
+};
+
+/** Sécurise le filon d'une mine ⇒ débloque le métier de mineur correspondant. */
+export type SecureMineAction = {
+  type: "SECURE_MINE";
+  playerId: string;
+  cx: number;
+  cz: number;
+  siteType: string;
+};
+
+/** Marque une grotte entièrement nettoyée ⇒ elle se convertit en avant-poste (rendu). */
+export type ClearCaveAction = {
+  type: "CLEAR_CAVE";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
+/** Fabrique un OBJET (torche…) : débite l'entrepôt, ajoute l'objet au SAC. M9/M10. */
+export type CraftItemAction = {
+  type: "CRAFT_ITEM";
+  playerId: string;
+  itemId: string;
+};
+
 /** Avance d'un pas fixe de simulation (§3.6). Émise par la boucle, pas par le joueur. */
 export type TickAction = {
   type: "TICK";
@@ -151,6 +205,12 @@ export type GameAction =
   | RepairCabinAction
   | UpgradeCabinAction
   | ResolveEventChoiceAction
+  | DiscoverSiteAction
+  | TakeLootAction
+  | ClearHazardAction
+  | SecureMineAction
+  | ClearCaveAction
+  | CraftItemAction
   | TickAction
   | DebugTriggerEventAction
   | DebugGrantAction
@@ -178,6 +238,12 @@ export type PlayerAction =
   | RepairCabinAction
   | UpgradeCabinAction
   | ResolveEventChoiceAction
+  | DiscoverSiteAction
+  | TakeLootAction
+  | ClearHazardAction
+  | SecureMineAction
+  | ClearCaveAction
+  | CraftItemAction
   | DebugGrantAction
   | DebugSetAction
   | DebugClearAction
@@ -245,6 +311,26 @@ export function upgradeCabin(playerId: string): UpgradeCabinAction {
 
 export function resolveEventChoice(playerId: string, choice: string): ResolveEventChoiceAction {
   return { type: "RESOLVE_EVENT_CHOICE", playerId, choice };
+}
+
+// ---- M9 : exploration ----
+export function discoverSite(playerId: string, cx: number, cz: number, siteType: string): DiscoverSiteAction {
+  return { type: "DISCOVER_SITE", playerId, cx, cz, siteType };
+}
+export function takeLoot(playerId: string, cx: number, cz: number, siteType: string, nodeId: string): TakeLootAction {
+  return { type: "TAKE_LOOT", playerId, cx, cz, siteType, nodeId };
+}
+export function clearHazard(playerId: string, cx: number, cz: number, nodeId: string): ClearHazardAction {
+  return { type: "CLEAR_HAZARD", playerId, cx, cz, nodeId };
+}
+export function secureMine(playerId: string, cx: number, cz: number, siteType: string): SecureMineAction {
+  return { type: "SECURE_MINE", playerId, cx, cz, siteType };
+}
+export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAction {
+  return { type: "CLEAR_CAVE", playerId, cx, cz };
+}
+export function craftItem(playerId: string, itemId: string): CraftItemAction {
+  return { type: "CRAFT_ITEM", playerId, itemId };
 }
 
 export function tick(): TickAction {

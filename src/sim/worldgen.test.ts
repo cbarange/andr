@@ -31,7 +31,7 @@ describe("generateWorld — déterminisme", () => {
   it("toutes les cellules sont décidées (aucune valeur ‘indécise’)", () => {
     const m = generateWorld(SEED);
     for (let i = 0; i < m.biomes.length; i++) {
-      expect(m.biomes[i]).toBeLessThanOrEqual(Biome.Barren); // 0..3, jamais 255
+      expect(m.biomes[i]).toBeLessThanOrEqual(Biome.Swamp); // 0..4 (camp..marais), jamais 255
     }
   });
 });
