@@ -6,7 +6,9 @@
 > **Roadmap des jalons à jour (post-audit) : [`roadmap-v2.md`](roadmap-v2.md)** — source de vérité de
 > l'avancement ; classe l'existant en ✅ fait / 🟡 rendu-mais-inerte / 🔴 mort / ❌ absent.
 >
-> *Dernière passe de maintenance : juin 2026 (après Chantier C, M9, routes & sites).*
+> *Dernière passe de maintenance : juin 2026 (après Chantier C, M9, routes & sites ; puis **construction
+> visuelle/temporisée + montée de la cabane**, **sentiers dynamiques + dégagement des emprises**, **étiquettes
+> de joueur en P2P**).*
 
 ## En une phrase
 **A Dark Room réimaginé en 3D web native** (Babylon.js + Havok + Trystero), simulation **pure, déterministe,
@@ -57,6 +59,23 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Juice** : nombres de ressources **animés (count-up) + pop couleur** au gain (HUD).
 - **Confort/accessibilité** : sliders **FOV** + **sensibilité souris** (persistés).
 
+### Construction VISUELLE & sentiers vivants (récent) — ✅
+- **Construction étalée dans le temps** : `build` n'est plus instantané — il **enfile un chantier** (sim
+  `constructing`, file séquentielle déterministe → P2P-safe) ; le coût est débité tout de suite, mais le
+  bâtiment ne **compte dans la sim** (capacité/métiers/plafonds) **qu'une fois ACHEVÉ** (« fonctionnel à la fin »).
+- **Montée « assemblage par éléments »** (`render/reveal.ts`, partagée) : le bâtiment **sort de terre** pièce
+  par pièce (fondation → murs → toit, petit « pop ») ; la **constructrice marche jusqu'au chantier et y frappe
+  au marteau** ; la montée **ne démarre qu'à son arrivée** et se cale pour finir **pile à l'achèvement** (filet
+  anti-pop : jamais d'apparition instantanée). Même montée pour la **réparation/amélioration de la cabane**.
+- **Sentiers DYNAMIQUES** (`campPathsFor`, arbre couvrant minimal feu + cabane + bâtiments) : le réseau de
+  chemins se **génère depuis le layout** et **s'étoffe à chaque construction** (≈ 1 sentier de plus par bâtiment,
+  reliant chaque structure au feu et aux voisines) ; peint par `campPaths` + **suivi par les villageois** (biais
+  navGrid reconstruit tout seul). Remplace les anciens chemins dessinés à la main.
+- **Dégagement des emprises à la construction** : les **arbres** du camp et le **décor au sol** (cailloux…) sur
+  l'emplacement d'un bâtiment sont **retirés** dès le début du chantier, et **aucun arbre n'y repousse** (slots exclus).
+- **Multijoueur** : **étiquette de nom** (billboard) au-dessus de chaque joueur distant — **l'id pour l'instant**,
+  remplaçable par le vrai nom via `RemotePlayers.setName(id, name)` quand le réseau le fournira.
+
 ### Transverse — ✅
 - **Multijoueur P2P** host-autoritaire (Trystero/WebRTC) : « Ouvrir ma partie » (lien à partager) ; **failover
   par époque** (un hôte silencieux ne fige plus les autres ; heartbeat + Raft-lite) + **STUN** publics ;
@@ -73,7 +92,8 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   E lanternes · F villageois-huttes).
 - **Chantier A — assainissement** : A3 (P2P) ✅, A4 (migration save) ✅ ; A2 (cheats hors prod) ⏸️ gardé en dev,
   A5 (bâtiments merge+instance) ⏸️ différé (analyse de risque faite), A6 (refactor `main.ts`) ⏳.
-- **Chantier D — qualité d'expérience** : juice 🟡 amorcé, confort FOV/sensibilité ✅ ; reste rebind, jour/nuit, AO…
+- **Chantier D — qualité d'expérience** : juice 🟡 amorcé (HUD count-up + **construction/cabane animées** ✅),
+  confort FOV/sensibilité ✅ ; reste rebind clavier, jour/nuit, AO…
 
 ## Décisions clés (et pourquoi)
 - **Monde 3D UNIFIÉ** : pas d'écran « village » vs « carte » ; retranchement central, difficulté ↑ avec la distance.

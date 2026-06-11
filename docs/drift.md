@@ -54,12 +54,23 @@ oubliés), l'**outillage dev** (exposé en prod) et la **dette de structure** (m
 > - **#7 `main.ts` god-object** : a encore GROSSI (interactions M9, confort, routes, ocean…) → le **refactor
 >   (A6)** devient plus pressant (extraire `net/sync`, `ui/dialogues`, `interactions`, reflectState).
 > - **Nouveaux modules sains** (purs/locaux, bien rangés) : `sim/dungeon.ts`, `sim/roads.ts`,
->   `render/interior.ts` · `ocean.ts` · `campLights.ts` · `campRuins.ts` ; `data/world.ts` a grossi
->   (borderField, generateCampLayout, sites étendus) — envisager de le **scinder** par domaine.
-> - **Nouvelle petite dette** : la teinte de ROUTE ne retire pas les props déjà dispersés (re-scatter des
->   chunks concernés à prévoir) ; le `cache` réutilise une ruine de village (modèle dédié possible).
-> - **Toujours valable** : #4 (outils dev en prod, différé), #8 (bâtiments merge+instance, différé),
->   #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
+>   `render/interior.ts` · `ocean.ts` · `campLights.ts` · `campRuins.ts` · **`render/reveal.ts`** (montée
+>   « assemblage par éléments » partagée bâtiments/cabane) ; `data/world.ts` a grossi
+>   (borderField, generateCampLayout, **campPathsFor**, sites étendus, `alien alloy`/`energy cell`) — envisager
+>   de le **scinder** par domaine.
+> - **Construction temporisée (sim)** : nouveau champ `GameState.constructing` (file de chantiers
+>   déterministe) — le bâtiment ne compte qu'à l'achèvement. **Sain** : pur, dans le snapshot complet, testé.
+>   Rendu = `buildings.ts` `makeChantier`/`revealChantier` + constructrice (`stranger.ts`) qui marche/frappe ;
+>   **sentiers dynamiques** (`campPathsFor` → `campLayout.paths` régénéré au runtime, `campPaths.rebake`) ;
+>   **dégagement des emprises** (`forest.clearFootprint`/`campDecor.clearFootprint` via `Village.setOnPlaced`).
+>   Tout en couche **corps locale** (zéro impact sim/réseau, hormis le champ `constructing` synchronisé).
+> - **Nouvelle petite dette** : la teinte de ROUTE ne retire **toujours** pas les props déjà dispersés
+>   (re-scatter à prévoir) — *NB : les **emprises de bâtiment**, elles, dégagent désormais arbres+décor* ; le
+>   `cache` réutilise une ruine de village (modèle dédié possible) ; quelques **hooks `window.__game.*`
+>   supplémentaires** ajoutés (debug construction/cabane/sentiers/joueurs distants) → **renforce #4** (sortir
+>   l'outillage dev du bundle de prod le jour venu).
+> - **Toujours valable** : #4 (outils dev en prod, différé), #7 (`main.ts` god-object — a encore grossi),
+>   #8 (bâtiments merge+instance, différé), #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
 
 ---
 

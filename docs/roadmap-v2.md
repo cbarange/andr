@@ -103,7 +103,8 @@ l'avancement :
 - **Objets/artisanat** : torche, outres, sacs (rucksack/wagon/convoy), armures, armes — **0**.
 - **Perks** & événements qui en dépendent : Éclaireur, Maître, Homme malade, Maladie/Peste, Raid militaire.
 - **Fin de partie** : épave → alliage → réparation du vaisseau → décollage → esquive d'astéroïdes → fin.
-  **Aucune condition de victoire.** `alien alloy` n'a **aucune source** (et n'existe pas comme ressource).
+  **Aucune condition de victoire.** `alien alloy` / `energy cell` **existent désormais comme ressources**
+  (table de rareté) mais **n'ont encore aucune source** (sites borehole/cité/épave restant à brancher → M11).
 - **Prestige** (cache, report de partie).
 
 > **Verdict** : `andr` est une **excellente fondation** — l'Acte I jouable, déterministe, P2P, et toute
@@ -121,7 +122,7 @@ l'avancement :
 | Pièges + appât + butin | ✅ FAIT | — |
 | Population + huttes | ✅ FAIT | — |
 | Métiers bois/fourrure→cuir/viande→séchée | ✅ FAIT | — |
-| Construction (10 bâtiments, coûts croissants, révélation ADR) | ✅ FAIT | — |
+| Construction (10 bâtiments, coûts croissants, révélation ADR) | ✅ FAIT (+ **temporisée & animée** : file de chantiers, montée pièce par pièce, fonctionnel à l'achèvement) | — |
 | Événements (room/outside, choix→conséquences) | ✅ 9/~15 | M5 fait ; reste → M10 |
 | Carte / biomes / sites (génération + rendu) | 🟡 INERTE | M7/M9 (logique) |
 | Survie eau / nourriture / mort / avant-postes | ❌ ABSENT | **M6 + M7** |
@@ -429,7 +430,8 @@ L'arc final. **`alien alloy` n'a aujourd'hui aucune source** : il faut d'abord l
 
 - **Worldgen — combler (critique)** : ajouter **`borehole`** (×~10, source principale d'alliage) et
   **`battlefield`** (armes lourdes) ; **`cache`** (×1, report de prestige). *(Sans eux, la fin est
-  inatteignable : seuls `ship`/`executioner` existent.)* Ajouter la ressource **`alien alloy`** + **`energy cell`**.
+  inatteignable : seuls `ship`/`executioner` existent.)* ~~Ajouter la ressource `alien alloy` + `energy cell`~~
+  ✅ (déjà déclarées dans la table de rareté ; **reste à leur donner une source** via ces sites).
 - **`sim/`** : setpiece **`executioner`** (3 ailes + l'immortel) → accès au vaisseau ; `ship` (coque/propulseurs),
   `REINFORCE_HULL`/`UPGRADE_ENGINE` (coût alliage) ; **mini-jeu spatial** (esquive d'astéroïdes, altitude 0→60+ —
   peut rester **arcade local**, score validé par l'hôte) ; **fin de partie** + le **twist narratif** (« vous êtes
@@ -456,7 +458,7 @@ L'arc final. **`alien alloy` n'a aujourd'hui aucune source** : il faut d'abord l
 | **F** ✅ **FAIT** | Villageois **dans les huttes** + rotation + **son de porte** (~50 % cachés → perf + village vivant) | rendu local | très bas | S/M |
 | **E** 🟡 *(amorcé)* | **Village s'améliore avec le palier de cabane** : ✅ **lanternes** (sentiers, allumées palier ≥5, plus à ≥10) ; *reste* : fanions, densité de décor ×10, flicker | rendu local | bas | S |
 | **D** 🟡 *(amorcé)* | ✅ **Ruines** sur ~1/3 des emplacements majeurs à venir (remplacées à la construction) + 4 ruines permanentes ; *reste* : chemins mieux rendus (résolution/decal), + densité de décor | rendu local | bas | M |
-| **C** ✅ **FAIT** | **Placement mathématique** des bâtiments : `generateCampLayout()` pur & testé — phyllotaxie de Vogel (angle d'or) pour les huttes, rayons Fibonacci, **filtré par quartier** (chasse N / industrie E / artisanat O / habitat S) + relaxation anti-chevauchement (feu/cabane/spawn dégagés) ; *reste éventuel* : regénérer les sentiers depuis le nouveau layout | `data/` pur | moyen | M |
+| **C** ✅ **FAIT** | **Placement mathématique** des bâtiments : `generateCampLayout()` pur & testé — phyllotaxie de Vogel (angle d'or) pour les huttes, rayons Fibonacci, **filtré par quartier** (chasse N / industrie E / artisanat O / habitat S) + relaxation anti-chevauchement (feu/cabane/spawn dégagés). ✅ **Sentiers régénérés dynamiquement** depuis le layout (`campPathsFor` = arbre couvrant minimal feu+cabane+bâtiments, **s'étoffe à chaque construction**) + ✅ **dégagement des emprises** à la construction (arbres/décor retirés, **pas de repousse**) | `data/` + rendu local | moyen | M |
 
 > **🎉 Chantier C — Refonte monde & campement : TERMINÉ** (A·B·C·D·E·F tous ✅). Reste, hors refonte :
 > le **rebind clavier** (Chantier D, P0 accessibilité) et les **contenus** M6→M11 (survie, combat, intérieurs
@@ -483,7 +485,7 @@ bordure, assignation 2-of-4 par graine, occupation ~50 %) et risques : **[`refon
 1. **Onboarding diégétique par révélation progressive** (l'ADN d'A Dark Room ; résout l'absence de tuto sans mur de texte).
 2. **Bâtiments/cabane merge+instance + tuer les allocs/frame** (= A5 ; plus gros gain perf/jank).
 3. **Cycle jour/nuit + AO/ombres de contact** (la lumière = ambiance ; l'AO = levier cheap→premium n°1).
-4. **Juice de la boucle** 🟡 *(amorcé)* : ✅ HUD **count-up + pop au gain** (sac, lignes persistantes, respect `prefers-reduced-motion`) + sons d'action déjà larges ; *reste* : pops sur d'autres événements (construction, milestones), easing des panneaux de dialogue.
+4. **Juice de la boucle** 🟡 *(amorcé)* : ✅ HUD **count-up + pop au gain** (sac, lignes persistantes, respect `prefers-reduced-motion`) + sons d'action déjà larges + ✅ **construction ANIMÉE** (chantier qui **monte pièce par pièce** + **constructrice qui marche/frappe** ; **cabane** idem à la réparation/amélioration) ; *reste* : pops sur d'autres milestones, easing des panneaux de dialogue, poussière de chantier.
 5. **Terrain en triangles/landmarks + biomes distincts + compas diégétique** (anti monde vide ; ↔ Chantier C).
 6. **Accessibilité/confort de base** 🟡 *(amorcé)* : ✅ **slider FOV** + **slider sensibilité souris** (persistés) + `prefers-reduced-motion` (animations HUD) ; *reste (gros morceau dédié)* : **rebind clavier** (tuer le bouton « bientôt » + étiquettes E sur la touche réelle), sous-titres lisibles, modes daltoniens. *(head-bob/shake : sans objet pour l'instant — le jeu n'a ni l'un ni l'autre.)*
 
