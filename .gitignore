@@ -9,3 +9,16 @@ playwright-report/
 # Artefacts de test générés / scratch
 tests/screenshot.png
 tests/_tmp_*
+
+# Variables d'environnement & fichiers locaux
+.env
+.env.*
+*.local
+
+# Caches & couverture
+.vite/
+coverage/
+
+# OS & éditeurs
+Thumbs.db
+.idea/
