@@ -1776,17 +1776,40 @@
     id:'house', name:'Maison en ruine', cat:'Sites',
     desc:"[site house · M7 → M9] Bâtisse effondrée : murs partiels ébréchés, poutres tombées, gravats.",
     build(K) {
+      // Chaumière de pierre éventrée : murs ébréchés + porte, toiture effondrée, cheminée + âtre,
+      // mobilier cassé, gravats, mousse/vigne. (Synchronisé avec sites.ts case "house".)
       const root = K.node();
-      K.box(root, [0.18,0.16,0.14], [3.0, 0.2, 2.6], [0, 0.1, 0]); // fondation
-      K.box(root, P.ruinStone, [3.0, 1.5, 0.25], [0, 0.85, -1.2]); // mur arrière
-      K.box(root, P.ruinStone, [0.25, 1.0, 2.6], [-1.4, 0.6, 0]); // mur gauche (bas)
-      K.box(root, P.ruinStone, [0.25, 0.5, 1.6], [1.4, 0.35, -0.4]); // mur droit effondré
-      K.box(root, P.ruinStone, [0.25, 1.1, 0.25], [-1.0, 0.65, 1.2]); // montant de façade
-      K.cyl(root, P.woodDark, { h:2.5, d:0.12 }, [0.3, 0.5, 0.2], { rot:[0, 0.4, 1.3] }); // poutres tombées
-      K.cyl(root, P.woodDark, { h:2.0, d:0.1 }, [-0.4, 0.3, -0.3], { rot:[0, -0.3, 1.5] });
-      K.ico(root, P.ruinStone, { d:0.6 }, [0.8, 0.25, 0.6]); // gravats
-      K.ico(root, P.stoneDark, { d:0.5 }, [-0.7, 0.2, 0.8]);
-      K.box(root, P.woodDark, [0.5, 0.15, 0.5], [0.6, 0.12, -0.6]);
+      const stone = P.ruinStone, stoneDk = P.stoneDark, wood = P.woodDark, woodL = P.woodLight,
+        thatch = [0.5,0.42,0.26], moss = [0.26,0.36,0.22], dark = P.dark;
+      const W = 4.2, D = 3.6, bH = 2.2;
+      K.box(root, stoneDk, [W+0.5, 0.3, D+0.5], [0, 0.15, 0]);
+      K.box(root, [0.2,0.18,0.16], [W, 0.1, D], [0, 0.32, 0]);
+      K.box(root, stone, [W, bH, 0.3], [0, bH/2+0.3, -D/2]);
+      K.box(root, stone, [W*0.45, 0.55, 0.32], [W*0.18, bH+0.35, -D/2]);
+      K.box(root, dark, [0.9, 0.8, 0.34], [-W*0.22, 1.35, -D/2]);
+      K.box(root, wood, [1.0, 0.12, 0.36], [-W*0.22, 1.8, -D/2]);
+      K.box(root, stone, [0.3, 1.8, D*0.72], [-W/2, 1.2, -D*0.08]);
+      K.box(root, stone, [0.3, 0.7, D*0.5], [W/2, 0.65, -D*0.2]);
+      K.ico(root, stone, { d:0.9 }, [W/2, 0.4, D*0.25]);
+      for (const sx of [-1,1]) K.box(root, stone, [0.32, 1.55, 0.32], [sx*0.72, 1.1, D/2]);
+      K.box(root, wood, [1.7, 0.18, 0.22], [0, 1.65, D/2], { rot:[0,0,0.07] });
+      K.box(root, stone, [W*0.3, 0.65, 0.3], [-W*0.33, 0.62, D/2]);
+      K.cyl(root, wood, { h:D+0.4, d:0.18, t:6 }, [-0.3, 1.35, 0.2], { rot:[0.5,0.2,0] });
+      K.cyl(root, wood, { h:2.6, d:0.14, t:6 }, [0.8, 0.9, -0.4], { rot:[0.9,-0.3,0.1] });
+      K.cyl(root, woodL, { h:2.0, d:0.1, t:5 }, [-0.6, 0.7, 0.8], { rot:[1.1,0.4,0] });
+      for (const [x,z,r] of [[0.4,0.5,0.3],[-0.9,-0.3,1.0],[0.9,-0.8,-0.4]]) K.box(root, thatch, [0.9,0.12,0.7], [x,0.44,z], { rot:[0.15,r,0.1] });
+      K.box(root, stoneDk, [0.7, 2.8, 0.7], [W/2-0.1, 1.4, -D/2+0.55]);
+      K.box(root, stoneDk, [0.86, 0.3, 0.86], [W/2-0.1, 2.85, -D/2+0.55]);
+      K.box(root, dark, [0.5, 0.5, 0.4], [W/2-0.25, 0.5, -D/2+0.55]);
+      K.ico(root, [0.12,0.11,0.1], { d:0.4 }, [W/2-0.25, 0.2, -D/2+0.75]);
+      const tbl = K.node(root, [-0.6, 0, -0.1]); tbl.rotation.z = 1.35;
+      K.box(tbl, woodL, [1.0, 0.1, 0.7], [0, 0.5, 0]);
+      for (const [lx,lz] of [[-0.4,-0.28],[0.4,-0.28],[-0.4,0.28],[0.4,0.28]]) K.box(tbl, wood, [0.08,0.5,0.08], [lx,0.25,lz]);
+      K.cyl(root, wood, { h:0.6, dt:0.4, db:0.46, t:8 }, [1.1, 0.3, 0.6], { rot:[0.4,0,0.3] });
+      K.box(root, woodL, [0.3, 0.4, 0.3], [0.2, 0.2, 1.0]);
+      for (let i=0;i<4;i++){ const a=i*1.6; K.ico(root, i%2?stone:stoneDk, { d:0.5+0.2*(i%3) }, [Math.cos(a)*1.7, 0.25, Math.sin(a)*1.5]); }
+      for (const [y,z] of [[1.6,-0.6],[0.8,0.4]]) K.box(root, moss, [0.05,0.5,0.5], [-W/2+0.16, y, z]);
+      for (let i=0;i<3;i++) K.cyl(root, moss, { h:1.6, d:0.05, t:4 }, [-W*0.28+i*0.3, 1.1, -D/2+0.18], { rot:[0.1,0,(i-1)*0.15] });
       return root;
     },
   });
@@ -1795,17 +1818,41 @@
     id:'town', name:'Grappe de ruines', cat:'Sites', grid:false,
     desc:"[site town · M7 → M9] Hameau abandonné : plusieurs pans de murs effondrés, un muret, des gravats.",
     build(K) {
+      // Petit bourg abandonné : maisons ruinées VARIÉES + puits central + arche de ville + rues +
+      // chariot renversé + panneau penché. (Synchronisé avec sites.ts case "town".)
       const root = K.node();
-      const frag = (x, z, ry, s) => {
-        const n = K.node(root, [x, 0, z]); n.rotation.y = ry; n.scaling.setAll(s);
-        K.box(n, P.ruinStone, [2.0, 1.1, 0.22], [0, 0.6, -0.8]);
-        K.box(n, P.ruinStone, [0.22, 0.8, 1.6], [-0.9, 0.45, 0]);
-        K.box(n, P.ruinStone, [0.22, 0.4, 0.9], [0.9, 0.25, -0.3]);
-        K.ico(n, P.stoneDark, { d:0.5 }, [0.5, 0.2, 0.6]);
+      const stone = P.ruinStone, stoneDk = P.stoneDark, wood = P.woodDark, woodL = P.woodLight, dark = P.dark;
+      K.cyl(root, [0.2,0.19,0.16], { h:0.08, d:13.5, t:24 }, [0, 0.04, 0]);
+      const ruin = (x, z, ry, w, d, h, kind) => {
+        const n = K.node(root, [x, 0, z]); n.rotation.y = ry;
+        K.box(n, stoneDk, [w+0.3, 0.2, d+0.3], [0, 0.1, 0]);
+        K.box(n, stone, [w, h, 0.28], [0, h/2+0.1, -d/2]);
+        K.box(n, stone, [0.28, h*0.7, d], [-w/2, h*0.35+0.1, 0]);
+        K.box(n, stone, [0.28, h*0.4, d*0.6], [w/2, h*0.2+0.1, -d*0.2]);
+        K.box(n, dark, [w*0.3, h*0.4, 0.3], [w*0.16, h*0.42, -d/2]);
+        if (kind === 0) { K.cyl(n, wood, { h:d+0.3, d:0.16, t:6 }, [0, h*0.62, 0], { rot:[0.45,0.2,0] }); K.cyl(n, wood, { h:w, d:0.12, t:6 }, [0.2, h*0.4, 0.3], { rot:[0,0,Math.PI/2] }); }
+        else { K.box(n, woodL, [w*0.82, 0.1, d*0.7], [0, h*0.6, -d*0.1], { rot:[0.08,0,0.05] }); }
+        K.ico(n, stone, { d:0.6 }, [w*0.3, 0.3, d*0.3]);
       };
-      frag(-2.4, -1.6, 0.3, 1.0); frag(1.9, -2.1, -0.6, 0.85);
-      frag(2.6, 1.6, 1.2, 0.9); frag(-1.6, 2.3, 2.4, 0.75); frag(0, 0.2, 0.8, 0.7);
-      K.box(root, P.ruinStone, [0.3, 0.4, 3.0], [-3.4, 0.2, 0.6], { rot:[0, 0.2, 0] }); // muret
+      ruin(-3.6,-2.2, 0.3, 2.6,2.2, 2.4, 0); ruin(2.7,-3.0, -0.5, 2.2,2.0, 3.1, 1);
+      ruin(3.9,1.9, 0.9, 2.4,2.6, 2.0, 0); ruin(-2.9,3.3, 2.2, 2.0,1.8, 2.7, 1);
+      ruin(-4.6,1.0, 1.4, 1.8,1.6, 2.2, 0); ruin(0.6,-4.3, 0.1, 2.0,1.8, 2.3, 1);
+      K.cyl(root, stoneDk, { h:0.7, dt:1.3, db:1.5, t:12 }, [0.5, 0.35, 0.5]);
+      K.cyl(root, dark, { h:0.2, d:1.0, t:12 }, [0.5, 0.7, 0.5]);
+      for (const sx of [-1,1]) K.cyl(root, wood, { h:1.6, d:0.12, t:6 }, [0.5+sx*0.55, 1.1, 0.5]);
+      K.cyl(root, wood, { h:1.3, d:0.1, t:6 }, [0.5, 1.85, 0.5], { rot:[0,0,Math.PI/2] });
+      K.box(root, woodL, [0.28, 0.3, 0.28], [0.5, 1.35, 0.5]);
+      for (const sx of [-1,1]) K.box(root, stone, [0.6, 3.2, 0.6], [sx*1.0-5.4, 1.6, -1.0]);
+      K.box(root, stone, [2.0, 0.6, 0.7], [-5.4, 3.1, -1.0]);
+      K.box(root, stone, [0.6, 0.9, 0.6], [-4.4, 3.5, -1.0], { rot:[0,0,0.3] });
+      K.box(root, stone, [0.3, 0.6, 5.0], [-1.6, 0.3, 0.5], { rot:[0,0.2,0] });
+      K.box(root, stone, [4.0, 0.5, 0.3], [1.6, 0.25, -1.5], { rot:[0,0.1,0] });
+      for (let i=0;i<9;i++){ const a=i*0.7; K.ico(root, i%2?stone:stoneDk, { d:0.4+0.2*(i%3) }, [Math.cos(a)*4.7, 0.2, Math.sin(a)*4.7]); }
+      const cart = K.node(root, [3.1, 0, -1.1]); cart.rotation.z = 1.5;
+      K.box(cart, wood, [1.2, 0.7, 0.9], [0, 0.5, 0]);
+      for (const cz of [-0.5, 0.5]) K.tor(cart, woodL, { d:0.7, thick:0.08 }, [0.5, 0.9, cz], { rot:[0,0,Math.PI/2] });
+      K.cyl(root, wood, { h:1.8, d:0.1, t:6 }, [-3.2, 0.8, -3.6], { rot:[0.2,0,0.25] });
+      K.box(root, woodL, [0.7, 0.4, 0.06], [-3.5, 1.5, -3.6], { rot:[0,0,0.25] });
       return root;
     },
   });
@@ -1814,25 +1861,47 @@
     id:'city', name:'Ville moderne en ruine', cat:'Sites',
     desc:"[site city · M9] PAS médiéval : ruines d'une ville MODERNE — gratte-ciels de béton/verre éventrés dressés « comme une cage thoracique », ferraille (rebar) et gravats. (cf. « a buzzing city » d'ADR : hôpital, métro, tours effondrées.)",
     build(K) {
+      // GROS site imposant : skyline de gratte-ciels brisés (rangées de fenêtres, certaines luisent),
+      // GRANDE HALLE à colonnade + rosace, boulevards, pont effondré, statue renversée, IMPACT ALIEN
+      // (cratère scorché + alliage luisant). (Synchronisé avec sites.ts case "city".)
       const root = K.node();
-      // Tours de béton brisées, hauteurs variées (silhouette « cage thoracique »).
-      const tower = (x, z, w, h, tilt) => {
-        const t = K.node(root, [x, 0, z]); t.rotation.z = tilt || 0;
-        K.box(t, P.concrete, [w, h, w], [0, h/2, 0]);
-        for (let i = 1; i < Math.floor(h / 0.8); i++) K.box(t, P.concreteDk, [w+0.05, 0.06, w+0.05], [0, i*0.8, 0]); // dalles d'étage
-        K.box(t, P.concreteDk, [w*0.55, 0.5, w*0.55], [w*0.18, h+0.18, -w*0.1]); // sommet effondré irrégulier
-        for (let i = 0; i < 3; i++) K.box(t, P.glass, [w*0.5, 0.4, 0.04], [0, 0.9 + i*0.95, w/2 + 0.01], { emi:0.25, unlit:true }); // fenêtres
-        for (let i = 0; i < 2; i++) K.cyl(t, P.rebar, { h:0.5, d:0.03 }, [(-0.2 + i*0.4)*w, h + 0.35, 0], { rot:[0.2, i, 0.15] }); // ferraille au sommet
+      const stone = P.ruinStone, stoneDk = P.stoneDark, steel = P.metalDark, dark = P.dark,
+        scorch = P.scorch, aHull = P.alienHull, aAlloy = P.alienAlloy, aGlow = P.alienGlow;
+      const tower = (x, z, h, w, ry, glow) => {
+        const n = K.node(root, [x, 0, z]); n.rotation.y = ry;
+        K.box(n, stone, [w, h, w], [0, h/2, 0]);
+        const floors = Math.max(2, Math.round(h / 1.2));
+        for (let f = 0; f < floors; f++) {
+          const y = 0.8 + f*(h-1.0)/floors, lit = glow && f%3===0;
+          for (const [ox,oz,rw,rd] of [[0,w/2+0.02,w*0.72,0.06],[0,-w/2-0.02,w*0.72,0.06],[w/2+0.02,0,0.06,w*0.72],[-w/2-0.02,0,0.06,w*0.72]])
+            K.box(n, lit?aGlow:dark, [rw,0.42,rd], [ox,y,oz], lit?{ emi:0.95, unlit:true }:undefined);
+        }
+        K.box(n, stoneDk, [w*0.72, 0.5, w*0.72], [w*0.14, h+0.15, -w*0.14], { rot:[0.1,0.3,0.1] });
+        K.cyl(n, steel, { h:1.1, d:0.08, t:5 }, [w*0.28, h+0.5, w*0.18], { rot:[0.25,0,0.12] });
       };
-      tower(-1.6, -0.5, 1.2, 5.2, 0.04);
-      tower(1.4, 0.7, 1.0, 4.0, -0.06);
-      tower(0.3, 1.9, 0.85, 2.8, 0.03);
-      tower(2.7, -1.5, 0.8, 2.0, 0.1);
-      // dalle de béton effondrée + ferraille + gravats au sol
-      K.box(root, P.concreteDk, [3.0, 0.3, 2.0], [-0.3, 0.15, -2.4], { rot:[0, 0.3, 0.05] });
-      for (let i = 0; i < 4; i++) K.cyl(root, P.rebar, { h:1.2, d:0.04 }, [-0.9 + i*0.4, 0.4, -2.4], { rot:[0.4, i, 0.25] });
-      K.ico(root, P.concrete, { d:0.8 }, [1.9, 0.3, 2.0]);
-      K.ico(root, P.concreteDk, { d:0.6 }, [-2.2, 0.25, 1.0]);
+      tower(-4.5,-3.6, 6.0, 1.8, 0.2, false); tower(3.6,-4.0, 9.5, 1.6, -0.3, true);
+      tower(4.6,2.6, 5.0, 2.0, 0.5, false); tower(-3.6,3.6, 7.6, 1.5, 1.1, true);
+      tower(0.6,0.2, 11.0, 1.6, 0.7, true); tower(-6.1,0.6, 4.2, 1.4, 0.3, false); tower(1.6,4.6, 6.4, 1.3, -0.6, false);
+      const hall = K.node(root, [-1.0, 0, -5.2]); hall.rotation.y = 0.1;
+      K.box(hall, stone, [5.2, 0.4, 0.4], [0, 0.2, 1.2]);
+      for (let i=0;i<5;i++){ const cx2=-2+i*1.0, ch=i%2?2.4:3.0; K.cyl(hall, stone, { h:ch, d:0.5, t:8 }, [cx2, ch/2+0.2, 1.2]); if(i%2) K.cyl(hall, stoneDk, { h:0.4, d:0.7, t:8 }, [cx2, ch+0.4, 1.2]); }
+      K.box(hall, stone, [4.6, 1.2, 0.6], [0, 3.4, 1.2], { rot:[0,0,0.04] });
+      K.cyl(hall, dark, { h:0.3, d:1.5, t:14 }, [0, 3.7, 1.0], { rot:[Math.PI/2,0,0] });
+      for (const [x,z,len,ry] of [[0,2.6,11,0.0],[-2.2,-1,9,Math.PI/2],[3.2,1,8,0.4]]) K.box(root, stone, [0.4, 0.7, len], [x, 0.35, z], { rot:[0,ry,0] });
+      for (const sx of [-1,1]) K.box(root, stoneDk, [0.7, 3.0, 0.7], [sx*1.5+5.6, 1.5, -1.0]);
+      K.box(root, stone, [4.0, 0.5, 1.0], [5.6, 3.0, -1.0], { rot:[0,0,0.05] });
+      K.box(root, stone, [1.3, 0.5, 1.0], [8.0, 2.6, -1.0], { rot:[0,0,-0.45] });
+      K.box(root, stoneDk, [1.0,1.0,1.0], [-2.2,0.5,1.6]);
+      K.cyl(root, stone, { h:1.6, dt:0.3, db:0.5, t:8 }, [-2.8,0.4,2.4], { rot:[1.4,0.3,0] });
+      K.sph(root, stone, { d:0.5, seg:6 }, [-3.4,0.3,2.8]);
+      K.cyl(root, dark, { h:0.22, dt:2.0, db:3.6, t:16 }, [2.6,0.11,3.6]);
+      K.cyl(root, scorch, { h:0.03, d:5.2, t:16 }, [2.6,0.24,3.6], { unlit:true });
+      K.ico(root, aAlloy, { d:1.8 }, [2.6,0.65,3.6]);
+      K.ico(root, aGlow, { d:0.75 }, [2.6,1.05,3.6], { emi:1.6, unlit:true });
+      K.box(root, aHull, [1.3,0.45,0.85], [3.9,0.32,4.3], { rot:[0.3,0.5,0.1] });
+      K.cyl(root, aGlow, { h:0.06, d:0.5, t:10 }, [3.8,0.55,4.1], { emi:1.4, unlit:true });
+      for (let i=0;i<10;i++){ const a=i*0.63; K.ico(root, i%2?stone:stoneDk, { d:0.5+0.3*(i%3) }, [Math.cos(a)*6.6, 0.25, Math.sin(a)*6.6]); }
+      K.cyl(root, steel, { h:2.2, d:0.08, t:5 }, [-1.2,0.6,4.2], { rot:[0.4,0.3,0.5] });
       return root;
     },
   });
@@ -2066,23 +2135,57 @@
     id:'executioner', name:"L'Executioner (cuirassé alien)", cat:'Sites', grid:false,
     desc:"[site executioner · M9 / M11] Vaisseau de guerre ALIEN colossal encastré dans le sol — « une cité scellée et silencieuse ». Plaques fondues/corrodées, angles durs, lueurs d'alerte, brèche béante. Exploré comme un donjon (ingénierie, armes, médical, passerelle).",
     build(K) {
+      // COLOSSAL dreadnought ALIEN ravagé, nez planté/poupe relevée. Coque facettée teal + accents
+      // luisants, brèches, batteries, tour de commandement, drive à 3 nacelles, ailerons (dont un
+      // arraché), la SENTINELLE « l'immortel » + butin. (Synchronisé avec sites.ts case "executioner".)
       const root = K.node();
-      const hull = K.node(root, [0, 0.6, 0]); hull.rotation.z = -0.12; hull.rotation.y = 0.12;
-      K.box(hull, P.armor, [3.0, 2.0, 7.0], [0, 0.4, 0]);
-      K.box(hull, P.armorDk, [3.4, 0.8, 7.2], [0, 1.5, 0]); // pont
-      K.box(hull, P.armorDk, [3.2, 1.3, 1.2], [0, 0.6, 2.7], { rot:[0.3, 0, 0] }); // étrave inclinée
-      K.box(hull, P.armor, [2.2, 1.7, 1.4], [0, 0.4, 3.9]); // proue massive
-      K.box(hull, P.armorDk, [1.7, 1.5, 2.2], [0, 2.3, -1.2]); // passerelle
-      K.box(hull, P.alienAlloy, [1.2, 0.5, 1.0], [0, 3.1, -1.2]); // tourelle
-      K.cyl(hull, P.armor, { h:2.0, d:0.42, t:8 }, [0.6, 3.4, -1.6], { rot:[0.1,0,0.05] }); // canon/mât
-      // lueurs d'alerte (bandes cyan) + brèche + scorch + corrosion
-      for (let i = 0; i < 4; i++) K.box(hull, P.alienGlow, [0.12, 0.18, 0.5], [1.51, 0.7, -1.8 + i*1.2], { emi:1.3, unlit:true });
-      K.box(hull, P.dark, [1.1, 1.4, 1.6], [1.2, 0.5, 0.4], { unlit:true }); // brèche béante
-      K.box(hull, P.scorch, [1.4, 0.9, 0.1], [0, 0.9, 3.61], { unlit:true }); // plaque fondue (proue)
-      K.ico(hull, P.rust, { d:0.9 }, [-1.5, 0.5, 1.2]);
-      K.ico(hull, P.rust, { d:0.7 }, [1.35, 1.0, -2.4]);
-      // terre soulevée autour (encastrement)
-      K.cyl(root, [0.14, 0.13, 0.13], { h:0.4, d:8.5, t:20 }, [0, 0.2, 0]);
+      const hull = [0.20,0.33,0.38], hullDk = [0.13,0.21,0.25], alloy = P.alienAlloy,
+        cyan = [0.45,0.95,0.9], cyanHot = [0.72,1.0,0.97], violet = [0.62,0.42,0.92], magenta = [0.95,0.46,0.88],
+        scorch = P.scorch, ash = [0.17,0.16,0.15], dark = P.dark, HL = 26;
+      K.cyl(root, ash, { h:0.4, dt:9, db:14, t:20 }, [0, 0.2, 11]);
+      K.cyl(root, scorch, { h:0.03, d:10, t:16 }, [0, 0.42, 4], { scale:[1.4,1,4.0], unlit:true });
+      for (const [x,z,s] of [[6,18,1.2],[-7,15,1.0],[9,9,0.9],[-5,22,0.8]]) K.ico(root, hull, { d:s }, [x, s*0.4, z], { rot:[0.3,x,0.1] });
+      const wg = K.node(root, [10, 0, 16]); wg.rotation.set(0.2, 0.6, 0.5);
+      K.box(wg, hull, [6, 0.5, 3], [0,0,0]); K.box(wg, cyan, [5,0.06,0.2], [0,0.3,0], { emi:1.2, unlit:true });
+      const ship = K.node(root, [0, 4.4, -1]); ship.rotation.set(-0.16, 0.05, 0.06);
+      K.cyl(ship, hull, { h:HL, dt:6, db:10, t:6 }, [0,0,0], { rot:[Math.PI/2,0,0] });
+      K.cone(ship, hull, { h:7, d:6, t:6 }, [0,0,HL/2+2], { rot:[Math.PI/2,0,0] });
+      K.box(ship, hullDk, [7, 0.6, HL*0.8], [0, 3.2, -1]);
+      K.box(ship, hullDk, [0.5, 1.4, HL*0.9], [0, 2.4, 0]);
+      K.box(ship, cyan, [0.18,0.18,HL*0.85], [0, 3.6, -1], { emi:1.5, unlit:true });
+      for (const sx of [1,-1]) K.box(ship, cyan, [0.14,0.14,HL*0.8], [sx*4.4, 0.2, -1], { emi:1.3, unlit:true });
+      for (let i=0;i<6;i++) K.box(ship, hullDk, [10.2,0.1,0.4], [0, 0, -HL/2+2+i*4]);
+      const breach = (z, side, col) => {
+        K.box(ship, dark, [3.5,3.0,3.0], [side*2.2, 0.5, z]);
+        K.ico(ship, col, { d:1.2 }, [side*2.0, 0.5, z], { emi:1.4, unlit:true });
+        for (let i=0;i<3;i++) K.cyl(ship, alloy, { h:3.2, d:0.18, t:5 }, [side*3.0, -1+i*1.0, z], { rot:[0,0,0.2] });
+      };
+      breach(2, 1, magenta); breach(-6, -1, cyan);
+      const turret = (z, droop) => {
+        const t = K.node(ship, [0, 3.5, z]); t.rotation.x = droop;
+        K.cyl(t, alloy, { h:0.8, dt:1.6, db:2.0, t:8 }, [0,0,0]);
+        K.ico(t, hullDk, { d:2.0 }, [0,0.7,0], { scale:[1,0.7,1] });
+        for (const bx of [0.5,-0.5]) { K.cyl(t, alloy, { h:3.0, d:0.3, t:6 }, [bx,0.9,1.2], { rot:[1.2,0,0] }); K.cyl(t, cyanHot, { h:0.2, d:0.34, t:6 }, [bx,0.9,2.6], { rot:[1.2,0,0], emi:1.6, unlit:true }); }
+      };
+      turret(6, 0.1); turret(0, -0.5); turret(-7, 0.3);
+      const tw = K.node(ship, [0, 3.5, -HL/2+3]);
+      K.box(tw, hull, [5,4,5], [0,2,0]); K.box(tw, hullDk, [4,2.5,4], [0,5,-0.3]);
+      for (let i=0;i<3;i++) K.box(tw, cyan, [4.2,0.4,0.1], [0, 1.2+i*1.1, 2.5], { emi:1.4, unlit:true });
+      K.box(tw, cyan, [0.1,0.4,4.2], [2.5,5,-0.3], { emi:1.2, unlit:true });
+      K.cyl(tw, alloy, { h:5, d:0.2, t:5 }, [1.5,8,0], { rot:[0.1,0,0.1] }); K.cyl(tw, alloy, { h:4, d:0.16, t:5 }, [-1.2,7.5,-0.5], { rot:[0.2,0,-0.15] });
+      K.ico(tw, alloy, { d:1.2 }, [0,6.8,0]); K.ico(tw, cyan, { d:0.5 }, [0,7.2,0], { emi:1.5, unlit:true });
+      for (const sx of [-1,0,1]) { const n = K.node(ship, [sx*3.0, -0.5, -HL/2-1]); K.cyl(n, alloy, { h:4, dt:2.4, db:2.8, t:8 }, [0,0,0], { rot:[Math.PI/2,0,0] }); K.cyl(n, violet, { h:0.4, d:2.2, t:12 }, [0,0,-1.8], { rot:[Math.PI/2,0,0], emi:1.5, unlit:true }); K.cyl(n, cyanHot, { h:0.2, d:1.0, t:10 }, [0,0,-2.0], { rot:[Math.PI/2,0,0], emi:2.0, unlit:true }); }
+      K.tor(ship, alloy, { d:9, thick:0.5, t:14 }, [0,0,-HL/2-0.5], { rot:[Math.PI/2,0,0] });
+      for (let i=0;i<5;i++) K.ico(ship, cyan, { d:0.4 }, [0, 4.0, -HL/2+5+i*3], { emi:1.4, unlit:true });
+      for (const sx of [1,-1]) K.box(ship, hull, [5,0.4,6], [sx*5.5, -0.5, -3], { rot:[0,0,sx*-0.3] });
+      const sent = K.node(root, [6, 0, -2]); sent.rotation.y = -0.4;
+      K.cyl(sent, hullDk, { h:1.2, d:1.4, t:6 }, [0,0.6,0]);
+      K.ico(sent, hull, { d:2.2 }, [0,2.4,0], { scale:[1,1.2,0.9] });
+      K.ico(sent, magenta, { d:0.7 }, [0,2.5,0.6], { emi:1.7, unlit:true });
+      K.ico(sent, hullDk, { d:1.0 }, [0,3.8,0]); K.ico(sent, cyan, { d:0.3 }, [0,3.9,0.4], { emi:1.5, unlit:true });
+      for (const sx of [1,-1]) { K.cyl(sent, alloy, { h:2.6, d:0.4, t:6 }, [sx*1.3,2.2,0], { rot:[0,0,sx*0.3] }); K.cyl(sent, alloy, { h:2.4, d:0.5, t:6 }, [sx*0.6,0.0,0], { rot:[0,0,sx*0.08] }); }
+      K.ico(root, alloy, { d:2.0 }, [-4,0.6,1]); K.ico(root, cyan, { d:0.8 }, [-4,1.2,1], { emi:1.6, unlit:true });
+      for (let i=0;i<4;i++) K.box(root, cyanHot, [0.3,0.3,0.6], [-5+i*0.4, 0.4, 2], { emi:1.7, unlit:true });
       return root;
     },
   });
@@ -2195,27 +2298,70 @@
     id:'battlefield', name:'Champ de bataille', cat:'Sites', grid:false,
     desc:"[site battlefield · M9] Reste d'un affrontement TECHNOLOGIQUE (cf. ADR : « rifles, lasers, grenades ») : terre brûlée, cratères, fusils à énergie tombés (cellule luisante), grenades, caisse blindée éventrée, casque et ossements. (Plus de lances/boucliers médiévaux.)",
     build(K) {
+      // Reste d'un affrontement TECHNOLOGIQUE/ALIEN : terre brûlée + cratères fumants ; ÉPAVE DE CHAR
+      // (pièce maîtresse) ; tranchée de sacs de sable + pieux ; soldats tombés ; fusils à énergie +
+      // grenades + douilles ; 2 étendards déchirés ; fragment d'épave alienne ; butin (caisse + cellules).
       const root = K.node();
-      K.cyl(root, [0.12, 0.11, 0.12], { h:0.04, d:5.0, t:18 }, [0, 0.02, 0]); // terre brûlée
-      K.cyl(root, P.scorch, { h:0.05, d:1.2, t:12 }, [-1.2, 0.03, 0.6], { unlit:true }); // cratères scorchés
-      K.cyl(root, P.scorch, { h:0.05, d:0.9, t:12 }, [1.3, 0.03, -0.8], { unlit:true });
-      // fusils à énergie tombés : canon + crosse + cellule/émetteur lumineux
-      const rifle = (x, z, ry) => {
-        const r = K.node(root, [x, 0.09, z]); r.rotation.y = ry; r.rotation.z = Math.PI/2 - 0.08;
-        K.cyl(r, P.metalDark, { h:0.9, d:0.07 }, [0, 0, 0]);
-        K.box(r, P.armorDk, [0.1, 0.28, 0.13], [0, -0.5, 0]); // crosse
-        K.cyl(r, P.alienGlow, { h:0.12, d:0.09 }, [0, 0.52, 0], { emi:1.4, unlit:true }); // émetteur laser
+      const scorch = P.scorch, ash = [0.16,0.15,0.14], dark = P.dark, bone = P.bone,
+        metal = P.metal, metalDk = P.metalDark, armor = P.armor, armorDk = P.armorDk, rust = P.rust,
+        wood = P.woodDark, banner = P.banner, aHull = P.alienHull, aAlloy = P.alienAlloy, aGlow = P.alienGlow,
+        sand = [0.46,0.43,0.34], sandDk = [0.4,0.38,0.3], blood = [0.28,0.13,0.12];
+      // SOL
+      K.cyl(root, ash, { h:0.06, dt:10.6, db:11.4, t:24 }, [0, 0.03, 0]);
+      for (const [x,z,d] of [[-1.5,1,4.2],[2.6,-2,3.0],[-3,-2.5,2.4],[1,3,2.2]]) K.cyl(root, scorch, { h:0.02, d, t:12 }, [x, 0.07, z], { unlit:true });
+      for (const [x,z,d] of [[0.3,-0.6,0.9],[-1.6,0.4,0.7]]) K.cyl(root, blood, { h:0.015, d, t:8 }, [x, 0.075, z], { unlit:true });
+      // CRATÈRES (certains fument)
+      const crater = (x,z,d,ember) => {
+        K.cyl(root, dark, { h:0.14, dt:d*0.55, db:d, t:14 }, [x, 0.05, z]);
+        K.tor(root, [0.2,0.17,0.13], { d, thick:0.22, t:14 }, [x, 0.1, z], { rot:[Math.PI/2,0,0] });
+        if (ember) { K.ico(root, P.ember, { d:0.34 }, [x, 0.1, z], { emi:1.5, unlit:true }); K.ico(root, P.emberHot, { d:0.18 }, [x+0.12, 0.14, z-0.05], { emi:1.8, unlit:true }); }
       };
-      rifle(-1.0, 0.2, 0.4); rifle(0.9, 0.8, 1.2); rifle(0.3, -1.1, -0.5);
-      // grenades éparses (corps + cuiller)
-      for (const [x, z] of [[-0.4,-0.5],[0.6,0.1],[-1.4,1.0]]) { K.sph(root, P.metalDark, { d:0.18, seg:6 }, [x, 0.1, z]); K.cyl(root, P.metalDark, { h:0.07, d:0.05 }, [x, 0.2, z]); }
-      // caisse blindée éventrée + plaque fondue
-      K.box(root, P.armor, [0.9, 0.5, 0.6], [1.6, 0.25, 1.2], { rot:[0, 0.4, 0.12] });
-      K.box(root, P.scorch, [0.4, 0.32, 0.62], [1.72, 0.3, 1.2], { rot:[0, 0.4, 0.12], unlit:true });
-      // casque + ossements
-      K.sph(root, P.metalDark, { d:0.36, seg:6 }, [-0.8, 0.1, 1.0], { scale:[1, 0.6, 1] });
-      K.ico(root, P.bone, { d:0.3 }, [0.3, 0.12, 0.4]);
-      K.box(root, P.bone, [0.15, 0.12, 0.22], [0.3, 0.1, 0.56]);
+      crater(-2,1.5,2.2,true); crater(2.7,-1.4,1.7,false); crater(0.5,-3,1.5,true); crater(3.4,2,1.3,false);
+      // ÉPAVE DE CHAR
+      const tank = K.node(root, [2.3, 0, 1.9]); tank.rotation.set(0.08, -0.6, 0.05);
+      K.box(tank, armor, [2.6,0.9,1.7], [0,0.55,0]);
+      K.box(tank, armorDk, [2.85,0.34,1.85], [0,0.95,0]);
+      K.box(tank, armorDk, [1.4,0.5,1.5], [1.5,0.5,0], { rot:[0,0,0.2] });
+      for (const sz of [-1,1]) { K.box(tank, metalDk, [2.9,0.46,0.42], [0,0.26,sz*0.78]); for (let i=0;i<5;i++) K.cyl(tank, metal, { h:0.44, d:0.4, t:8 }, [-1.1+i*0.55,0.26,sz*0.78], { rot:[Math.PI/2,0,0] }); }
+      const tur = K.node(tank, [-0.35,1.18,0.1]); tur.rotation.set(0.05,0.45,-0.22);
+      K.box(tur, armor, [1.15,0.6,1.15], [0,0.3,0]);
+      K.cyl(tur, metalDk, { h:2.3, d:0.22, t:8 }, [1.35,0.32,0], { rot:[0,0,Math.PI/2-0.32] });
+      K.box(tank, scorch, [0.85,0.7,0.55], [0.7,0.6,0.55], { unlit:true });
+      K.ico(tank, P.ember, { d:0.42 }, [0.7,0.72,0.55], { emi:1.4, unlit:true });
+      K.ico(tank, rust, { d:0.7 }, [-1.6,0.3,0.95]);
+      K.box(tank, armorDk, [0.7,0.06,0.5], [-1.7,0.18,-0.4], { rot:[0.1,0.5,0] });
+      // SACS DE SABLE + PIEUX
+      const sandbags = (x,z,ry,n) => { const b=K.node(root,[x,0,z]); b.rotation.y=ry; for(let i=0;i<n;i++)for(let r=0;r<2;r++) K.sph(b, (i+r)%2?sand:sandDk, { d:0.5, seg:6 }, [-n*0.22+i*0.44+r*0.22, 0.18+r*0.3, 0], { scale:[1.15,0.7,0.95] }); };
+      sandbags(-3.2,2.4,0.3,5); sandbags(-4.1,-0.6,1.45,4);
+      for (const [x,z,ry] of [[-2.4,3.4,0.3],[-1.5,3.6,-0.4],[-3.3,3.5,0.1]]) K.cyl(root, wood, { h:1.5, d:0.1, t:5 }, [x,0.45,z], { rot:[0.5,ry,0] });
+      // SOLDATS TOMBÉS + os
+      const corpse = (x,z,ry) => { const c=K.node(root,[x,0,z]); c.rotation.y=ry;
+        K.sph(c, metalDk, { d:0.34, seg:6 }, [0,0.12,0], { scale:[1,0.62,1] });
+        K.box(c, bone, [0.4,0.06,0.26], [0.12,0.07,0.36]);
+        for(let i=0;i<3;i++) K.cyl(c, bone, { h:0.32, d:0.05, t:4 }, [0.12,0.09,0.24+i*0.09], { rot:[0,0,Math.PI/2] });
+        K.box(c, armorDk, [0.3,0.05,0.3], [-0.12,0.05,0.5], { rot:[0.1,0.3,0] }); };
+      corpse(-0.9,1.0,0.6); corpse(0.5,0.2,-0.8); corpse(-1.9,-1.2,1.2);
+      for (const [x,z,ry] of [[0.2,1.5,0.4],[-0.5,-0.7,1.2],[1.4,0.9,-0.5]]) K.cyl(root, bone, { h:0.5, d:0.05, t:4 }, [x,0.06,z], { rot:[0,ry,Math.PI/2] });
+      // FUSILS À ÉNERGIE + grenades + douilles
+      const rifle = (x,z,ry) => { const r=K.node(root,[x,0.08,z]); r.rotation.set(0,ry,Math.PI/2-0.06);
+        K.cyl(r, metalDk, { h:0.95, d:0.07, t:5 }, [0,0,0]); K.box(r, armorDk, [0.1,0.3,0.13], [0,-0.5,0]);
+        K.cyl(r, aGlow, { h:0.12, d:0.1, t:6 }, [0,0.52,0], { emi:1.6, unlit:true }); };
+      rifle(-0.4,0.0,0.4); rifle(1.0,1.3,-0.7); rifle(0.0,-1.6,1.0); rifle(-1.4,0.5,0.2);
+      for (const [x,z] of [[-0.2,-0.3],[0.7,0.5],[-1.0,1.3]]) { K.sph(root, metalDk, { d:0.18, seg:6 }, [x,0.1,z]); K.cyl(root, metal, { h:0.07, d:0.05, t:5 }, [x,0.2,z]); }
+      for (let i=0;i<7;i++){ const a=i*0.9; K.cyl(root, [0.72,0.6,0.26], { h:0.1, d:0.04, t:5 }, [Math.cos(a)*1.3,0.05,Math.sin(a)*1.3-0.4], { rot:[Math.PI/2,0,a] }); }
+      // 2 ÉTENDARDS DÉCHIRÉS
+      const standard = (x,z,col,lean) => { const s=K.node(root,[x,0,z]); s.rotation.z=lean;
+        K.cyl(s, wood, { h:2.8, d:0.08, t:6 }, [0,1.4,0]); K.box(s, col, [0.6,0.9,0.03], [0.34,2.05,0]); K.box(s, col, [0.22,0.4,0.03], [0.5,1.45,0]); };
+      standard(-3.6,1.2,banner,0.18); standard(3.1,-2.6,[0.3,0.34,0.5],-0.22);
+      // ÉPAVE ALIENNE
+      K.box(root, aHull, [1.5,0.5,0.95], [-2.9,0.32,-1.9], { rot:[0.28,0.5,0.1] });
+      K.cyl(root, aGlow, { h:0.06, d:0.55, t:10 }, [-2.7,0.58,-1.65], { emi:1.4, unlit:true });
+      K.box(root, aAlloy, [0.5,0.1,0.4], [-2.3,0.2,-2.5], { rot:[0,0.3,0.05] });
+      // BUTIN : caisse de munitions + cellules d'énergie + alliage
+      K.box(root, metalDk, [0.95,0.55,0.62], [0.9,0.28,2.5], { rot:[0,0.3,0] });
+      K.box(root, armorDk, [1.0,0.12,0.68], [0.98,0.62,2.6], { rot:[0,0.3,0.5] });
+      for (let i=0;i<3;i++) K.box(root, aGlow, [0.16,0.16,0.32], [0.62+i*0.24,0.5,2.4], { emi:1.6, unlit:true });
+      K.ico(root, aAlloy, { d:0.4 }, [1.3,0.3,2.8]);
       return root;
     },
   });
