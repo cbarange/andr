@@ -1,5 +1,10 @@
 # Audio — analyse du jeu original & plan d'implémentation
 
+> ⚠️ **MAJ juin 2026** : A1–A6 **faits**. Ajout d'un **son de PORTE SYNTHÉTISÉ** (WebAudio, data-URL WAV —
+> aucun asset, A Dark Room n'a pas de son de porte) joué quand un villageois entre/sort d'une hutte
+> (`audio.playDoor`, atténué par la distance, toggle SFX « Portes des huttes »). **Reste A7** (combat M8 /
+> sites M9 / fin M11 ; assets déjà dans `public/audio/`).
+
 > Document de travail. **Partie 1** : comment *A Dark Room* gère son audio (moteur Web Audio +
 > bibliothèque de sons, fondé sur le code source open-source `doublespeakgames/adarkroom`, MPL-2.0).
 > **Partie 2** : la question de **licence des fichiers** (à trancher avant de bundler quoi que ce soit).
@@ -310,13 +315,15 @@ Démarche de diagnostic (mesures réelles via `AnalyserNode` branché en sortie 
 > joueur** (curseur Musique + cases d'effets). Les futures pistes **mélodiques** (village A6, événements A5)
 > pourront, elles, mériter un gain propre — à traiter **par piste**, pas globalement sur le bus.
 
-## 3.7 Spatialisation 3D — l'atout qu'on a et pas l'original
+## 3.7 Spatialisation 3D — l'atout qu'on a et pas l'original ✅ FAIT (A4)
 
-Le jeu original est 2D : sa musique de feu est **non spatiale**. Nous, on peut poser un **crépitement de feu
-en son 3D positionné** au foyer (Babylon `AudioV2` spatial) : **plus fort quand on s'approche**, atténué en
-s'éloignant, **modulé par `state.fire`** (mort = silence, rugissant = nourri). Idem possible plus tard :
-fumée/tannerie qui « bruissent » de près, pièges, etc. **Diégétique** et cohérent avec « la souris EST la
-caméra ». À garder **léger** (un seul son en boucle, pas un par villageois).
+Le jeu original est 2D : sa musique de feu est **non spatiale**. Chez nous, l'ambiance de feu (`fire-*`) est
+**positionnée au foyer** (origine) et le **listener est attaché à la caméra** (`engine.listener.attach(camera)`) :
+le feu est **plus fort quand on s'approche**, **s'atténue avec la distance** (modèle `linear`, `minDistance` 6,
+`maxDistance` 42 ≈ bord du camp) et **se tait quand on sort** (relayé par `world` en exploration, A6). C'est ce
+qui corrige le « je l'entends partout, même au bord de la carte ». **Diégétique** et cohérent avec « la souris
+EST la caméra ». Léger : **un seul son spatial à la fois** (la piste de feu courante), pas un par entité.
+Idem possible plus tard : fumée/tannerie qui « bruissent » de près, pièges, etc.
 
 ## 3.8 Réseau / déterminisme — récapitulatif des garde-fous
 
@@ -339,37 +346,38 @@ touche `sim/`.**
 | **A1 — Socle** ✅ **FAIT** | `AudioManager` ([`src/render/audio.ts`](../src/render/audio.ts)) : init `AudioV2`, bus master/musique/SFX, cache + chargement paresseux, `playSfx`, déverrouillage au 1er clic ; `data/audio.ts` ; **réglages volume + mute dans Paramètres**, persistance `localStorage` ([`save.ts`](../src/save.ts)) | — | **M** |
 | **A2 — Musique du feu** 🔥 ✅ **FAIT** | 5 pistes ↔ `state.fire`, **fondu enchaîné** (manuel par frame), branché sur le diff dans `reflectState` ; **SFX `light-fire`/`stoke-fire`** sur l'action. *L'accroche émotionnelle.* | A1 | **S** |
 | **A3 — SFX d'action** ✅ **FAIT** | `gather-wood` (coupe camp + sauvage), `build` (construire/réparer/agrandir), `craft` (dépôt), `check-traps` (relève), **footsteps** (6 variantes au hasard, cadence régulière à la marche au sol). Câblés sur les fonctions d'interaction de `main.ts`. | A1 | **S/M** |
-| **A4 — Feu spatial 3D** | crépitement positionné au foyer, volume = f(`state.fire`, distance) | A1 | **S** |
-| **A5 — Musique d'événement (M5)** | overlay + **ducking** du fond, branché sur `state.activeEvent` ; clés ↔ nos ids d'événements | A1, A2 | **S** |
-| **A6 — Musique de village/exploration** | `lonely-hut → raucous-village` selon la population ; `world` hors retranchement (M7) | A2 | **S** |
+| **A4 — Feu spatial 3D** ✅ **FAIT** | pistes `fire-*` **positionnées au foyer** (origine), listener attaché à la caméra → le feu s'atténue avec la distance (modèle linéaire, plein < 6 u, muet > 42 u ≈ bord du camp). Corrige « je l'entends partout ». | A1 | **S** |
+| **A5 — Musique d'événement (M5)** ✅ **FAIT** | overlay sur bus `event` dédié + **ducking** du fond (25 %), branché sur `state.activeEvent` (watcher de `reflectState`) ; ids M5 → `event-*` ; coupé à la résolution | A1, A2 | **S** |
+| **A6 — Musique de village/exploration** ✅ **FAIT** | `pickMusic()` : **dehors → `world`** ; **au camp + population → village** (`lonely-hut`→`raucous` par paliers 1/4/10/20/40) ; **début (sans villageois) → ambiance de feu** (spatiale) | A2 | **S** |
 | **A7 — Plus tard (par jalon)** | `encounter-tier-*` (combat M8), `landmark-*` (sites M9), `ship`/`space`/`ending` (fin M11), armes/impacts | M8/M9/M11 | — |
 
 **Premier jet conseillé** : **A1 + A2** (socle + musique du feu). C'est le plus fort rapport
 émotion/effort, et ça valide toute la chaîne (déverrouillage, fondu, réglages, persistance).
 
-## 3.10 Vérification (Definition of Done du lot audio) — A1+A2 ✅
+## 3.10 Vérification (Definition of Done du lot audio) — A1–A6 ✅
 
 - ✅ `npm run test` (sim) **inchangé et vert** : **120 tests** (preuve que l'audio n'a pas fui dans le cerveau).
 - ✅ `npm run typecheck` vert.
-- ✅ **e2e** (`tests/e2e.spec.ts`, **11 tests verts**) : un test dédié *« la musique suit l'état du feu et le
-  menu Son règle les volumes »* expose `window.__game.getAudio()` et vérifie : au boot `music === "fire-dead"` ;
-  allumer le feu → `"fire-burning"` ; attiser → `"fire-roaring"` ; les curseurs + mute présents et
-  fonctionnels (le master suit le curseur, le bouton bascule le mute). *(Headless n'émet pas de son audible →
-  on teste l'**état** voulu, posé indépendamment du déverrouillage ; l'écoute reste manuelle, comme WebGPU.)*
-- ✅ **Runtime** (Playwright sur le serveur dev) : 0 erreur de boot/console ; déverrouillage du contexte au
-  clic ; bascule de piste live à l'allumage. Capture : [`audio-settings.png`](audio-settings.png).
-- **À faire à l'oreille** (vrai navigateur) : confirmer fondu enchaîné + SFX `light/stoke-fire`, et régler les
-  volumes dans Paramètres puis recharger → réglages **persistés**.
+- ✅ **e2e** (`tests/e2e.spec.ts`, **11 tests verts**) : le test *« la musique suit l'état du feu et le menu Son
+  règle les volumes »* expose `window.__game.getAudio()` et vérifie : boot `music === "fire-dead"` ; allumer →
+  `"fire-burning"` ; attiser → `"fire-roaring"` ; **A6** hors camp → `"world"`, retour → autre que `world` ;
+  **A5** `triggerEvent("beast_attack")` → `eventMusic === "event-beast-attack"`, puis résolution → `null` ;
+  curseurs + mute fonctionnels ; **cases « Effets actifs »** (7) — décocher *Pas* ajoute `footsteps` aux désactivés.
+- ✅ **Runtime** (Playwright sur le serveur dev) : 0 erreur ; bascule de piste live (boot `fire-dead` → dehors
+  `world` → retour `fire-dead` → événement `event-beast-attack`). Capture réglages : [`audio-settings.png`](audio-settings.png).
+- **À faire à l'oreille** (vrai navigateur) : fondu enchaîné, **atténuation spatiale du feu** quand on s'éloigne
+  du foyer (A4), musique de village quand la population grandit (A6), *ducking* pendant un événement (A5).
 
 ## 3.11 Carte des fichiers touchés (récap)
 
 ```
 public/audio/            ✅ FAIT — 86 .flac originaux récupérés (4,9 Mo), servis en statique
 data/audio.ts            ✅ FAIT — manifeste (clés logiques → fichiers), swappable
-src/render/audio.ts      ✅ FAIT — AudioManager (Babylon AudioV2 : bus, cache, fondus). Spatial = A4.
-src/main.ts              ✅ FAIT — init audio, déverrouillage au 1er clic, setFireMusic dans reflectState,
-                         SFX light/stoke (interactFire) + A3 (gather/build/deposit/check-traps + footsteps
-                         dans la boucle), audio.update() dans la boucle, hook getAudio
+src/render/audio.ts      ✅ FAIT — AudioManager (AudioV2) : bus master/musique/event/SFX, cache, fondus
+                         single-ramp, feu SPATIAL (A4), musique d'événement + ducking (A5), effets désactivables
+src/main.ts              ✅ FAIT — init + attachListener(camera) (A4), déverrouillage au 1er clic,
+                         pickMusic() (A6 : feu/village/exploration) dans reflectState, EVENT_MUSIC + watcher (A5),
+                         SFX light/stoke (interactFire) + A3 (gather/build/deposit/check-traps + footsteps), hook getAudio
 src/ui/hud.ts            ✅ FAIT — section « Son » : curseurs général/musique/SFX, mute, + cases « Effets actifs »
 src/save.ts              ✅ FAIT — saveAudioSettings/loadAudioSettings (volumes + mute + disabledSfx)
 tests/e2e.spec.ts        ✅ FAIT — test « la musique suit l'état du feu et le menu Son règle les volumes »
@@ -378,6 +386,35 @@ scripts/transcode-audio.mjs  OPTIONNEL (futur) — .flac → .ogg (ffmpeg) pour 
 ```
 > Le déverrouillage au geste est branché côté `main.ts` (listener `pointerdown` sur le canvas) plutôt que
 > dans `pointerLook.ts` — `AudioV2` gère déjà `resumeOnInteraction`, on double juste la sécurité.
+
+---
+
+## 3.12 Reste à faire (A7, par jalon) — fiche actionnable
+
+**A1–A6 sont faits.** Il ne reste que **A7**, **bloqué sur des systèmes de jeu non encore construits**. Les
+**86 `.flac` sont déjà dans `public/audio/`** ; le moteur ([`audio.ts`](../src/render/audio.ts)) sait déjà
+jouer musique de fond, musique d'événement (overlay+ducking) et SFX. **Chaque item ci-dessous = (1) ajouter
+les clés au manifeste [`data/audio.ts`](../data/audio.ts), (2) appeler `playSfx`/`playEventMusic` au bon
+endroit de présentation** (jamais dans `sim/`). ⚠️ Le manifeste ne déclare aujourd'hui que `music`
+(fire/village/exploration), `events` (M5) et `sfx` (A3) — **les clés combat/landmark/vaisseau restent à
+ajouter**.
+
+| Jalon | Assets dispo (`public/audio/`) | Où brancher (présentation) |
+|---|---|---|
+| **M8 — Combat** | `encounter-tier-1..3` (musique), `weapon-unarmed/melee/ranged-1..3`, `death`, `eat-meat`, `use-meds` | `playEventMusic(encounter-tier-N)` au **début d'un combat** (tier selon la distance) ; `playSfx` sur **attaque / soin / mort** ; `stopEventMusic()` en fin de combat |
+| **M9 — Sites/setpieces** | `landmark-cave/house/town/city/swamp/battlefield/borehole/friendly-outpost/destroyed-village/crashed-ship/iron-coal-sulphurmine` (13) | `playEventMusic(landmark-*)` à **l'entrée d'un site**, restauré à la sortie |
+| **M10 — Poste de traite** | `buy` | `playSfx("buy")` sur l'action **`BUY`** (achat) |
+| **M11 — Fin de partie** | `ship`, `space`, `ending` (musique) ; `reinforce-hull`, `upgrade-engine`, `lift-off`, `asteroid-hit-1..8`, `crash` (SFX) | `setBackgroundMusic(ship/space/ending)` selon la phase ; `playSfx` sur **réparation / décollage / impacts / crash** du mini-jeu d'ascension |
+
+**Polish optionnel (non bloquant, quand on veut)** :
+- **Transcodage `.flac → .ogg`/Opus** (`scripts/transcode-audio.mjs`, ffmpeg) pour alléger la musique
+  (40–200 ko/piste) — le manifeste a un champ `format` pour basculer sans toucher au moteur.
+- **Cadence des pas** indexée sur la vitesse du joueur (aujourd'hui intervalle fixe `STEP_SECONDS` 0,4 s).
+- **Volume du feu spatial modulé par `state.fire`** (aujourd'hui : présence/atténuation par distance ;
+  on pourrait baisser encore le gain quand le feu est faible).
+- **Ambiances spatiales secondaires** (fumée de tannerie/fumoir, pièges) sur le même modèle qu'A4.
+
+> En clair : **plus aucun travail audio « libre »** — A7 se câblera **naturellement** au fil de M8/M9/M11.
 
 ---
 

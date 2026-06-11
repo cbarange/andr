@@ -1,5 +1,10 @@
 # Optimisation du rendu — entités, LOD & distance de rendu
 
+> ⚠️ **MAJ juin 2026** : socle **FAIT** (streaming par chunks **clip CARRÉ**, LOD entités/props, instancing
+> arbres/décor/sites, autoperf, matrices figées, physique localisée). **Reste** : bâtiments/cabane en
+> **merge+instance** (A5, ⏸️ différé — analyse de risque dans [`roadmap-v2.md`](roadmap-v2.md) A5), allocations
+> par frame (#9 : `Vector3`/`JSON.stringify`/listes), **re-scatter** pour retirer les props sur les cellules de route.
+
 > **But.** Permettre une **distance de rendu très importante** (le joueur voit de loin qu'il y a
 > des zones à explorer) **sans** payer le plein coût partout : les chunks lointains deviennent
 > **minimalistes** et les « entités » (villageois, props, sites) sont **déchargées visuellement**
@@ -108,6 +113,7 @@ Lignes ajoutées par l'optimisation (à corréler avec `fps`/`frame`) :
 | **Props sauvages** (arbres, rochers, herbes…) | `render/scatter.ts` + `render/trees.ts` : `createInstance` (instances **régulières**) par prop, parentées au nœud du chunk. Arbres = registre coupable. | Beaucoup de **nœuds JS** (des centaines/chunk). Les instances régulières profitent du **frustum culling** mais chaque instance reste un objet à gérer. Pas de **LOD** (même densité de près comme de loin). |
 | **Villageois** | `render/villagers.ts` : jusqu'à **48 avatars**, chacun un `TransformNode` + **plusieurs sous‑meshes** (corps, tête, chapeau, nez…). `update()` **chaque frame pour tous** (steering, gestes, bob). | Cosmétique mais **toujours rendus et mis à jour**, quelle que soit la distance. ~48 × ~10 meshes = **centaines de meshes** + maths JS par frame, même quand le joueur est à 800 m du village. |
 | **Forêt du camp** | `render/forest.ts` : instances + colliders cylindre par arbre, particules de feuilles. | Local au camp, borné (~24 slots) — coût modéré, mais toujours actif. |
+| **Bâtiments du camp** | `render/buildings.ts` + `cabin.ts` : chaque bâtiment = **arbre de ~30 meshes** (Kit), **reconstruit** par exemplaire, **sans merge ni instance**. | **Plus gros gisement de draw calls** (un village = centaines). → seuls les bâtiments n'exploitent pas l'instancing déjà en place pour props/sites. **Plan : [`todo-batiments-merge-instance.md`](todo-batiments-merge-instance.md)** (drift #8, plus tard). |
 | **Sites** | (à venir, Phase 5) silhouettes. | À concevoir directement en LOD (silhouette de loin, détail de près). |
 | **Caméra / scène** | `scene.ts` : fog exp2, post‑process (FXAA, color grading, vignette, grain, bloom). Caméra `maxZ` par défaut. | Le **fog** sert déjà de borne de vue + masque la frontière de chunks. Le post‑process a un coût fixe (plein écran). |
 

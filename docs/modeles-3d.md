@@ -1,5 +1,11 @@
 # Modèles 3D — catalogue & guide d'utilisation
 
+> ⚠️ **MAJ juin 2026** : nouveaux modèles dans `render/sites.ts` — **cité** (tours brisées + lueur d'alliage),
+> **forage** (margelle + derrick + lueur au fond), **champ de bataille** (cratères/armes/chariot/étendard),
+> **village détruit / cache** (maisons effondrées + coffre qui luit), **avant-poste**. Ajout aussi des
+> **lanternes** (`campLights`, par palier de cabane) et des **ruines** (`campRuins`). Les bâtiments du village
+> sont placés par **`generateCampLayout()`** (placement mathématique, cf. [`refonte-monde-campement.md`](refonte-monde-campement.md) §C).
+
 Référence des modèles low-poly prototypés dans le **labo** ([`lab/model-lab.html`](../lab/model-lab.html))
 et **comment bien les utiliser** : placement, échelle, orientation, densité par biome, puis
 **portage** vers `src/render/*`.

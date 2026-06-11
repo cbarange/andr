@@ -25,13 +25,41 @@
 | 5 | ✅ **FAIT** — split-brain résolu déterministe (`resolveHostOnSync` : plus petit id parmi hôtes fixés) | 🟡 Lat | M | `net/host.ts`, `net/room.ts` |
 | 6 | ✅ **FAIT** — plus de rafale : échéances + `rng` synchronisés (état complet) | 🟡 Lat | S | idem #1 |
 | 7 | **`main.ts` god-object (1139 l.)** + schéma snapshot dupliqué 3× | 🟡 Dette | M | `main.ts` |
-| 8 | **Bâtiments/cabane n'utilisent PAS merge+instance** → explosion de draw calls | 🟡 Perf | M | `buildings.ts`, `lowpoly.ts` |
+| 8 | **Bâtiments/cabane n'utilisent PAS merge+instance** → explosion de draw calls · *plan détaillé : [`todo-batiments-merge-instance.md`](todo-batiments-merge-instance.md)* | 🟡 Perf | M | `buildings.ts`, `lowpoly.ts` |
 | 9 | **Allocations par frame** (player vel, listes terrain/obstacles, `reflectState`, `JSON.stringify`) | 🟡 Perf | S→M | `player.ts:179`, `main.ts:733-833,922-925` |
 
 **Bonne nouvelle** : le **cœur `sim/`+`data/` est SAIN** — zéro `Math.random`/Babylon/DOM, RNG à graine
 partout, reducer non-mutant, données pures. Le **socle perf** (streaming par chunks, LOD, instancing
 des arbres/décor/sites, autoperf) est **bien conçu**. Le drift est concentré dans le **réseau** (champs
 oubliés), l'**outillage dev** (exposé en prod) et la **dette de structure** (main.ts, bâtiments).
+
+> **Décisions (juin 2026, post-audit — cf. [`roadmap-v2.md`](roadmap-v2.md) Chantier A) :**
+> - **#4 outils dev en prod** → ⏸️ **DIFFÉRÉ** : on **garde** les cheats (phase dev, besoin de tester).
+>   À reprendre au build de prod / ouverture du multi public. *(Le risque réseau est déjà couvert par
+>   `isNetworkSafeAction` ; reste le cheat local + le poids de bundle.)*
+> - **#8 bâtiments merge+instance** → ⏸️ **DIFFÉRÉ** : analyse d'effets de bord faite. Un merge **naïf**
+>   casserait l'**animation de chantier** (montée pièce par pièce) + fumée + états de piège. **Chemin sûr**
+>   identifié : ne jamais merger le **chantier en cours** (toujours unique, non mergé), merger **seulement
+>   les bâtiments achevés** (coque statique, fumée exclue), pièges à part. L'animation n'est **pas** un
+>   bloqueur. Détail : `roadmap-v2.md` A5.
+> - **A3 robustesse P2P** → ✅ **FAIT** : heartbeat + **failover par époque** (Raft-lite) — `resolveSync`/
+>   `shouldTakeOver` purs & testés (`net/host.ts`), `room.checkLiveness` câblé dans la boucle ; STUN publics +
+>   slot TURN dans `rtcConfig`. Reste (infra) : un vrai serveur TURN pour les NAT symétriques.
+> - **A4 migration de save** → ✅ **FAIT** : `migrateSave` (pure, testée) — on ne jette plus les saves
+>   anciennes (back-fill additif au boot ; migration pour les changements cassants) ; `carried` non sérialisé.
+
+> **MAJ juin 2026 — depuis l'audit (beaucoup de contenu ajouté) :** Chantier C (refonte monde/campement)
+> **TERMINÉ**, M9 (grottes/mines explorables + avant-postes) **fait**, **routes** (R1 variété ~57 sites + R2
+> réseau fusionnant) **faites**. Conséquences sur la dette :
+> - **#7 `main.ts` god-object** : a encore GROSSI (interactions M9, confort, routes, ocean…) → le **refactor
+>   (A6)** devient plus pressant (extraire `net/sync`, `ui/dialogues`, `interactions`, reflectState).
+> - **Nouveaux modules sains** (purs/locaux, bien rangés) : `sim/dungeon.ts`, `sim/roads.ts`,
+>   `render/interior.ts` · `ocean.ts` · `campLights.ts` · `campRuins.ts` ; `data/world.ts` a grossi
+>   (borderField, generateCampLayout, sites étendus) — envisager de le **scinder** par domaine.
+> - **Nouvelle petite dette** : la teinte de ROUTE ne retire pas les props déjà dispersés (re-scatter des
+>   chunks concernés à prévoir) ; le `cache` réutilise une ruine de village (modèle dédié possible).
+> - **Toujours valable** : #4 (outils dev en prod, différé), #8 (bâtiments merge+instance, différé),
+>   #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
 
 ---
 

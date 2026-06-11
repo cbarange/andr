@@ -1,5 +1,13 @@
 # Génération procédurale du monde — spec (sous-lot technique de M7)
 
+> ⚠️ **MAJ juin 2026 (Chantier C — A & B) : implémenté, avec écarts ASSUMÉS vs cette spec.**
+> - **Biomes** : la « viscosité » par voisins est **remplacée** par du **bruit de valeur multi-octaves +
+>   domain warping** → grandes régions organiques (fini le moucheté). Le **marais est une vraie RÉGION** (≠ point).
+> - **Bordures** : monde **CARRÉ** (clip de chunks par axe), **2 fausses montagnes + 2 faux océans** tirés par
+>   graine, **au-delà** de la zone jouable, + **confinement** joueur (anti-fuite/anti-chute).
+> - Reste valable : sites en **anneaux**, déterminisme par graine, streaming/fog. Détail :
+>   [`refonte-monde-campement.md`](refonte-monde-campement.md) §A/B ; sites/routes : [`routes-sites.md`](routes-sites.md).
+
 > **Où ça vit.** C'est le **vrai sujet d'archi** signalé par la roadmap pour
 > [**M7 — Les terres sauvages**](roadmap.md#-m7--les-terres-sauvages--monde-continu--survie--l).
 > Ça s'appuie sur [**M6**](roadmap.md#-m6--le-rempart-la-porte--le-ravitaillement--sm) (porte, `inSafeZone`,

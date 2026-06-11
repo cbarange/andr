@@ -131,7 +131,7 @@ Chaque **point d'intérêt** de la carte ouvre une **rencontre scriptée à embr
 
 | Site (scene) | Apparition | Récompense / déblocage |
 |---|---|---|
-| `cave` (grotte), `house` (vieille maison) | proches | butin, étoffe, premières armes |
+| `cave` (grotte), `house` (vieille maison) | proches | butin, étoffe, premières armes ; **torche requise** ; **grotte nettoyée ⇒ devient un `outpost`** |
 | `town` (ville), `city` (cité) | r≥10 / r≥20 | gros butin, combats, médecine |
 | `ironmine`/`coalmine`/`sulphurmine` | r=5/10/20 | **nettoyer la mine ⇒ débloque le métier mineur** |
 | `borehole`, `battlefield`, `swamp` | lointains | ressources rares, énergie |
@@ -140,10 +140,12 @@ Chaque **point d'intérêt** de la carte ouvre une **rencontre scriptée à embr
 | `outpost` | dynamique | recharge eau + voyage rapide |
 | `cache` | prestige | bonus de partie précédente |
 
-## 1.9 Combat & armes (`World.Weapons`, tour par tour)
+## 1.9 Combat & armes (`World.Weapons`, **temps réel à recharges**)
 
-PV de base **10** (`BASE_HEALTH`), touche à 80 %. On attaque, l'ennemi riposte, on **mange
-de la viande** (+8 PV) ou de la **médecine** (+20) pour se soigner.
+ADR est un combat **temps réel** : chaque arme a une **recharge** propre (colonne ci-dessous) et on
+peut **en porter plusieurs**, frappant avec l'une pendant que les autres rechargent (**poings** par
+défaut). PV de base **10** (`BASE_HEALTH`) **relevés par l'armure** (cuir ~15, acier ~45) ; touche à
+80 %. On se soigne en **mangeant de la viande** (+8 PV, toutes les ~5 s) ou de la **médecine** (+20).
 
 | Arme | Type | Dégâts | Recharge | Munition |
 |---|---|---|---|---|
@@ -267,13 +269,18 @@ passe dans **un seul monde 3D continu** :
 | Sujet | Statut | Options |
 |---|---|---|
 | **La carte / le monde** | ✅ **ACTÉ** | monde **3D continu unifié**, retranchement central, exploration libre par la porte |
-| **Le combat** | ⏳ **À DÉCIDER (plus tard)** | (a) tour par tour (butin déterministe, P2P-safe) ; (b) action temps réel (butin validé par l'hôte). *Choix repoussé — n'impacte pas M1–M7.* |
+| **Le combat** | ✅ **ACTÉ** (juin 2026) | **Action temps réel, FIDÈLE à ADR** (armes à recharge, multi-armes, poings par défaut ; PV via armure ; soin en mangeant de la viande), **butin validé par l'hôte** (P2P-safe). **Documenté, implémenté en M8** (n'impacte pas M1–M7). Cf. M8 + [`mines-grottes-souterrains.md`](mines-grottes-souterrains.md) §8.Q6. |
 | **Multijoueur** | ✅ orientation | co-op dans le **monde partagé** (hôte-autoritaire) ; le solo reste jouable |
 | **Persistance** | ✅ amorcé | **sauvegarde auto** (façon ADR) : `GameState` autoritaire sérialisé dans `localStorage` toutes les ~15 s + à la fermeture, restauré au boot ([`src/save.ts`](../src/save.ts)). Reste pour plus tard : import/export, prestige (M11) |
 
 ---
 
 # Partie 3 — Roadmap par jalons
+
+> ⚠️ **REMPLACÉE par [`roadmap-v2.md`](roadmap-v2.md)** (post-audit, juin 2026). La section ci-dessous
+> reste pour l'**historique** (état des jalons M0–M5 + leur conception), mais la **vérité sur l'avancement**
+> (✅ fait / 🟡 rendu-mais-inerte / 🔴 mort / ❌ absent), le **séquencement corrigé** et le **chantier
+> d'assainissement** sont dans `roadmap-v2.md`. Les **Parties 1 et 2 de ce document restent de référence.**
 
 Chaque jalon est **jouable et testable** en fin de course (sim testée + e2e Playwright +
 capture). On ajoute **toujours dans cet ordre** : `data/` → `sim/ (+ tests)` → `render/`/`ui/`
@@ -468,23 +475,65 @@ la carte du monde, qui **attaquent** et **lâchent du butin**, tiérées par la 
 | 2 (moyen) | homme grelottant (20/5), mangeur d'hommes (25), charognard (30), lézard (20) | + médecine, cuir, étoffe |
 | 3 (loin) | terreur sauvage (45), soldat (50/8), sniper | + fer, **fusil, balles** |
 
-- **Sim** : résolution de combat **déterministe** (tour par tour, RNG à graine) : `ATTACK`,
-  `EAT_MEAT`/`USE_MEDS`, PV joueur, dégâts/recharge d'arme, tables d'ennemis (`encounters`).
-  Butin appliqué à l'état (autoritaire).
-- **3D/UI** : présentation 3D du combat (ennemi low-poly, barres de PV, timing des recharges) ;
-  déclenchement aléatoire en expédition (`FIGHT_CHANCE`).
-- **Acceptation** : combat jouable, butin reproductible à graine, soin fonctionnel ; tests de
-  résolution de combat.
+**Fidélité ADR (décision actée — juin 2026).** Le combat suit **fidèlement l'ADR original** :
+**temps réel**, **armes à recharge** (on **porte plusieurs armes** — épée d'acier, bolas, fusil… — et
+on **frappe avec l'une pendant que les autres rechargent** ; **poings** si pas d'arme) ; **les PV sont
+fixés par l'armure** (sans armure ~10 PV ; cuir ~15 ; acier ~45) ; **on se soigne en MANGEANT** de la
+viande (~**+8 PV** toutes les ~5 s, davantage avec un perk type Gastronome) ; chaque ennemi a **PV /
+dégâts / butin** propres. **Reste host-autoritaire** : la résolution temps réel tourne chez l'hôte
+(butin reproductible / validé), les clients adoptent le résultat — c'est l'option « action temps réel,
+butin validé par l'hôte » du §2.5, désormais **tranchée**. **Documenté ici ; implémentation au présent
+jalon M8** (pas avant).
 
-### 🏛️ M9 — Sites & setpieces (donjons narratifs) — **L**
-**Objectif** : grottes, maisons, villes, **mines** (nettoyer ⇒ débloque le métier), épaves.
+- **Sim** : résolution de combat **temps réel host-autoritaire** (RNG à graine pour le butin) :
+  `ATTACK` (par arme, avec **cooldown** propre), `EAT_MEAT`/`USE_MEDS` (soin), PV joueur **dérivés de
+  l'armure**, dégâts/recharge d'arme, tables d'ennemis (`encounters`). Butin appliqué à l'état (autoritaire).
+- **Créatures de cavernes (lien M9)** : les grottes/mines de M9 exposent les **emplacements** de
+  rencontre ; la **résolution** est ce jalon. Ennemis de cave **fidèles ADR** : **Lézard des cavernes**
+  (6 PV / 3 dég → écailles, dents), **Bête grognante** (5 PV / 1 dég → fourrure, viande, dents).
+- **3D/UI** : présentation 3D du combat (ennemi low-poly, barres de PV, **jauges de recharge par arme**) ;
+  déclenchement aléatoire en expédition (`FIGHT_CHANCE`) et dans les sites souterrains.
+- **Acceptation** : combat jouable temps réel, **multi-armes à cooldown**, butin reproductible à
+  graine, soin par la viande fonctionnel, PV pilotés par l'armure ; tests de résolution de combat.
+- 🔊 **Audio (A7)** : brancher `encounter-tier-1..3` (musique de combat) + `weapon-*`/`death`/`eat-meat`/
+  `use-meds` (SFX). Assets déjà dans `public/audio/` ; clés à ajouter à `data/audio.ts`. Cf. [`plan-audio.md`](plan-audio.md) §3.12.
 
-- **Sim** : machines à états de setpieces **pilotées par les données** (scènes/choix/combats/
-  récompenses), flags de déblocage (ex. mine nettoyée ⇒ métier mineur disponible au village).
-- **3D/UI** : sites **explorables en 3D** (entrer dans une grotte) + embranchements HTML ;
-  butin et déblocages renvoyés au village.
-- **Acceptation** : nettoyer une mine de fer débloque les mineurs ; au moins 2–3 setpieces
-  complets ; tests des machines à états.
+### 🏛️ M9 — Mines & grottes souterraines explorables (donjons physiques) — **L**
+**Objectif** : grottes, **mines** (sécuriser un filon ⇒ débloque le métier), maisons/villes/épaves —
+**explorables EN 3D PHYSIQUE, sans transition** (on marche dans la bouche, on est dedans). Conception
+détaillée + décisions actées : **[`mines-grottes-souterrains.md`](mines-grottes-souterrains.md)** ;
+**plan d'implémentation étape par étape** : **[`mines-grottes-implementation.md`](mines-grottes-implementation.md)**.
+
+**Décisions actées (juin 2026, au plus près d'ADR)** :
+- **Souterrain = volume mesh « cousu » au terrain**, **Option A** (massif creux **au niveau du sol** —
+  on ne peut pas trouer le heightmap). Embranchements **PHYSIQUES** (on marche les tunnels), **pas
+  d'« embranchements HTML »** : le « continuer » d'ADR devient **avancer dans le tunnel**, le choix
+  de chemin devient **choisir un tunnel**. Donjon **déterministe** dérivé de la graine.
+- **Torche fidèle ADR** : recette **1 bois + 1 étoffe**, **requise pour entrer** dans le noir
+  (pas d'entrée sans), **consommable** (il en faut plusieurs) ; **affichée sur le modèle 3D du joueur**
+  quand il en porte une (attachée main/dos), portant la lumière une fois allumée.
+- **Butin = objets 3D ramassables** ajoutés au **sac du joueur** ; **commun à toute la carte**
+  (**premier arrivé, premier servi** : si un joueur prend un objet, l'autre ne peut plus ; l'objet
+  disparaît du monde chez tous). Cohérence garantie par l'**hôte** (snapshot autoritaire).
+- **Mine : sécuriser UN filon SUFFIT** ⇒ débloque le métier de mineur au village.
+- **Grotte à usage UNIQUE** : une grotte **entièrement nettoyée se convertit en AVANT-POSTE**
+  (`outpost` : recharge eau + voyage rapide), fidèle à ADR.
+- **Combat sous terre** : **renvoyé à M8** (fidèle ADR, voir ci-dessus) — M9 expose les emplacements,
+  M8 résout. Pas de combat implémenté en M9.
+
+- **Sim** : champs `sites{ discovered, taken, secured, cleared }` (snapshot autoritaire) ; actions
+  **pures** `DISCOVER_SITE` / `TAKE_LOOT` (butin global premier-servi, clamp sac) / `CLEAR_HAZARD` /
+  `SECURE_MINE` (⇒ métier) / `CLEAR_CAVE` (⇒ avant-poste) ; disposition + tables de butin = **dérivées
+  de la graine** (identiques chez tous, rien à stocker).
+- **3D/UI** : palier **LOD `interior`** (mesh lourd + **colliders** sols/parois/plafond, bâti à
+  proximité, libéré au loin — comme la physique terrain localisée) ; obscurité par **occlusion +
+  torche** ; verbes de focus **fouiller/miner/forcer/ramasser** (réutilise `computeFocus`).
+- **Acceptation** : on entre/sort d'une grotte sans transition ; on **ramasse un objet 3D** (qui
+  disparaît chez l'autre pair) ; **sécuriser une mine de fer débloque les mineurs** ; une grotte
+  nettoyée **devient un avant-poste** ; tests sim (butin borné, premier-servi = no-op au 2ᵉ, mine⇒métier,
+  grotte⇒avant-poste, déterminisme).
+- 🔊 **Audio (A7)** : brancher `landmark-*` (13 ambiances de lieu) à l'entrée d'un site, restauré à la
+  sortie. Assets déjà là ; clés à ajouter à `data/audio.ts`. Cf. [`plan-audio.md`](plan-audio.md) §3.12.
 
 ### 🛒 M10 — Échange & poste de traite — **S/M**
 **Objectif** : économie ouverte. La fourrure comme monnaie, `TradeGoods`.
@@ -492,6 +541,7 @@ la carte du monde, qui **attaquent** et **lâchent du butin**, tiérées par la 
 - **Sim** : actions `BUY`/`SELL`, table `TradeGoods` en données, prérequis (poste de traite).
 - **3D/UI** : marchand nomade au poste de traite ; panneau de troc.
 - **Acceptation** : acheter une boussole/des écailles contre fourrure ; tests des coûts.
+- 🔊 **Audio (A7)** : brancher `buy` (SFX d'achat) sur `BUY`. Asset déjà là ; clé à ajouter à `data/audio.ts`.
 
 ### 🚀 M11 — Fin de partie : vaisseau & espace — **M/L**
 **Objectif** : l'arc final. Épave → alliage → réparation → décollage → esquive → fin.
@@ -503,6 +553,9 @@ la carte du monde, qui **attaquent** et **lâchent du butin**, tiérées par la 
   écran de fin.
 - **Acceptation** : boucle complète atteignable de bout en bout ; fin déclenchée ; persistance
   de la partie.
+- 🔊 **Audio (A7)** : brancher `ship`/`space`/`ending` (musique) + `reinforce-hull`/`upgrade-engine`/
+  `lift-off`/`asteroid-hit-1..8`/`crash` (SFX). Assets déjà là ; clés à ajouter à `data/audio.ts`.
+  Cf. [`plan-audio.md`](plan-audio.md) §3.12.
 
 ### ✨ M12 (transverse) — Équilibrage, audio, polish, perf
 Réglage des courbes (coûts/income), sons (interdits dans le POC, bienvenus ensuite), écran-titre,
@@ -510,11 +563,12 @@ ombres/LOD, *deep imports* Babylon pour alléger le bundle, TURN pour P2P robust
 
 > 🔊 **Audio** : plan complet + analyse du moteur d'A Dark Room dans **[`docs/plan-audio.md`](plan-audio.md)**
 > (audio = **présentation**, jamais dans `sim/` ; piloté par le **diff d'état** ; Babylon `AudioV2`).
-> **A1 (socle), A2 (musique de l'état du feu : 5 pistes ↔ `state.fire`, fondu enchaîné, SFX light/stoke) et
-> A3 (SFX d'action : gather/build/dépôt/check-traps + footsteps) sont ✅ FAITS** — 86 `.flac` originaux dans
-> `public/audio/`, +1 test e2e. Niveau musique compensé (`MUSIC_MAKEUP`, pistes ADR masterisées bas) et
-> fondus en un seul ramp. **Reste** : A4 feu spatial 3D, A5 musique d'événement (M5), A6 village/exploration,
-> A7 combat/sites/fin (par jalon).
+> **A1–A6 ✅ FAITS** — 86 `.flac` originaux dans `public/audio/`. A1 socle (bus, volumes, mute, **cases
+> « Effets actifs »**, persistance) · A2 musique de l'état du feu · A3 SFX d'action (gather/build/dépôt/relève
+> + footsteps) · **A4 feu spatialisé** (listener=caméra, le feu s'atténue au loin) · **A5 musique d'événement**
+> (overlay + ducking) · **A6 musique de village/exploration** (`pickMusic` : feu/village-par-population/`world`
+> dehors). +1 test e2e dédié (11 e2e verts). **Reste** : A7 (combat M8 / sites M9 / fin M11), assets déjà là ;
+> *optionnel* transcodage `.flac→.ogg`.
 
 ---
 

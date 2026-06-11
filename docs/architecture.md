@@ -29,40 +29,45 @@ aucune règle de jeu.** Toute mutation de l'état passe par une **action** appli
 ## 2. Carte des fichiers (à jour)
 
 ```
-data/world.ts              DONNÉES : config (réglages), craftables (bâtiments), jobs (métiers),
-                           trapDrops, positions d'arbres, terrainHeight(), libellés FR.
+data/world.ts              DONNÉES : config, craftables (bâtiments), craftableItems (objets, ex. torche),
+                           jobs (dont mineurs), trapDrops, biomes (dont MARAIS), sites[] (~57 POI), événements,
+                           terrainHeight() + BORDURES (borderField/configureBorders : 2 montagnes + 2 océans),
+                           generateCampLayout() (placement MATHÉMATIQUE des bâtiments), campLayout, libellés FR.
 src/
-  sim/                     LE CERVEAU (pur, sans Babylon/DOM)
-    state.ts               GameState (structure) + helpers (carried/freeWorkers/carryCapacity…)
-    actions.ts             actions nommées & sérialisables (+ PlayerAction = ce qui circule sur le réseau)
+  sim/                     LE CERVEAU (pur, sans Babylon/DOM) — testé `npm run test`
+    state.ts               GameState (structure) + helpers ; champs M9 (sites) & routes (roads)
+    actions.ts             actions sérialisables (+ PlayerAction réseau) — dont CRAFT_ITEM / DISCOVER_SITE /
+                           TAKE_LOOT / SECURE_MINE / CLEAR_CAVE / CLEAR_HAZARD
     reducer.ts             reduce(state, action) -> nouvel état (pur, déterministe). Cœur des règles.
-    rng.ts                 mulberry32 à graine (tout aléatoire de la logique passe par là)
-    sim.test.ts            35 tests (npm run test) — sans Babylon
+    rng.ts                 mulberry32 à graine (tout aléatoire de la LOGIQUE passe par là)
+    worldgen.ts            génération du monde PURE : biomes EN RÉGIONS (bruit + domain warping) + marais-région,
+                           sites en anneaux, scatter déterministe
+    dungeon.ts             donjons (grottes/mines) PURS : graphe + butin dérivés de la graine (M9)
+    roads.ts               drawRoad() : réseau de routes qui FUSIONNE (spirale → plus proche, L Manhattan) — fidèle ADR
+    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout…)
   render/                  LE CORPS (Babylon.js)
     scene.ts               moteur WebGPU→WebGL2, lumières, fog, post-process, PALETTE
     physics.ts             chargement du plugin Havok (WASM depuis public/)
-    world.ts               terrain (relief + collision) + feu de camp (intensité = niveau du feu)
-    forest.ts              arbres = ressource FINIE qui repousse (coupe en 3 coups -> chute -> repousse)
-    cabin.ts               cabane ruine→réparée : entrepôt (coffre + étagères révélées + grand tableau)
-    buildings.ts           village : bâtiments low-poly + fumée (production) + proie des pièges
-    villagers.ts           avatars de population (cosmétique)
-    stranger.ts            la constructrice (PNJ) qui arrive au feu
-    player.ts              capsule physique Havok : gravité, collisions, saut, teleport(debug)
-    camera.ts              ArcRotateCamera de suivi 3e personne (orbite pilotée par pointerLook)
-    remotePlayer.ts        avatars des autres joueurs (interpolés)
-    audio.ts               AUDIO (présentation) : Babylon AudioV2, bus master/musique/SFX, musique
-                           de l'état du feu (fondu enchaîné), SFX. Lit l'état, ne le mute jamais.
-  ui/hud.ts                HUD (sac, feu, village), étiquette d'interaction, DIALOGUES (clavier+souris),
-                           menu PARAMÈTRES (centré, contient le multijoueur)
-  input/
-    input.ts               clavier -> intentions (ZQSD/WASD/flèches, saut, interagir)
-    pointerLook.ts         capture du pointeur : souris = caméra ; libérée en UI ; clic pour (ré)activer
-  net/
-    room.ts                salon Trystero, élection d'hôte (ouvreur épinglé / défère au diffuseur), envoi/réception
-    messages.ts            types des messages (PlayerTransformMsg, GameActionMsg, StateSyncMsg)
-  save.ts                  saveGame/loadGame/clearSave (localStorage, façon ADR)
+    world.ts               feu de camp (intensité = niveau du feu)
+    terrain.ts             sol streamé par CHUNKS (clip CARRÉ) : biome + altitude + ROUTES (teinte), colliders localisés
+    ocean.ts               plan d'eau du faux océan (caché sauf bordure « océan »)
+    forest.ts / trees.ts / scatter.ts   arbres finis qui repoussent · essences · décor instancié
+    cabin.ts               cabane ruine→réparée (paliers ×1/×5/×10) : coffre + étagères + grand tableau + lanternes
+    buildings.ts           bâtiments low-poly (placement = campLayout maths) + chantier animé + fumée + pièges
+    campDecor.ts / campLights.ts / campRuins.ts / campPaths.ts   décor sol · lanternes (palier) · ruines · sentiers
+    sites.ts               modèles 3D des ~14 types de site (grotte/maison/ville/cité/mines/forage/champ/marais/cache/épave/cuirassé/avant-poste) + LOD
+    interior.ts            intérieur explorable des grottes/mines (Option A : massif au sol + colliders + obscurité)
+    villagers.ts           avatars de population (cosmétique) : métiers, navGrid A*, DANS LES HUTTES + rotation
+    navGrid.ts / entities.ts / proplod.ts / autoperf.ts   A* villageois · LOD entités/props · perf adaptative
+    stranger.ts            la constructrice (PNJ) · characters.ts (humanoïdes) · player.ts (capsule Havok + confinement)
+    camera.ts / remotePlayer.ts   caméra 3e/1re pers · avatars distants interpolés
+    audio.ts               AUDIO (présentation) : bus, musique adaptative, SFX (dont PORTE synthétisée). Lit l'état.
+  ui/hud.ts                HUD (sac avec count-up/pop, feu, village), étiquette E, DIALOGUES, menu PARAMÈTRES (son, CONFORT, multi)
+  input/                   input.ts (clavier→intentions) · pointerLook.ts (souris=caméra, sensibilité réglable)
+  net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
+  save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)
   main.ts                  point d'entrée : init, boucle à pas fixe, dialogues, interactions, réseau, save
-tests/e2e.spec.ts          Playwright (3 tests) : boucle complète, P2P smoke, sauvegarde/rechargement
+tests/e2e.spec.ts          Playwright (11 tests) : boucle, P2P, save, perf/LOD, sites…
 ```
 
 ---
@@ -77,6 +82,7 @@ tests/e2e.spec.ts          Playwright (3 tests) : boucle complète, P2P smoke, s
 - **`carried`** : `Record<playerId, Record<res,nombre>>` — le **SAC** de chaque joueur (plafonné).
   Rempli par la récolte manuelle ; nourrit le feu / répare la cabane ; se vide à l'entrepôt.
 - `cabinRepaired` — la cabane est-elle réparée (débloque entrepôt + construction).
+- `cabinTier` — palier de la cabane (0 ruine / 1 / 5 / 10) ; la VALEUR est le multiplicateur de capacité de stockage.
 - `buildings` : `Record<id,nombre>` — bâtiments construits (= l'état de déblocage des métiers).
 - `population`, `workers` (`Record<job,nombre>`), `producing` (`Record<job,bool>` = a produit au
   dernier cycle, pour le feedback visuel).
@@ -85,6 +91,15 @@ tests/e2e.spec.ts          Playwright (3 tests) : boucle complète, P2P smoke, s
   `stokeReadyAt`, `popGrowAt`, `incomeAt`, et **`trapReadyAt`** (`Record<index,tic>` : chaque piège
   a son PROPRE rechargement → on relève les pièges **un par un**, voir §9).
 - `rng` — état du générateur à graine.
+- **`worldSeed`** — graine de la CARTE (distincte du `rng` de gameplay) ; la carte est une fonction pure de cette graine.
+- **`sites`** (M9) : `Record<"cx,cz", SiteProgress>` — état D'EXPLORATION par site (découvert / butin pris [premier-servi
+  global] / mine sécurisée / grotte nettoyée). La disposition & le butin, eux, sont dérivés de `worldSeed` (rien à stocker).
+- **`roads`** (extension M9) : `Record<"cx,cz", true>` — cellules de ROUTE tracées au nettoyage/sécurisation d'un site
+  (réseau qui fusionne, cf. `sim/roads.ts`). Géométrique → déterministe.
+- **Échéances M5 & entretien** : `eventScheduledAt`, `pendingEffects`, `builderTendReadyAt`, `builderTendingUntil`.
+
+> Tout nouveau champ doit être ADDITIF (back-fillé au boot) et circule **automatiquement** en P2P/save : le snapshot est
+> un `structuredClone(state)` INTÉGRAL (plus de liste de champs à maintenir — c'est ainsi que `cabinTier` avait été oublié).
 
 ### Les DEUX stocks (décision structurante)
 
@@ -187,9 +202,45 @@ But : **immersif**. En jeu, la souris EST la caméra (curseur masqué). En inter
     de fermeture) **recapture**. Indice « cliquez pour orienter » seulement quand non capturé & hors UI.
 - **Spring-arm (collision caméra)** (`main.ts`, boucle) : le **rayon EFFECTIF** se rapproche si un mur
   s'interpose entre la cible (tête du joueur) et la caméra — raycast vers `cabin.occluders()` près de
-  la cabane ; rapprochement rapide (anti-clip), éloignement doux (lerp). → dans la cabane, la caméra
-  passe **sous le toit, à l'intérieur** (≈ épaule), au lieu d'être bloquée par les murs. *(Étape 1 de la
-  refonte caméra ; étapes suivantes prévues : bascule 1ʳᵉ personne sur arme/grotte — transition lissée.)*
+  la cabane ; rapprochement rapide (anti-clip), éloignement doux (lerp). *(Étape 1 de la refonte caméra.)*
+- **Fondu du toit** (`main.ts` boucle + `cabin.setRoofOpacity`, Étape 1b) : en 3ᵉ personne, le toit de la
+  cabane devient **transparent** quand le joueur approche (bande de fondu `[footprintRadius, +ROOF_FADE_SPAN≈4]`)
+  → on **voit l'intérieur** sans le toit qui masque. Opaque au loin ; **opaque aussi en FPV** (on est
+  dessous, regard vers le haut) via `setRoofOpacity(max(fpv, fondu))`. Côté `cabin.ts`, le toit est bâti
+  sous un **nœud dédié** par palier (meshes **cachés** pour éviter une allocation par frame) et l'opacité
+  passe par `mesh.visibility` (**par-mesh**) — donc **sans toucher les matériaux PARTAGÉS** (les murs
+  restent opaques). No-op sur la ruine (pas de toit).
+- **Bascule 3ᵉ ↔ 1ʳᵉ personne** (`main.ts`, boucle — Étape 2) : une seule `ArcRotateCamera` sert les deux
+  vues, mélangées par un facteur `fpv` ∈ [0,1] lissé chaque frame. **3PV** (`fpv→0`) = pose spring-arm
+  ci-dessus, corps visible. **FPV** (`fpv→1`) = astuce ArcRotate : on place la **cible** à `œil + avant·R`
+  avec un **rayon minuscule** (`FPV_RADIUS≈0.06`), si bien que la caméra retombe **exactement sur l'œil**
+  du joueur (`FPV_EYE_Y=0.75` au-dessus du centre capsule ≈ **1,65 m du sol**) en **regardant vers l'avant** ;
+  le corps est **masqué** (`player.setVisible(fpv<0.6)`) pour ne pas voir l'intérieur du modèle.
+  - **Remap du tangage** : la caméra regarde **toujours selon `beta`** (changer `target` ne fait que la
+    déplacer, pas la réorienter). Or le repos 3PV (`beta≈1.05`) viserait ~30° vers le sol en FPV. On
+    **découple** donc le **beta voulu** (souris → `pointerLook.desiredBeta`, borné à la plage 3PV
+    `[0.35,1.45]`) du **beta rendu** : en FPV on remappe vers l'**horizon** (`π/2`) au repos, amplifié
+    (`FPV_PITCH_GAIN`) et borné (`[FPV_BETA_MIN, FPV_BETA_MAX]≈[0.5,2.4]`), puis on **mélange** par `fpv`
+    (`camera.beta = lerp(betaVoulu, betaFpv, fpv)`). Pour viser le ciel il faut `beta>π/2`, donc `main`
+    **élargit `camera.upperBetaLimit`** à `FPV_BETA_MAX` (sinon ArcRotate clampe) ; la 3PV reste bornée
+    car c'est `desiredBeta` qui plafonne à 1.45, pas la limite caméra. Le **yaw (`alpha`)** reste direct
+    (identique dans les deux vues).
+  - **Déclencheurs** : **(a) automatique** en entrant dans la cabane — détection `insideCabin` avec
+    **hystérésis** (entrée sous `footprintRadius−0.3`, sortie au-delà de `+0.8`) pour éviter le clignotement
+    au seuil ; **(a′) automatique SOUS TERRE** (grottes/mines, M9) — `interiors.isLocalPlayerInside()`
+    (joueur sous plafond, rayon `insideR` centré sur la cavité) ; **(b) manuel** via la touche **`V`**
+    (`forceFpv`, hors UI). `wantFpv = forceFpv || insideCabin || interiors.isLocalPlayerInside()`.
+    Sous terre, la lueur de **torche** ([`player.ts`](../src/render/player.ts) `setTorch`) est parentée à la
+    **capsule** (pas au modèle) — sinon, le modèle masqué en FPV (`yawNode.setEnabled(false)`) éteindrait la
+    lumière par cascade et la grotte serait noire.
+  - Transition **lissée** (lerp de la cible, du rayon ET du tangage) → pas de saut, pensé anti-malaise.
+  - **Stabilité (anti-tremblement)** : on lisse le **rayon d'abord**, puis on **cale la cible FPV sur le
+    rayon RÉEL** (`cible = œil + avant·camera.radius`) → `position = cible − rayon·avant = œil` **exactement,
+    quel que soit le rayon**. Et le **spring-arm est coupé en FPV** (`fpv ≥ 0.9`) : à l'œil il n'y a pas de
+    « bras » à protéger, et son raycast cible→caméra (dirigé vers l'arrière) accrochait le mur derrière →
+    oscillation avant-arrière. *(Sans ces deux points, un écart cible/rayon produisait un tremblement de
+    quelques cm le long de l'axe du regard.)*
+  *(✅ FPV étendue aux **grottes/mines** (M9, 2026-06-11). Reste prévu : FPV de **combat/armes** — M8.)*
 - **`Échap`** (géré dans `main.ts`, global) : si une UI est ouverte → la **ferme** ; sinon → ouvre le
   **menu Paramètres**. (Échap libère aussi le lock côté navigateur — voulu, car le menu veut le curseur.)
 - **Dialogues** (`hud.ts`) : cliquables à la souris **ET** navigables au clavier (`ZQSD`/flèches +

@@ -1,5 +1,10 @@
 # Plan d'implémentation — le monde autour du campement
 
+> ⚠️ **MAJ juin 2026** : largement **FAIT** — biomes en régions + marais-région, relief, décor dispersé,
+> **~57 silhouettes de sites** (variété complète), **grottes/mines explorables** (M9), **routes** qui
+> fusionnent, **bordures carrées** (montagnes/océans). État courant : [`etat.md`](etat.md) ; jalons :
+> [`roadmap-v2.md`](roadmap-v2.md) ; sites/routes : [`routes-sites.md`](routes-sites.md).
+
 > **But.** Construire le **monde 3D continu qui entoure le retranchement** : biomes en
 > taches contiguës, relief, **décor dispersé** (les modèles du labo) et **silhouettes de sites**,
 > le tout **streamé par chunks**, **déterministe** (carte = fonction de la graine → P2P) et **60 FPS**.
