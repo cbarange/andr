@@ -322,6 +322,10 @@ async function boot(): Promise<void> {
   // -> plus de relief qui transperce le plancher, jonction propre. `ri` couvre le sol intérieur, `ro` lisse.
   const PLATEAU_R: Record<string, { ri: number; ro: number }> = {
     cave: { ri: 20, ro: 32 }, ironmine: { ri: 16, ro: 27 }, coalmine: { ri: 16, ro: 27 }, sulphurmine: { ri: 16, ro: 27 },
+    // Ruines (maison/grappe/cité) : fondations plates -> on aplanit le sol sous leur emprise.
+    house: { ri: 5, ro: 11 }, town: { ri: 8, ro: 16 }, city: { ri: 11, ro: 21 },
+    // Cuirassé (dreadnought écrasé, unique & colossal) : grand champ de crash aplani.
+    executioner: { ri: 22, ro: 36 },
   };
   function registerPlateaus(map: typeof worldMap): void {
     const plateaus: TerrainPlateau[] = [];
@@ -1545,7 +1549,7 @@ async function boot(): Promise<void> {
         camera.upperRadiusLimit = 600; camera.lowerBetaLimit = 0.001;
         const w = worldMap.cellToWorldCenter(cx, cz); const gy = terrainHeight(w.x, w.z);
         camera.setTarget(new Vector3(w.x, gy + (top ? 0 : 1.4), w.z));
-        if (top) { camera.alpha = -Math.PI / 2; camera.beta = 0.1; camera.radius = 46; }
+        if (top) { camera.alpha = -Math.PI / 2; camera.beta = 0.5; camera.radius = dist === 19 ? 46 : dist; }
         else { const L = Math.hypot(w.x, w.z) || 1; camera.setPosition(new Vector3(w.x - (w.x / L) * dist, gy + dist * 0.28, w.z - (w.z / L) * dist)); }
       };
       dbg.takeAllLoot = (): number => {

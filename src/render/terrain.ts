@@ -58,7 +58,7 @@ const PROPS_PER_FRAME = 2; // rebuilds de props (changement de palier LOD) amort
 // Grottes/mines : large (couvre le massif d'entrée) ; autres sites : selon leur emprise.
 const SITE_CLEAR_RADIUS: Record<string, number> = {
   cave: 18, ironmine: 16, coalmine: 16, sulphurmine: 16,
-  house: 6, town: 9, city: 13, swamp: 8, ship: 11, executioner: 13, outpost: 7,
+  house: 7, town: 12, city: 18, swamp: 8, ship: 11, executioner: 30, outpost: 7,
   borehole: 9, battlefield: 10, cache: 8,
 };
 // Le monde est BORNÉ : on génère jusqu'à la zone jouable PLUS la bande de bordure (montagnes/
