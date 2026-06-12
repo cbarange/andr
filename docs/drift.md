@@ -69,6 +69,12 @@ oubliés), l'**outillage dev** (exposé en prod) et la **dette de structure** (m
 >   `cache` réutilise une ruine de village (modèle dédié possible) ; quelques **hooks `window.__game.*`
 >   supplémentaires** ajoutés (debug construction/cabane/sentiers/joueurs distants) → **renforce #4** (sortir
 >   l'outillage dev du bundle de prod le jour venu).
+> - **Survie M6/M7 (sim + rendu, juin 2026)** : `GameState.survival` (par joueur, ADDITIF, voyage dans le
+>   snapshot intégral, strippé à la save comme `carried`) + action `SET_OUTSIDE` (edge client → hôte, validée
+>   par `isNetworkSafeAction`) + **phase TICK 7** (0 RNG → ordre d'itération sans impact). Rendu :
+>   `render/rampart.ts` (palissade mergée 1 mesh, colliders aux seuls montants de porte), jauges + chip HUD,
+>   mort observée par diff `deathSeq` → téléport. **Sain** (pur, +14 tests, +1 e2e). Nouveaux hooks
+>   `__game.getSurvival/setSurvival` → renforce #4 (sortir l'outillage dev du bundle le jour venu).
 > - **Toujours valable** : #4 (outils dev en prod, différé), #7 (`main.ts` god-object — a encore grossi),
 >   #8 (bâtiments merge+instance, différé), #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
 

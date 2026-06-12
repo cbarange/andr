@@ -8,20 +8,21 @@
 >
 > *Dernière passe de maintenance : juin 2026 (après Chantier C, M9, routes & sites ; puis **construction
 > visuelle/temporisée + montée de la cabane**, **sentiers dynamiques + dégagement des emprises**, **étiquettes
-> de joueur en P2P**).*
+> de joueur en P2P** ; puis **M6/M7 : rempart + porte + survie eau/vivres/PV par joueur**).*
 
 ## En une phrase
 **A Dark Room réimaginé en 3D web native** (Babylon.js + Havok + Trystero), simulation **pure, déterministe,
 host-autoritaire**. L'**Acte I jouable de bout en bout** (feu → construction → population → métiers/chaînes),
 le **village vivant et harmonieux**, un **monde carré exploré** (biomes en régions, vraies bordures, sites
-variés, grottes/mines explorables, routes qui se tissent). Manquent surtout : **survie, combat, fin de partie**.
+variés, grottes/mines explorables, routes qui se tissent), et la **survie dehors** (M6/M7 : zone sûre,
+eau/vivres/PV, mort = perte du sac). Manquent surtout : **combat, commerce, fin de partie**.
 
 ## Vérification (tout vert)
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 169 tests de sim/logique (rapide, sans navigateur)
-npm run e2e     # 11 tests Playwright (boucle, P2P, save, perf, sites…) + capture
+npm run test    # 182 tests de sim/logique (rapide, sans navigateur)
+npm run e2e     # 12 tests Playwright (boucle, P2P, save, perf, sites, survie…) + capture
 npm run typecheck
 ```
 
@@ -76,6 +77,18 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Multijoueur** : **étiquette de nom** (billboard) au-dessus de chaque joueur distant — **l'id pour l'instant**,
   remplaçable par le vrai nom via `RemotePlayers.setName(id, name)` quand le réseau le fournira.
 
+### Le seuil & la survie (M6/M7 — récent) — ✅
+- **Rempart & porte** (`render/rampart.ts`) : palissade de pieux **fusionnée en 1 mesh** autour de la zone
+  sûre, **porte au sud** (+Z, seuls les montants ont un collider — monde unifié, pas de mur-prison), **puits**
+  de ravitaillement. Cosmétique/local : la frontière logique reste le rayon `VILLAGE_RADIUS`.
+- **Survie PAR JOUEUR** (sim) : `survival[pid]` = eau/vivres/PV + échéances en tics + `deathSeq`. **Drain par
+  TEMPS passé DEHORS** (pont position→sim : le client émet `SET_OUTSIDE` au franchissement, edge-triggered,
+  réseau-safe) ; eau ET vivres à sec ⇒ les PV baissent ; à 0 ⇒ **mort : retour au camp + perte du SAC**
+  (entrepôt intact — knob `deathStoragePenalty`) + grâce ; **recharge automatique au camp**. 0 RNG ⇒
+  déterministe ; champ **additif** (pas de bump de save ; strippé comme `carried` à la sauvegarde).
+- **HUD** : jauges eau/vivres/vie (visibles partout) + chip « zone sûre / dehors » ; la mort est observée
+  par diff de `deathSeq` ⇒ téléport au camp (calque `builderTendingUntil`).
+
 ### Transverse — ✅
 - **Multijoueur P2P** host-autoritaire (Trystero/WebRTC) : « Ouvrir ma partie » (lien à partager) ; **failover
   par époque** (un hôte silencieux ne fige plus les autres ; heartbeat + Raft-lite) + **STUN** publics ;
@@ -86,6 +99,8 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 
 ### Jalons (détail : [`roadmap-v2.md`](roadmap-v2.md))
 - **M0–M5** ✅ (fondation, feu/étranger, construction, population/métiers, chaînes, événements).
+- **M6 (seuil) ✅ · M7 (survie) 🟢** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
+  du sac, recharge camp). Reste : **recharge aux avant-postes** (`OUTPOST_REFILL`), fog of war (différé).
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -105,20 +120,23 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Bordures 2 montagnes + 2 océans par graine** ; **biomes en régions** (anti-répétition) ; **marais-région**.
 - **Routes fidèles ADR** : `findClosestRoad` (spirale → plus proche route/avant-poste/village) → fusion.
 - **Son de porte SYNTHÉTISÉ** (A Dark Room n'a pas d'asset de porte).
-- **Combat** : ⏳ **décision repoussée** (tour par tour vs temps réel) — verrou de M8.
+- **Mort en expédition (M7) : perte du SAC seul** (fidèle ADR) — knob `deathStoragePenalty` pour durcir ;
+  **fog of war différé** (seam prêt : `visited` additif + `VISIT_CELL` calqué sur `DISCOVER_SITE`).
+- **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **Sécuriser par un commit** (gros working tree non commité, sur `main`).
-2. **Contenu M6 → M7 (survie eau/nourriture)** : le vrai gameplay « dehors » qui manque ; **active l'effet des
-   avant-postes** (recharge) et donne un enjeu à l'exploration.
-3. **R3 (butin des forages/cités → alliage)** : **débloque la matière première de la fin de partie (M11)**.
-4. **M8 (combat)** une fois la **décision tour-par-tour vs temps-réel** prise — active la route « sécurisée ».
-5. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
+1. **R3 (butin des forages/cités → alliage)** : **débloque la matière première de la fin de partie (M11)**.
+2. **Reste M7 — effet des avant-postes** (`OUTPOST_REFILL`) : recharge de survie HORS camp (zone sûre
+   secondaire autour des grottes nettoyées) — petite extension de la phase TICK 7.
+3. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
+4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Survie/combat/commerce/fin = absents** : « dehors » = traversée + pillage de sites + grottes/mines ;
-  pas encore de pression eau/nourriture, ni de combat, ni de poste de traite/atelier fonctionnels, ni de fin.
-- **Sac réinitialisé au rechargement** (`carried` indexé par `selfId` aléatoire) ; entrepôt/village/sites persistent.
+- **Combat/commerce/fin = absents** : la **survie existe** (M6/M7 : pression eau/vivres dehors, mort = perte
+  du sac, recharge au camp) mais les **avant-postes ne rechargent pas encore** (`OUTPOST_REFILL` à venir) ;
+  ni combat, ni poste de traite/atelier fonctionnels, ni fin.
+- **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;
+  entrepôt/village/sites persistent.
 - **Poste de traite & atelier = bâtissables mais sans effet** (commerce/objets = M10).
 - **Props sur les routes** : la teinte de route ne retire pas les arbres/herbe déjà dispersés (re-scatter = polish R2).
 - **Outils dev EN PROD** (A2 différé, gardé pour le dev) : `dev/commands.ts` + mutateurs `window.__game` shippent.

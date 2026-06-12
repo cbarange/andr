@@ -25,9 +25,10 @@
 | **Routes & sites** : R1 variété (~57 sites) · R2 réseau de routes | ✅ ✅ · R3/R4 ⏳ |
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
-| **Contenu manquant** : survie (M6/M7) · combat (M8) · commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
+| **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) | ✅ · 🟢 (reste : recharge aux avant-postes ; fog of war ⏸️ différé) |
+| **Contenu manquant** : combat (M8) · commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
 
-> Vérif à chaque pas : **typecheck · ~169 tests unit · 11 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~182 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -125,13 +126,13 @@ l'avancement :
 | Construction (10 bâtiments, coûts croissants, révélation ADR) | ✅ FAIT (+ **temporisée & animée** : file de chantiers, montée pièce par pièce, fonctionnel à l'achèvement) | — |
 | Événements (room/outside, choix→conséquences) | ✅ 9/~15 | M5 fait ; reste → M10 |
 | Carte / biomes / sites (génération + rendu) | 🟡 INERTE | M7/M9 (logique) |
-| Survie eau / nourriture / mort / avant-postes | ❌ ABSENT | **M6 + M7** |
+| Survie eau / nourriture / mort | ✅ **FAIT** (M6+M7 : drain dehors, mort = perte du sac, recharge camp) | équilibrage M12 |
 | Combat (ennemis, armes, PV, butin, soin) | ❌ ABSENT | **M8** |
 | Mines fer/charbon/soufre (sécuriser ⇒ mineur) | ✅ **FAIT** (M9) | — |
 | Sidérurgie acier→balles | ✅ **ressuscité** (M9) | équilibrage M12 |
 | Sites/donjons : **grotte + 3 mines** explorables | ✅ **FAIT** (M9) | — |
 | Sites/donjons : **maison / ville / cité** | 🟡 INERTE (silhouettes) | M9 (reste) |
-| Avant-poste (grotte vidée ⇒ avant-poste) | ✅ rendu (M9) | effet eau/voyage = M7 |
+| Avant-poste (grotte vidée ⇒ avant-poste) | ✅ rendu (M9) | **recharge de survie (`OUTPOST_REFILL`) = reste M7** |
 | Atelier → objets (torche/outres/sacs/armures/armes) | 🔴/❌ | **M10** |
 | Poste de traite → commerce (fourrure = monnaie) | 🔴/❌ | **M10** |
 | Perks (éclaireur, gastronome, évasion…) + leurs événements | ❌ ABSENT | **M10** |
@@ -299,7 +300,14 @@ buffers réutilisés terrain/obstacles, cadencer `reflectState` (dirty-flag au l
 > porte**. La survie devient une **pression spatiale/temporelle** (l'eau/la nourriture se vident **dehors**),
 > et les avant-postes d'ADR deviennent des **bases avancées**.
 
-### 🚪 M6 — Le seuil : rempart, porte, zone sûre & équipement — **S/M**
+### 🚪 M6 — Le seuil : rempart, porte, zone sûre & équipement — **S/M** — ✅ **FAIT (juin 2026)**
+> **Livré** : `render/rampart.ts` — palissade **fusionnée en 1 mesh** autour de la zone sûre, **porte au
+> sud** (+Z ; seuls les montants ont un collider — monde unifié, on ne piège pas le joueur), **puits** de
+> ravitaillement ; indicateur HUD « zone sûre / dehors » + jauges ; `config.survival` (capacités/cadences =
+> l'« outfit » de base ; outre/baril = M10). La frontière LOGIQUE reste le rayon `VILLAGE_RADIUS` ; la
+> recharge au camp est AUTOMATIQUE (cf. M7) → l'acceptation (franchir ⇒ dehors ; revenir ⇒ gel/recharge)
+> est couverte. Top-up manuel à la station = bonus optionnel.
+
 **Pré-requis sauté par le projet** (le monde M7-render existe déjà, mais la frontière dont dépend la survie
 manque). Objectif : matérialiser le retranchement et le franchissement, et poser l'**état d'équipement**.
 
@@ -312,7 +320,19 @@ manque). Objectif : matérialiser le retranchement et le franchissement, et pose
 - **Acceptation** : franchir la porte fait passer « dehors » ; revenir **gèle/recharge** la survie ;
   tests sim de `inSafeZone` + recharge ; capture.
 
-### 🌲 M7 — Survie en terres sauvages *(le RENDU est fait ; ici = la SIM)* — **M/L**
+### 🌲 M7 — Survie en terres sauvages *(le RENDU est fait ; ici = la SIM)* — **M/L** — 🟢 **CŒUR FAIT (juin 2026)**
+> **Livré** : `GameState.survival` PAR JOUEUR (eau/vivres/PV, échéances en tics façon `trapReadyAt`,
+> compteur `deathSeq`), action **`SET_OUTSIDE`** (le client signale le franchissement — edge-triggered,
+> validé par `isNetworkSafeAction`), **phase TICK 7 « survie »** : drain par TEMPS dehors ; eau+vivres à
+> sec → PV ; 0 PV → **mort : retour au camp + perte du SAC** (entrepôt intact — knob
+> `deathStoragePenalty=0`) + grâce ; **recharge auto au camp**. 0 RNG → déterministe ; champ ADDITIF
+> (pas de bump de save ; strippé comme `carried`). Rendu : 3 jauges HUD + chip de zone, mort observée par
+> diff `deathSeq` → téléport au camp. Tests : **+14 unit** (drain/mort/recharge/idempotence/replay/back-fill)
+> + **1 e2e** (sortie → drain → mort → sac vidé → retour zone sûre).
+> **Reste** : **`OUTPOST_REFILL`** (recharge aux avant-postes — petite extension de la phase 7),
+> **fog of war** (⏸️ différé, décision actée — seam : `visited` additif + `VISIT_CELL` calqué sur
+> `DISCOVER_SITE`), équilibrage des cadences (M12).
+
 **Correction majeure** : ne PAS refaire le monde (il existe). Brancher la **logique** qui manque.
 
 - **`sim/`** (le gros du travail) : champs `water`/`food`/`health` (par joueur) dans `GameState` ;
@@ -527,8 +547,8 @@ Chantier B (contenu) :
 |---|---|---|
 | ~~**Modèle de combat** (M8)~~ | — | ✅ **TRANCHÉ (juin 2026)** : **temps réel fidèle ADR**, butin validé par l'hôte (cf. M8). |
 | **Rôle de la boussole** (M10) | son rôle ADR (« débloquer la carte ») n'existe pas en monde unifié | révélation longue portée / voyage rapide / cartographie du fog · ou la retirer |
-| **Fog of war : sim partagé ou local ?** (M7) | impacte le snapshot P2P | (a) état sim partagé (les pairs voient la même découverte) · (b) local par joueur (plus léger, moins « coop ») |
-| **Mort en expédition : perte du sac seulement, ou pénalité d'entrepôt ?** (M7) | équilibrage du risque | calquer ADR (perte cargaison) · ou plus doux pour le multi |
+| ~~**Fog of war : sim partagé ou local ?** (M7)~~ | — | ✅ **TRANCHÉ (juin 2026)** : **différé** (hors périmètre M7 ; seam prêt : `visited` additif + `VISIT_CELL` calqué sur `DISCOVER_SITE`). |
+| ~~**Mort en expédition : perte du sac seulement, ou pénalité d'entrepôt ?** (M7)~~ | — | ✅ **TRANCHÉ (juin 2026)** : **perte du SAC seul** (fidèle ADR) ; knob `deathStoragePenalty` (0 par défaut) pour durcir plus tard. |
 
 ---
 
