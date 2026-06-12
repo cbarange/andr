@@ -15,10 +15,10 @@ import {
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter, buy, useMeds, withdraw,
+  attack, eatMeat, flee, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
 } from "./actions";
-import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
-import { enemyById, weaponById } from "../../data/world";
+import { stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
+import { enemyById, weaponById, mineGuardians } from "../../data/world";
 import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -788,8 +788,9 @@ describe("M9 — mine sécurisée ⇒ métier de mineur", () => {
     expect(r.workers.iron_miner ?? 0).toBe(0); // refusé
   });
 
-  it("SECURE_MINE débloque l'assignation du mineur correspondant", () => {
-    let s = repaired({ population: 3 });
+  it("SECURE_MINE débloque l'assignation du mineur correspondant (gardiens vaincus — M8.5)", () => {
+    // M8.5/F3.1 : la mine est GARDÉE — sécuriser exige d'avoir vaincu la séquence scriptée.
+    let s = repaired({ population: 3, sites: { [siteKey(5, 0)]: { type: "ironmine", guardians: 1 } } });
     s = reduce(s, secureMine("a", 5, 0, "ironmine"));
     expect(s.sites[siteKey(5, 0)].secured).toBe(true);
     const r = reduce(s, assignWorker("a", "iron_miner"));
@@ -804,7 +805,10 @@ describe("M9 — mine sécurisée ⇒ métier de mineur", () => {
   });
 
   it("le mineur assigné PRODUIT du fer au cycle de revenu (ressuscite la chaîne)", () => {
-    let s = repaired({ population: 3, resources: { "cured meat": 50 } });
+    let s = repaired({
+      population: 3, resources: { "cured meat": 50 },
+      sites: { [siteKey(5, 0)]: { type: "ironmine", guardians: 1 } }, // matriarche vaincue (M8.5)
+    });
     s = reduce(s, secureMine("a", 5, 0, "ironmine"));
     s = reduce(s, assignWorker("a", "iron_miner"));
     const r = advanceTicks(s, 1); // 1ᵉʳ tic => revenu (incomeAt part de 0)
@@ -1039,35 +1043,49 @@ describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
   });
 });
 
-describe("combat (M8) — helpers purs", () => {
-  it("shouldTriggerEncounter : tier 0 = jamais ; la ROUTE raréfie (jamais plus, parfois moins)", () => {
-    expect(shouldTriggerEncounter(createRng(1), 0, false)).toBe(false);
-    let roadOnly = 0, offOnly = 0;
-    for (let seed = 0; seed < 300; seed++) {
-      const off = shouldTriggerEncounter(createRng(seed), 4, false);
-      const on = shouldTriggerEncounter(createRng(seed), 4, true);
-      if (on && !off) roadOnly++; // la route ne doit JAMAIS déclencher là où la nature ne déclenche pas
-      if (off && !on) offOnly++;
+describe("combat (M8/M8.5) — helpers purs, fidèles ADR", () => {
+  it("stepFightTriggers : tier 0 = jamais ; ~20 % par pas (déterministe par graine)", () => {
+    expect(stepFightTriggers(createRng(1), 0)).toBe(false);
+    let hits = 0;
+    for (let seed = 0; seed < 400; seed++) if (stepFightTriggers(createRng(seed), 1)) hits++;
+    expect(hits).toBeGreaterThan(40); // ≈ 20 % de 400 (déterministe : mêmes graines -> même compte)
+    expect(hits).toBeLessThan(160);
+  });
+
+  it("pickEnemy : gating par TIER ET TERRAIN (fidèle isAvailable d'ADR)", () => {
+    const a = pickEnemy(createRng(7), 1, "forest");
+    expect(a).toEqual(pickEnemy(createRng(7), 1, "forest")); // déterministe
+    expect(a?.id).toBe("snarling beast"); // seul ennemi tier 1 de forêt
+    const field = pickEnemy(createRng(9), 1, "field");
+    expect(["strange bird", "two-headed creature"]).toContain(field?.id); // les 2 de champ
+    expect(pickEnemy(createRng(7), 3, "forest")?.id).toBe("feral terror");
+    expect(pickEnemy(createRng(7), 1, "swamp")).toBeNull(); // pas de table marais (fidèle)
+    expect(pickEnemy(createRng(7), 0, "forest")).toBeNull(); // tier 0 = setpieces seulement
+  });
+
+  it("rollEnemyLoot : tirage min..max-1 (drawLoot d'ADR — le max déclaré n'est jamais tiré)", () => {
+    const beast = enemyById["snarling beast"]; // fur 1–3 -> tirage réel 1..2
+    for (let seed = 0; seed < 60; seed++) {
+      const l = rollEnemyLoot(createRng(seed), beast);
+      if (l.fur !== undefined) { expect(l.fur).toBeGreaterThanOrEqual(1); expect(l.fur).toBeLessThanOrEqual(2); }
     }
-    expect(roadOnly).toBe(0);
-    expect(offOnly).toBeGreaterThan(0); // la réduction est effective (R4)
+    const soldier = enemyById["soldier"]; // rifle 1–1 -> toujours 1 quand la chance passe
+    let sawRifle = false;
+    for (let seed = 0; seed < 80; seed++) {
+      const l = rollEnemyLoot(createRng(seed), soldier);
+      if (l.rifle !== undefined) { expect(l.rifle).toBe(1); sawRifle = true; }
+    }
+    expect(sawRifle).toBe(true); // le fusil tombe bien (20 %)
   });
 
-  it("pickEnemy : déterministe et confiné à son tier", () => {
-    const a = pickEnemy(createRng(7), 4);
-    const b = pickEnemy(createRng(7), 4);
-    expect(a).toEqual(b);
-    expect(a?.tier).toBe(4);
-    expect(pickEnemy(createRng(7), 0)).toBeNull(); // pas de table tier 0
-  });
-
-  it("rollEnemyLoot : déterministe, ressources de la table, bornes respectées", () => {
-    const beast = enemyById["snarling beast"];
-    const l1 = rollEnemyLoot(createRng(42), beast);
-    expect(l1).toEqual(rollEnemyLoot(createRng(42), beast));
-    expect(l1.fur).toBeGreaterThanOrEqual(1); // chance 1.0
-    expect(l1.fur).toBeLessThanOrEqual(3);
-    for (const r of Object.keys(l1)) expect(["fur", "meat", "teeth"]).toContain(r);
+  it("tables ADR exactes (oracle annexe A) : deux-têtes présent, ranged, cadences", () => {
+    const th = enemyById["two-headed creature"];
+    expect(th).toBeTruthy();
+    expect(th.hp).toBe(10); expect(th.hit).toBe(0.5); expect(th.terrain).toBe("field");
+    expect(enemyById["soldier"].ranged).toBe(true);
+    expect(enemyById["sniper"].damage).toBe(15);
+    expect(enemyById["man-eater"].strikeSeconds).toBe(1); // ADR frappe VITE
+    expect(enemyById["shivering man"].loot.some(([r, c]) => r === "medicine" && c === 0.7)).toBe(true);
   });
 });
 
@@ -1114,7 +1132,7 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
     expect(s.combat["p1"]).toBeUndefined(); // vaincu
     const sv = survivalOf(s, "p1");
     expect(sv.winSeq).toBe(1);
-    expect(sv.encounterRollAt).toBeGreaterThan(s.tick); // répit post-victoire
+    expect(sv.fightSteps).toBe(0); // FIGHT_DELAY repart de zéro (min 3 pas avant le prochain)
     expect(carriedOf(s, "p1", "fur")).toBeGreaterThanOrEqual(1); // chance 1.0 dans la table
   });
 
@@ -1156,11 +1174,11 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
     expect(reduce(broke, eatMeat("p1"))).toBe(broke); // pas de viande -> no-op
   });
 
-  it("FLEE ferme la rencontre (sans pénalité) et arme un répit court", () => {
+  it("le DÉSENGAGEMENT ferme la rencontre et remet le compteur de pas à zéro", () => {
     const s0 = inFight();
     const s = reduce(s0, flee("p1"));
     expect(s.combat["p1"]).toBeUndefined();
-    expect(survivalOf(s, "p1").encounterRollAt).toBe(s.tick + CB.postFleeSeconds * HZ);
+    expect(survivalOf(s, "p1").fightSteps).toBe(0);
     expect(reduce(s, flee("p1"))).toBe(s); // pas de rencontre -> no-op
   });
 
@@ -1182,19 +1200,72 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
     expect(survivalOf(s, "p1").waterAt).toBe(waterAt0); // l'horloge de soif n'a PAS bougé
   });
 
-  it("DÉCLENCHEMENT déterministe : une rencontre finit par survenir dehors, replay identique", () => {
-    const run = (): GameState => {
-      let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 4)); // caverne (0.3)
-      let guard = 0;
-      while (Object.keys(s.combat).length === 0 && guard++ < 300) {
-        s = advanceTicks(s, 100);
-        s = reduce(s, debugSetSurvival("p1", { water: 10, food: 10, health: 10 })); // évite la mort de soif
+  it("DÉCLENCHEMENT PAR PAS (M8.5/F1) : jamais avant le 4ᵉ pas, déterministe, replay identique", () => {
+    const run = (): { s: GameState; firstFightStep: number } => {
+      let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+      let firstFightStep = -1;
+      for (let i = 1; i <= 200 && !s.combat["p1"]; i++) {
+        s = reduce(s, steps("p1", 1, 1, "forest", false));
+        if (s.combat["p1"] && firstFightStep < 0) firstFightStep = i;
       }
-      return s;
+      return { s, firstFightStep };
     };
     const a = run();
-    expect(Object.keys(a.combat).length).toBe(1); // la rencontre est survenue
-    expect(a).toEqual(run()); // replay-equality (même tick de rencontre, même ennemi)
+    expect(a.s.combat["p1"]).toBeTruthy(); // une rencontre finit par survenir (~20 %/pas)
+    expect(a.firstFightStep).toBeGreaterThan(3); // FIGHT_DELAY : jamais avant le 4ᵉ pas
+    expect(a.s.combat["p1"].enemyId).toBe("snarling beast"); // forêt tier 1
+    expect(a.s).toEqual(run().s); // replay-equality
+  });
+
+  it("IMMOBILE = AUCUN combat (le temps ne déclenche plus rien — fidèle ADR)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 3));
+    s = reduce(s, debugSetSurvival("p1", { water: 10, food: 10, health: 10 }));
+    s = advanceTicks(s, 20 * 60); // 1 minute sim sans bouger
+    expect(Object.keys(s.combat).length).toBe(0);
+  });
+
+  it("ROUTE = AUCUNE rencontre (le tirage est dépensé, le pool est vide — fidèle ADR)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    for (let i = 0; i < 200; i++) s = reduce(s, steps("p1", 1, 1, "forest", true)); // toujours sur route
+    expect(Object.keys(s.combat).length).toBe(0);
+  });
+
+  it("MINES GARDÉES (M8.5/F3.1) : séquence scriptée, SECURE gaté, dernier gardien sans fuite", () => {
+    const FISTS = 2 * HZ;
+    let s: GameState = {
+      ...createInitialState(config.rngSeed, 0),
+      carried: { p1: { "steel sword": 1 } }, // 6 dég -> les gardiens de charbon tombent vite
+    };
+    // SECURE refusé tant que les gardiens vivent.
+    expect(reduce(s, secureMine("p1", 7, 7, "coalmine"))).toBe(s);
+    // Gardien 1 (homme de la mine, 10 PV).
+    s = reduce(s, engageGuardian("p1", 7, 7, "coalmine"));
+    expect(s.combat["p1"]?.enemyId).toBe("mine man");
+    expect(s.combat["p1"]?.guardianIdx).toBe(0);
+    const fight = (st: GameState): GameState => {
+      let cur = st;
+      for (let i = 0; i < 20 && cur.combat["p1"]; i++) {
+        cur = reduce(cur, attack("p1", "steel sword"));
+        if (cur.combat["p1"]) cur = advanceTicks(cur, FISTS);
+      }
+      return cur;
+    };
+    s = fight(s);
+    expect(s.sites[siteKey(7, 7)].guardians).toBe(1);
+    expect(reduce(s, secureMine("p1", 7, 7, "coalmine"))).toBe(s); // toujours gaté
+    // Gardien 2 (homme), puis le CHEF (sans fuite).
+    s = fight(reduce(s, engageGuardian("p1", 7, 7, "coalmine")));
+    expect(s.sites[siteKey(7, 7)].guardians).toBe(2);
+    s = reduce(s, engageGuardian("p1", 7, 7, "coalmine"));
+    expect(s.combat["p1"]?.enemyId).toBe("mine chief");
+    expect(reduce(s, flee("p1"))).toBe(s); // DERNIER gardien : pas de fuite (fidèle)
+    s = fight(s);
+    expect(s.sites[siteKey(7, 7)].guardians).toBe(3);
+    // Tous vaincus -> SECURE passe enfin.
+    s = reduce(s, secureMine("p1", 7, 7, "coalmine"));
+    expect(s.sites[siteKey(7, 7)].secured).toBe(true);
+    // Re-ENGAGE après nettoyage = no-op.
+    expect(reduce(s, engageGuardian("p1", 7, 7, "coalmine"))).toBe(s);
   });
 
   it("bestReadyWeapon : poings par défaut, lance si possédée, null si tout recharge", () => {

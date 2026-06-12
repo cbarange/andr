@@ -141,6 +141,10 @@ export interface Encounter {
   enemyNextAt: number; // tic de la prochaine frappe ennemie (attackDelay d'ADR)
   weaponReadyAt: Record<string, number>; // arme -> tic à partir duquel elle peut refrapper
   seq: number;
+  // --- M8.5/F3.1 : rencontre de SETPIECE (gardien de mine). Champs absents = rencontre aléatoire. ---
+  siteKey?: string; // site gardé ("cx,cz")
+  siteType?: string; // type du site (ironmine/coalmine/sulphurmine)
+  guardianIdx?: number; // index du gardien dans mineGuardians[siteType]
 }
 
 /**
@@ -162,7 +166,7 @@ export interface PlayerSurvival {
   // --- M8 : combat (mêmes principes : déclaré par le client au changement, échéances en tics) ---
   tier: number; // tier de DANGER (0 = zone sûre, 1..3 = anneaux de distance, 4 = caverne)
   onRoad: boolean; // sur une cellule de ROUTE -> rencontres raréfiées (R4 « route sécurisée »)
-  encounterRollAt: number; // tic du prochain TIRAGE de rencontre (dehors, hors combat)
+  fightSteps: number; // PAS de déplacement depuis le dernier combat (FIGHT_DELAY d'ADR — M8.5/F1)
   eatReadyAt: number; // tic à partir duquel on peut re-MANGER (anti-spam, EAT_COOLDOWN d'ADR)
   medsReadyAt: number; // tic à partir duquel on peut re-SE SOIGNER (médecine, MEDS_COOLDOWN d'ADR)
   winSeq: number; // nombre de VICTOIRES (signal rendu : effondrement de l'ennemi + toast butin)
@@ -185,6 +189,8 @@ export interface SiteProgress {
   cleared?: boolean;
   /** Avant-poste : ravitaillement déjà CONSOMMÉ (usage unique fidèle ADR, partagé entre joueurs). M7. */
   used?: boolean;
+  /** Mine : nombre de GARDIENS scriptés vaincus (cf. mineGuardians — M8.5/F3.1). */
+  guardians?: number;
 }
 
 /** Clé d'un site dans `state.sites` à partir de ses coordonnées de cellule. */
@@ -234,7 +240,7 @@ export function baseSurvival(): PlayerSurvival {
     deathSeq: 0,
     tier: 0,
     onRoad: false,
-    encounterRollAt: 0,
+    fightSteps: 0,
     eatReadyAt: 0,
     medsReadyAt: 0,
     winSeq: 0,

@@ -121,12 +121,11 @@ export const config = {
   //     COOLDOWN propre ; soin en MANGEANT (viande séchée) ; FUIR sans pénalité. Tout en SECONDES
   //     (converti en tics par la sim) ; tout l'aléa via le RNG à graine de l'hôte. ---
   combat: {
-    fightChance: 0.2, // la constante FIGHT_CHANCE d'ADR (ici : par tirage périodique, pas par case)
-    caveFightChance: 0.3, // sous terre : plus dense (matérialise les setpieces de cavernes)
-    rollSeconds: 20, // période des tirages de rencontre dehors -> ~1 rencontre / ~100 s d'exposition
-    roadChanceFactor: 0.4, // R4 « route sécurisée » : chance réduite sur les cellules de route
-    postVictorySeconds: 45, // répit après une victoire (cf. FIGHT_DELAY d'ADR, min entre combats)
-    postFleeSeconds: 20, // répit (plus court) après une fuite
+    fightChance: 0.2, // FIGHT_CHANCE d'ADR : tirage PAR PAS de déplacement (M8.5/F1 — plus de minuterie)
+    caveFightChance: 0.3, // sous terre : un peu plus dense (INTÉRIM avant les grottes scriptées F3.2)
+    fightDelaySteps: 3, // FIGHT_DELAY d'ADR : jamais de combat avant le 4ᵉ pas après le précédent
+    stepUnits: 12, // 1 « pas » ADR = 1 cellule = 12 unités-monde parcourues (podomètre client)
+    maxStepsPerAction: 10, // borne anti-abus d'une action STEPS (réseau)
     playerHitChance: 0.8, // chance de toucher du joueur (défaut ADR ; perk « précis » : +0.1)
     eatCooldownSeconds: 5, // délai entre deux viandes mangées (EAT_COOLDOWN d'ADR)
     eatMeatHeal: 8, // PV rendus par viande séchée (meatHeal de base d'ADR)
@@ -202,10 +201,13 @@ export const weapons: WeaponDef[] = [
 ];
 export const weaponById: Record<string, WeaponDef> = Object.fromEntries(weapons.map((w) => [w.id, w]));
 
-// --- M8 : ENNEMIS — tables du CODE SOURCE d'A Dark Room (script/events/encounters.js), NON
-//     adoucies (décision porteur) : les tiers 2/3 sont MORTELS sans armure (M10) — c'est le design
-//     ADR, FUIR est la réponse. `tier` : 1..3 = anneaux de distance ; 4 = cavernes (M9).
-//     `loot` : [ressource, chance, min, max] (tirages indépendants, comme ADR). ---
+// --- M8/M8.5 : ENNEMIS — tables EXACTES du code source d'A Dark Room (encounters.js +
+//     setpieces.js, vérifiées — cf. docs/analyse-combat-adr.md annexes A/B). Les rencontres sont
+//     gatées par DISTANCE (tier) ET TERRAIN (biome), fidèle aux `isAvailable` d'ADR. `tier` :
+//     1..3 = anneaux de distance ; 4 = cavernes (table INTÉRIM avant F3.2 — ADR n'a que des
+//     combats scriptés en grotte) ; 0 = SETPIECE uniquement (gardiens de mines, jamais aléatoire).
+//     `loot` : [ressource, chance, min, max] — tirage fidèle ADR : min..max-1 (le max déclaré
+//     n'est jamais tiré, comportement exact de drawLoot). ---
 export interface EnemyDef {
   id: string;
   name: string;
@@ -213,46 +215,67 @@ export interface EnemyDef {
   damage: number;
   hit: number; // chance de toucher de L'ENNEMI (par ennemi, comme ADR)
   strikeSeconds: number; // délai entre deux attaques ennemies (attackDelay d'ADR)
-  tier: number;
-  weight: number; // poids de tirage dans son tier
+  tier: number; // 0 = setpiece only · 1..3 = distance · 4 = caverne (intérim)
+  terrain: "forest" | "field" | "barrens" | "cave" | "none"; // biome requis (gating ADR)
+  ranged: boolean; // tire à distance (animation ; soldat/sniper)
   model: "beast" | "lizard" | "bird" | "humanoid"; // silhouette low-poly (rendu)
   loot: Array<[string, number, number, number]>; // [ressource, chance, min, max]
 }
 export const enemies: EnemyDef[] = [
-  // --- Tier 1 (proche, ≤ 16 cellules) ---
-  { id: "snarling beast", name: "bête grondante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 3, tier: 1, weight: 1, model: "beast",
-    loot: [["fur", 1.0, 1, 3], ["meat", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
-  { id: "gaunt man", name: "homme décharné", hp: 6, damage: 2, hit: 0.8, strikeSeconds: 3.5, tier: 1, weight: 1, model: "humanoid",
-    loot: [["cloth", 0.8, 1, 2], ["teeth", 0.5, 1, 2], ["leather", 0.5, 1, 2]] },
-  { id: "strange bird", name: "oiseau étrange", hp: 4, damage: 3, hit: 0.8, strikeSeconds: 4, tier: 1, weight: 1, model: "bird",
-    loot: [["scales", 0.8, 1, 2], ["teeth", 0.5, 1, 2], ["meat", 0.8, 1, 3]] },
-  // --- Tier 2 (moyen, ≤ 38 cellules) ---
-  { id: "shivering man", name: "homme grelottant", hp: 20, damage: 5, hit: 0.5, strikeSeconds: 3, tier: 2, weight: 1, model: "humanoid",
-    loot: [["medicine", 0.9, 1, 2]] },
-  { id: "man-eater", name: "mangeur d'hommes", hp: 25, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 2, weight: 1, model: "beast",
+  // --- Tier 1 (proche) — encounters.js EXACT ---
+  { id: "snarling beast", name: "bête grondante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 1, terrain: "forest", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["meat", 1.0, 1, 3], ["teeth", 0.8, 1, 3]] },
+  { id: "gaunt man", name: "homme décharné", hp: 6, damage: 2, hit: 0.8, strikeSeconds: 2, tier: 1, terrain: "barrens", ranged: false, model: "humanoid",
+    loot: [["cloth", 0.8, 1, 3], ["teeth", 0.8, 1, 2], ["leather", 0.5, 1, 2]] },
+  { id: "strange bird", name: "oiseau étrange", hp: 4, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 1, terrain: "field", ranged: false, model: "bird",
+    loot: [["scales", 0.8, 1, 3], ["teeth", 0.5, 1, 2], ["meat", 0.8, 1, 3]] },
+  { id: "two-headed creature", name: "créature à deux têtes", hp: 10, damage: 2, hit: 0.5, strikeSeconds: 3, tier: 1, terrain: "field", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 2, 4], ["teeth", 0.8, 2, 3], ["meat", 0.8, 2, 3]] },
+  // --- Tier 2 (moyen) ---
+  { id: "shivering man", name: "homme grelottant", hp: 20, damage: 5, hit: 0.5, strikeSeconds: 1, tier: 2, terrain: "barrens", ranged: false, model: "humanoid",
+    loot: [["cloth", 0.2, 1, 1], ["teeth", 0.8, 1, 2], ["leather", 0.2, 1, 1], ["medicine", 0.7, 1, 3]] },
+  { id: "man-eater", name: "mangeur d'hommes", hp: 25, damage: 3, hit: 0.8, strikeSeconds: 1, tier: 2, terrain: "forest", ranged: false, model: "beast",
     loot: [["fur", 1.0, 5, 10], ["meat", 1.0, 5, 10], ["teeth", 0.8, 5, 10]] },
-  { id: "scavenger", name: "charognard", hp: 30, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 2, weight: 1, model: "humanoid",
-    loot: [["cloth", 0.8, 5, 10], ["leather", 0.8, 5, 10], ["iron", 0.5, 1, 5]] },
-  { id: "huge lizard", name: "grand lézard", hp: 20, damage: 5, hit: 0.8, strikeSeconds: 2.5, tier: 2, weight: 1, model: "lizard",
+  { id: "scavenger", name: "charognard", hp: 30, damage: 4, hit: 0.8, strikeSeconds: 2, tier: 2, terrain: "barrens", ranged: false, model: "humanoid",
+    loot: [["cloth", 0.8, 5, 10], ["leather", 0.8, 5, 10], ["iron", 0.5, 1, 5], ["medicine", 0.1, 1, 2]] },
+  { id: "huge lizard", name: "grand lézard", hp: 20, damage: 5, hit: 0.8, strikeSeconds: 2, tier: 2, terrain: "field", ranged: false, model: "lizard",
     loot: [["scales", 0.8, 5, 10], ["teeth", 0.5, 5, 10], ["meat", 0.8, 5, 10]] },
-  // --- Tier 3 (loin, > 38 cellules) ---
-  { id: "feral terror", name: "terreur sauvage", hp: 45, damage: 6, hit: 0.8, strikeSeconds: 2, tier: 3, weight: 1, model: "beast",
+  // --- Tier 3 (loin) ---
+  { id: "feral terror", name: "terreur sauvage", hp: 45, damage: 6, hit: 0.8, strikeSeconds: 1, tier: 3, terrain: "forest", ranged: false, model: "beast",
     loot: [["fur", 1.0, 5, 10], ["meat", 1.0, 5, 10], ["teeth", 0.8, 5, 10]] },
-  { id: "soldier", name: "soldat", hp: 50, damage: 8, hit: 0.8, strikeSeconds: 3, tier: 3, weight: 1, model: "humanoid",
-    loot: [["cured meat", 0.8, 5, 10], ["bullets", 0.5, 1, 5]] },
-  { id: "sniper", name: "sniper", hp: 30, damage: 15, hit: 0.8, strikeSeconds: 4, tier: 3, weight: 1, model: "humanoid",
-    loot: [["bullets", 0.5, 1, 5]] },
-  // --- Tier 4 : CAVERNES (M9) — valeurs documentées (mines-grottes/roadmap) ---
-  { id: "cave lizard", name: "lézard des cavernes", hp: 6, damage: 3, hit: 0.8, strikeSeconds: 3.5, tier: 4, weight: 1, model: "lizard",
-    loot: [["scales", 0.8, 1, 2], ["teeth", 0.5, 1, 2]] },
-  { id: "snarling beast cave", name: "bête grognante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 3, tier: 4, weight: 1, model: "beast",
-    loot: [["fur", 1.0, 1, 3], ["meat", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
+  { id: "soldier", name: "soldat", hp: 50, damage: 8, hit: 0.8, strikeSeconds: 2, tier: 3, terrain: "barrens", ranged: true, model: "humanoid",
+    loot: [["cloth", 0.8, 5, 10], ["bullets", 0.5, 1, 5], ["rifle", 0.2, 1, 1], ["medicine", 0.1, 1, 2]] },
+  { id: "sniper", name: "sniper", hp: 30, damage: 15, hit: 0.8, strikeSeconds: 4, tier: 3, terrain: "field", ranged: true, model: "humanoid",
+    loot: [["cloth", 0.8, 5, 10], ["bullets", 0.5, 1, 5], ["rifle", 0.2, 1, 1], ["medicine", 0.1, 1, 2]] },
+  // --- Tier 4 : CAVERNES (INTÉRIM avant F3.2 — stats des bêtes de grotte de setpieces.js) ---
+  { id: "cave lizard", name: "lézard des cavernes", hp: 6, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 4, terrain: "cave", ranged: false, model: "lizard",
+    loot: [["scales", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
+  { id: "snarling beast cave", name: "bête grognante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 4, terrain: "cave", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["teeth", 0.8, 1, 5]] },
+  // --- Tier 0 : GARDIENS DE MINES (setpieces.js EXACT — jamais tirés au hasard) ---
+  { id: "beastly matriarch", name: "matriarche bestiale", hp: 10, damage: 4, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "beast",
+    loot: [["teeth", 1.0, 5, 10], ["scales", 0.8, 5, 10], ["cloth", 0.5, 5, 10]] },
+  { id: "mine man", name: "homme de la mine", hp: 10, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
+    loot: [["cured meat", 0.8, 1, 5], ["cloth", 0.8, 1, 5]] },
+  { id: "mine chief", name: "le chef", hp: 20, damage: 5, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
+    loot: [["cured meat", 1.0, 5, 10], ["cloth", 0.8, 5, 10], ["iron", 0.8, 1, 5]] },
+  { id: "veteran", name: "vétéran", hp: 65, damage: 10, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
+    loot: [["bayonet", 0.5, 1, 1], ["cured meat", 0.8, 1, 5]] },
 ];
 export const enemyById: Record<string, EnemyDef> = Object.fromEntries(enemies.map((e) => [e.id, e]));
-/** Ennemis éligibles d'un tier (1..4). */
+/** Ennemis éligibles d'un tier (1..4). (Le tier 0 — setpieces — n'est jamais tiré au hasard.) */
 export function enemiesForTier(tier: number): EnemyDef[] {
-  return enemies.filter((e) => e.tier === tier);
+  return enemies.filter((e) => e.tier === tier && e.tier > 0);
 }
+
+// --- M8.5/F3.1 : GARDIENS des mines (setpieces.js) — séquence de combats SCRIPTÉS à vaincre
+//     AVANT de pouvoir sécuriser le filon. Le DERNIER de chaque séquence est SANS échappatoire
+//     (fidèle « no run button » du chef/vétéran/matriarche). ---
+export const mineGuardians: Record<string, string[]> = {
+  ironmine: ["beastly matriarch"],
+  coalmine: ["mine man", "mine man", "mine chief"],
+  sulphurmine: ["soldier", "soldier", "veteran"], // soldats = la table tier 3 (mêmes stats/loot, fidèle)
+};
 
 export const resources = {
   wood: { id: "wood", label: "Bois", initial: 0 },

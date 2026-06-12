@@ -9,40 +9,39 @@ import { config, enemiesForTier, weaponById, weapons, type EnemyDef, type Weapon
 import { GameState, carriedOf, type Encounter } from "./state";
 
 /**
- * Tirage de DÉCLENCHEMENT d'une rencontre (FIGHT_CHANCE d'ADR, par période et non par case —
- * adaptation « par temps » actée comme la survie M7). Routes : chance réduite (R4 « sécurisée »).
+ * Tirage de DÉCLENCHEMENT au PAS (M8.5/F1, fidèle `checkFight` d'ADR) : 20 % par pas (30 % en
+ * caverne — intérim F3.2), appelé par le reducer UNIQUEMENT au-delà de FIGHT_DELAY pas.
  * CONSOMME un tirage du RNG fourni.
  */
-export function shouldTriggerEncounter(rng: RngState, tier: number, onRoad: boolean): boolean {
+export function stepFightTriggers(rng: RngState, tier: number): boolean {
   if (tier <= 0) return false;
-  const base = tier === 4 ? config.combat.caveFightChance : config.combat.fightChance;
-  const chance = base * (onRoad ? config.combat.roadChanceFactor : 1);
+  const chance = tier === 4 ? config.combat.caveFightChance : config.combat.fightChance;
   return nextFloat(rng) < chance;
 }
 
-/** Choisit un ennemi du tier (tirage pondéré par `weight`). CONSOMME un tirage. */
-export function pickEnemy(rng: RngState, tier: number): EnemyDef | null {
-  const pool = enemiesForTier(tier);
-  if (pool.length === 0) return null;
-  let total = 0;
-  for (const e of pool) total += e.weight;
-  let r = nextFloat(rng) * total;
-  for (const e of pool) {
-    r -= e.weight;
-    if (r <= 0) return e;
-  }
-  return pool[pool.length - 1];
+/**
+ * Choisit un ennemi éligible : tier de distance ET terrain/biome (gating EXACT des `isAvailable`
+ * d'ADR — la bête grondante n'existe qu'en forêt, le sniper que dans l'herbe…). Tirage UNIFORME
+ * dans le pool (fidèle `triggerFight`). Pool vide (route, marais…) -> null = pas de combat,
+ * mais le compteur de pas a été remis à zéro par l'appelant (fidèle, le tirage est « dépensé »).
+ * CONSOMME un tirage.
+ */
+export function pickEnemy(rng: RngState, tier: number, terrain: string): EnemyDef | null {
+  const pool = enemiesForTier(tier).filter((e) => e.terrain === terrain);
+  if (pool.length === 0) { nextFloat(rng); return null; } // tirage consommé quand même (stabilité replay)
+  return pool[nextInt(rng, pool.length)];
 }
 
 /**
- * Butin d'une victoire : tirages INDÉPENDANTS par entrée `[ressource, chance, min, max]`
- * (fidèle au modèle d'encounters.js). CONSOMME des tirages (2 par entrée au plus).
+ * Butin d'une victoire : tirages INDÉPENDANTS par entrée `[ressource, chance, min, max]`.
+ * Quantité FIDÈLE à `drawLoot` d'ADR : `floor(random*(max-min)) + min` -> min..max-1 (le max
+ * déclaré n'est jamais tiré ; min si max == min). CONSOMME des tirages (2 par entrée au plus).
  */
 export function rollEnemyLoot(rng: RngState, enemy: EnemyDef): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [res, chance, min, max] of enemy.loot) {
     if (nextFloat(rng) >= chance) continue;
-    out[res] = (out[res] ?? 0) + min + nextInt(rng, max - min + 1);
+    out[res] = (out[res] ?? 0) + min + nextInt(rng, Math.max(1, max - min));
   }
   return out;
 }

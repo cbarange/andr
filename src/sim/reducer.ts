@@ -17,11 +17,11 @@ import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
 import { lootForNode, lootNodeIds } from "./dungeon";
 import { drawRoad } from "./roads";
-import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit } from "./combat";
+import { stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit } from "./combat";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById,
+  weaponById, enemyById, tradeGoodById, mineGuardians,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -55,10 +55,9 @@ const RECHARGE_TICKS = config.survival.rechargeSeconds * HZ;
 const RESPAWN_COOLDOWN_TICKS = config.survival.respawnCooldownSeconds * HZ;
 const MAX_FOOD = config.survival.maxFood;
 const DEATH_STORAGE_PENALTY = config.survival.deathStoragePenalty;
-// --- M8 : combat (échéances en tics, dérivées des secondes des données) ---
-const ENCOUNTER_ROLL_TICKS = config.combat.rollSeconds * HZ;
-const POST_VICTORY_TICKS = config.combat.postVictorySeconds * HZ;
-const POST_FLEE_TICKS = config.combat.postFleeSeconds * HZ;
+// --- M8/M8.5 : combat (déclenchement PAR PAS, fidèle ADR) ---
+const FIGHT_DELAY_STEPS = config.combat.fightDelaySteps;
+const MAX_STEPS_PER_ACTION = config.combat.maxStepsPerAction;
 const EAT_COOLDOWN_TICKS = config.combat.eatCooldownSeconds * HZ;
 const EAT_MEAT_HEAL = config.combat.eatMeatHeal;
 const MEDS_COOLDOWN_TICKS = config.combat.medsCooldownSeconds * HZ;
@@ -420,9 +419,12 @@ export function reduce(state: GameState, action: GameAction): GameState {
 
     case "SECURE_MINE": {
       // Sécuriser le filon SUFFIT à débloquer le métier (cf. garde ASSIGN_WORKER). Idempotent.
+      // M8.5/F3.1 : il faut d'abord avoir VAINCU tous les gardiens scriptés (fidèle setpieces.js).
       const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key] ?? {};
       if (prog.secured) return state;
+      const guardians = mineGuardians[action.siteType];
+      if (guardians && (prog.guardians ?? 0) < guardians.length) return state; // gardiens restants
       // Mine sécurisée : une route est tracée (fidèle ADR) MAIS la mine ne devient PAS un avant-poste.
       const mineSites = { ...state.sites, [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true, secured: true } };
       return {
@@ -568,24 +570,100 @@ export function reduce(state: GameState, action: GameAction): GameState {
       let combat = state.combat;
       if (cur.outside !== action.outside || !state.survival[pid]) {
         if (action.outside) {
-          // Sort dehors : (ré)arme les échéances de drain + le 1ᵉʳ tirage de rencontre (jamais instantané).
+          // Sort dehors : (ré)arme les échéances de drain + repart de zéro pas (jamais de combat
+          // avant FIGHT_DELAY pas de marche — fidèle à l'esprit du compteur d'ADR).
           rec.waterAt = state.tick + WATER_DRAIN_TICKS;
           rec.foodAt = state.tick + FOOD_DRAIN_TICKS;
           rec.healthAt = state.tick + HEALTH_DRAIN_TICKS;
-          rec.encounterRollAt = state.tick + ENCOUNTER_ROLL_TICKS;
+          rec.fightSteps = 0;
         } else {
-          // Rentre au camp : arme la recharge ; un combat en cours est ROMPU (fuite automatique).
+          // Rentre au camp : arme la recharge ; un combat en cours est ROMPU (désengagement).
           rec.waterAt = state.tick + RECHARGE_TICKS;
           rec.foodAt = state.tick + RECHARGE_TICKS;
           rec.healthAt = state.tick + RECHARGE_TICKS;
           if (combat[pid]) {
             const { [pid]: _gone, ...rest } = combat;
             combat = rest;
-            rec.encounterRollAt = state.tick + POST_FLEE_TICKS;
+            rec.fightSteps = 0;
           }
         }
       }
       return { ...state, survival: { ...state.survival, [pid]: rec }, combat, rng: cloneRng(state.rng) };
+    }
+
+    case "STEPS": {
+      // M8.5/F1 — fidèle `checkFight` d'ADR : pour CHAQUE pas parcouru, incrémente le compteur ;
+      // au-delà de FIGHT_DELAY (3), tirage FIGHT_CHANCE ; succès -> compteur remis à zéro et
+      // rencontre tirée dans la table (tier × biome). Sur ROUTE : le pool est vide (fidèle —
+      // aucune rencontre n'y est éligible) mais le tirage est dépensé. Immobile = jamais appelé.
+      const pid = action.playerId;
+      const sv = state.survival[pid];
+      if (!sv || !sv.outside || state.tick < sv.respawnReadyAt) return state;
+      if (state.combat[pid]) return state; // déjà en combat
+      const n = Math.max(1, Math.min(MAX_STEPS_PER_ACTION, Math.floor(action.n)));
+      let fightSteps = sv.fightSteps;
+      let rng = state.rng;
+      let encounter: Encounter | null = null;
+      let encounterSeq = sv.encounterSeq;
+      for (let i = 0; i < n; i++) {
+        fightSteps++;
+        if (fightSteps <= FIGHT_DELAY_STEPS) continue;
+        rng = rng === state.rng ? cloneRng(state.rng) : rng;
+        if (!stepFightTriggers(rng, action.tier)) continue;
+        fightSteps = 0; // tirage réussi : compteur remis à zéro MÊME si le pool est vide (fidèle)
+        const enemy = action.onRoad ? null : pickEnemy(rng, action.tier, action.biome);
+        if (!enemy) continue;
+        encounterSeq++;
+        encounter = {
+          enemyId: enemy.id,
+          enemyHp: enemy.hp,
+          enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
+          weaponReadyAt: {},
+          seq: encounterSeq,
+        };
+        break; // en combat : les pas restants sont abandonnés
+      }
+      if (fightSteps === sv.fightSteps && !encounter) return state; // rien n'a changé
+      const rec: PlayerSurvival = { ...sv, fightSteps, encounterSeq };
+      return {
+        ...state,
+        survival: { ...state.survival, [pid]: rec },
+        combat: encounter ? { ...state.combat, [pid]: encounter } : state.combat,
+        rng: rng === state.rng ? cloneRng(state.rng) : rng,
+      };
+    }
+
+    case "ENGAGE_GUARDIAN": {
+      // M8.5/F3.1 — provoque le combat contre le PROCHAIN gardien scripté de la mine (setpiece).
+      const pid = action.playerId;
+      if (state.combat[pid]) return state;
+      const list = mineGuardians[action.siteType];
+      if (!list) return state;
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      const idx = prog.guardians ?? 0;
+      if (idx >= list.length) return state; // tous vaincus
+      const enemy = enemyById[list[idx]];
+      if (!enemy) return state;
+      const sv = state.survival[pid] ?? baseSurvival();
+      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
+      const enc: Encounter = {
+        enemyId: enemy.id,
+        enemyHp: enemy.hp,
+        enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
+        weaponReadyAt: {},
+        seq: rec.encounterSeq,
+        siteKey: key,
+        siteType: action.siteType,
+        guardianIdx: idx,
+      };
+      return {
+        ...state,
+        combat: { ...state.combat, [pid]: enc },
+        survival: { ...state.survival, [pid]: rec },
+        sites: { ...state.sites, [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true } },
+        rng: cloneRng(state.rng),
+      };
     }
 
     case "ATTACK": {
@@ -634,12 +712,21 @@ export function reduce(state: GameState, action: GameAction): GameState {
       }
       const { [pid]: _won, ...restCombat } = state.combat;
       const sv = state.survival[pid] ?? baseSurvival();
-      const rec: PlayerSurvival = { ...sv, winSeq: sv.winSeq + 1, encounterRollAt: state.tick + POST_VICTORY_TICKS };
+      const rec: PlayerSurvival = { ...sv, winSeq: sv.winSeq + 1, fightSteps: 0 };
+      // M8.5/F3.1 : victoire sur un GARDIEN de mine -> progression de la séquence scriptée.
+      let sites = state.sites;
+      if (enc.siteKey !== undefined && enc.guardianIdx !== undefined) {
+        const prog = (state.sites ?? {})[enc.siteKey] ?? {};
+        if ((prog.guardians ?? 0) === enc.guardianIdx) {
+          sites = { ...state.sites, [enc.siteKey]: { ...prog, guardians: enc.guardianIdx + 1 } };
+        }
+      }
       return {
         ...state,
         carried: { ...carriedAfter, [pid]: bag },
         combat: restCombat,
         survival: { ...state.survival, [pid]: rec },
+        sites,
         rng,
       };
     }
@@ -669,12 +756,19 @@ export function reduce(state: GameState, action: GameAction): GameState {
     }
 
     case "FLEE": {
-      // M8 : fuit la rencontre (la ferme, sans butin ni pénalité — fidèle ADR) ; répit court.
+      // M8 : rompt la rencontre (désengagement « physique » du monde continu — adaptation : ADR
+      // n'a pas de bouton fuir, le retrait sera affiné en F4). Le DERNIER gardien d'une mine est
+      // SANS échappatoire (fidèle « no run button » du chef/vétéran/matriarche).
       const pid = action.playerId;
-      if (!state.combat[pid]) return state;
+      const enc = state.combat[pid];
+      if (!enc) return state;
+      if (enc.guardianIdx !== undefined && enc.siteType) {
+        const list = mineGuardians[enc.siteType] ?? [];
+        if (enc.guardianIdx >= list.length - 1) return state; // dernier gardien : pas de fuite
+      }
       const { [pid]: _fled, ...rest } = state.combat;
       const sv = state.survival[pid] ?? baseSurvival();
-      const rec: PlayerSurvival = { ...sv, encounterRollAt: state.tick + POST_FLEE_TICKS };
+      const rec: PlayerSurvival = { ...sv, fightSteps: 0 };
       return { ...state, combat: rest, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
     }
 
@@ -1107,46 +1201,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
         if (survMutated) survival = nextSurv;
       }
 
-      // 8a) COMBAT — DÉCLENCHEMENT (M8, hôte) : par joueur DEHORS, hors grâce et hors combat, à
-      //     l'échéance de tirage : chance FIGHT_CHANCE(tier) × facteur route (R4). ⚠️ Cette phase
-      //     CONSOMME du RNG -> le tri de l'itération est PORTEUR de déterminisme (pas défensif).
-      {
-        const ids = Object.keys(survival).sort();
-        let nextSurv: Record<string, PlayerSurvival> | null = null;
-        let nextCombat: Record<string, Encounter> | null = null;
-        for (const pid of ids) {
-          const sv = (nextSurv ?? survival)[pid];
-          if (!sv.outside || tick < sv.respawnReadyAt || combat[pid] || sv.tier <= 0) continue;
-          if (sv.encounterRollAt === 0) {
-            // Save/record d'avant M8 : amorce l'horloge de tirage sans déclencher.
-            nextSurv = nextSurv ?? { ...survival };
-            nextSurv[pid] = { ...sv, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
-            continue;
-          }
-          if (tick < sv.encounterRollAt) continue;
-          rng = rng === state.rng ? cloneRng(state.rng) : rng;
-          nextSurv = nextSurv ?? { ...survival };
-          if (shouldTriggerEncounter(rng, sv.tier, sv.onRoad)) {
-            const enemy = pickEnemy(rng, sv.tier);
-            if (enemy) {
-              nextCombat = nextCombat ?? { ...combat };
-              const rec = { ...sv, encounterSeq: sv.encounterSeq + 1, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
-              nextSurv[pid] = rec;
-              nextCombat[pid] = {
-                enemyId: enemy.id,
-                enemyHp: enemy.hp,
-                enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ),
-                weaponReadyAt: {},
-                seq: rec.encounterSeq,
-              };
-              continue;
-            }
-          }
-          nextSurv[pid] = { ...sv, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
-        }
-        if (nextSurv) survival = nextSurv;
-        if (nextCombat) combat = nextCombat;
-      }
+      // (8a — le DÉCLENCHEMENT des rencontres n'est PLUS temporel : il vit dans l'action STEPS,
+      //  par PAS de déplacement, fidèle au `checkFight` d'ADR — cf. M8.5/F1.)
 
       // 8b) COMBAT — FRAPPES ENNEMIES : à l'échéance `enemyNextAt`, tirage de toucher (par ennemi,
       //     comme ADR) -> dégâts sur la santé (plancher 0 ; mort en 8c). Tri PORTEUR (RNG).

@@ -160,6 +160,29 @@ export type SetOutsideAction = {
 
 // ---- M8 : combat temps réel (rencontres non-spatiales par joueur, fidèle ADR) ----
 
+/**
+ * M8.5/F1 : le joueur a PARCOURU `n` pas dehors (1 pas = 1 cellule, podomètre client — la position
+ * est locale). L'hôte tire les rencontres PAR PAS (FIGHT_CHANCE/FIGHT_DELAY d'ADR), avec le
+ * contexte spatial du moment : tier de distance, biome du terrain, route (= aucune rencontre).
+ */
+export type StepsAction = {
+  type: "STEPS";
+  playerId: string;
+  n: number;
+  tier: number;
+  biome: string; // "forest" | "field" | "barrens" | "cave" | "swamp" | …
+  onRoad: boolean;
+};
+
+/** M8.5/F3.1 : provoque le combat contre le PROCHAIN gardien scripté d'une mine (setpiece). */
+export type EngageGuardianAction = {
+  type: "ENGAGE_GUARDIAN";
+  playerId: string;
+  cx: number;
+  cz: number;
+  siteType: string;
+};
+
 /** Frappe l'ennemi de SA rencontre avec une arme (cooldown PAR arme ; poings toujours dispo). */
 export type AttackAction = {
   type: "ATTACK";
@@ -299,6 +322,8 @@ export type GameAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | StepsAction
+  | EngageGuardianAction
   | AttackAction
   | EatMeatAction
   | FleeAction
@@ -342,6 +367,8 @@ export type PlayerAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | StepsAction
+  | EngageGuardianAction
   | AttackAction
   | EatMeatAction
   | FleeAction
@@ -443,6 +470,12 @@ export function craftItem(playerId: string, itemId: string): CraftItemAction {
 }
 export function setOutside(playerId: string, outside: boolean, tier?: number, onRoad?: boolean): SetOutsideAction {
   return { type: "SET_OUTSIDE", playerId, outside, ...(tier !== undefined ? { tier } : {}), ...(onRoad !== undefined ? { onRoad } : {}) };
+}
+export function steps(playerId: string, n: number, tier: number, biome: string, onRoad: boolean): StepsAction {
+  return { type: "STEPS", playerId, n, tier, biome, onRoad };
+}
+export function engageGuardian(playerId: string, cx: number, cz: number, siteType: string): EngageGuardianAction {
+  return { type: "ENGAGE_GUARDIAN", playerId, cx, cz, siteType };
 }
 export function attack(playerId: string, weapon: string): AttackAction {
   return { type: "ATTACK", playerId, weapon };
