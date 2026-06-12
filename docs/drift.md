@@ -75,6 +75,14 @@ oubliés), l'**outillage dev** (exposé en prod) et la **dette de structure** (m
 >   `render/rampart.ts` (palissade mergée 1 mesh, colliders aux seuls montants de porte), jauges + chip HUD,
 >   mort observée par diff `deathSeq` → téléport. **Sain** (pur, +14 tests, +1 e2e). Nouveaux hooks
 >   `__game.getSurvival/setSurvival` → renforce #4 (sortir l'outillage dev du bundle le jour venu).
+> - **Combat M8 (sim + rendu, juin 2026)** : `GameState.combat` (par joueur, ADDITIF, snapshot intégral,
+>   strippé à la save) + `sim/combat.ts` (helpers PURS) + phases TICK **8a/8b/8c** (déclenchement/frappes/
+>   mort UNIFIÉE soif+combat) — ⚠️ ces phases consomment du RNG par joueur : le **tri d'itération est
+>   PORTEUR de déterminisme** (testé : replay 2 joueurs). `SET_OUTSIDE` étendu (tier/route) SANS ré-armer
+>   les drains (piège H1, test de régression). Rendu : `render/encounter.ts` + créatures (characters.ts),
+>   panneau HUD, musique `encounter-*` routée bus event (fix ducking). **Sain** (+17 unit, +2 e2e).
+>   Hooks `__game` combat (getCombat/startEncounter/attack/…) → renforce #4. `main.ts` a ENCORE grossi
+>   (craftView, watcher triple, bloc rencontre) → **A6 de plus en plus pressant**.
 > - **Toujours valable** : #4 (outils dev en prod, différé), #7 (`main.ts` god-object — a encore grossi),
 >   #8 (bâtiments merge+instance, différé), #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
 

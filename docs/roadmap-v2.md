@@ -26,9 +26,10 @@
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
-| **Contenu manquant** : combat (M8) · commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
+| **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
+| **Contenu manquant** : commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
 
-> Vérif à chaque pas : **typecheck · ~190 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~207 tests unit · 14 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -127,7 +128,7 @@ l'avancement :
 | Événements (room/outside, choix→conséquences) | ✅ 9/~15 | M5 fait ; reste → M10 |
 | Carte / biomes / sites (génération + rendu) | 🟡 INERTE | M7/M9 (logique) |
 | Survie eau / nourriture / mort | ✅ **FAIT** (M6+M7 : drain dehors, mort = perte du sac, recharge camp) | équilibrage M12 |
-| Combat (ennemis, armes, PV, butin, soin) | ❌ ABSENT | **M8** |
+| Combat (ennemis, armes, PV, butin, soin) | ✅ **FAIT** (M8 : temps réel, tables ADR exactes, soin = manger) | armes/armures = M10 |
 | Mines fer/charbon/soufre (sécuriser ⇒ mineur) | ✅ **FAIT** (M9) | — |
 | Sidérurgie acier→balles | ✅ **ressuscité** (M9) | équilibrage M12 |
 | Sites/donjons : **grotte + 3 mines** explorables | ✅ **FAIT** (M9) | — |
@@ -350,7 +351,19 @@ manque). Objectif : matérialiser le retranchement et le franchissement, et pose
 - **Acceptation** : s'éloigner vide l'eau ; revenir/avant-poste recharge ; courir à sec = mort + retour ;
   monde reproductible à graine (déjà testé) ; **60 FPS tenus** (streaming/LOD/autoperf déjà là).
 
-### ⚔️ M8 — Combat 3D & créatures — **L**
+### ⚔️ M8 — Combat 3D & créatures — **L** — ✅ **CŒUR FAIT (juin 2026)**
+> **Livré** : rencontre **NON-SPATIALE par joueur** (`combat[pid]`, duel abstrait fidèle à l'écran
+> ADR ; l'ennemi est rendu LOCALEMENT — il rôde/fente, `render/encounter.ts`) ; déclenchement par
+> temps d'exposition (FIGHT_CHANCE 0.20, tiers par anneaux 1..3 + cavernes, **routes ×0.4 = R4**) ;
+> `ATTACK` à cooldown PAR ARME (poings 1/2 s, lance d'os 2/2 s — recette ADR 100 bois+5 dents,
+> atelier requis), hit 0.8, **tables d'ennemis ADR exactes** (hit/dégâts/butin PAR ennemi, médecine
+> du grelottant) ; `EAT_MEAT` (**F**, +8 PV/5 s) ; `FLEE` sans pénalité ; **auto-flee** au retour
+> camp ; **mort = balayage UNIFIÉ** soif/combat (sac perdu, `deathSeq`) ; victoire observée par
+> `winSeq` (butin RNG hôte → sac borné). Phases TICK 8a/8b/8c (tri PORTEUR de déterminisme, RNG
+> clone-on-first-use). Musique `encounter-tier-N` (bus event, non ducké), sfx armes/mort/manger.
+> **Fabrication diégétique branchée** (constructrice + station atelier). +17 unit, +2 e2e.
+> **Reste** : vraies armes/armures (M10 — tiers 2/3 jouables), perks, rendu de l'ennemi d'un pair.
+
 **C'est ICI que vivent les créatures d'ADR** (rencontres du monde, pas le village). Tables d'ennemis tiérées
 par distance déjà documentées (`roadmap.md` Partie 3, M8).
 

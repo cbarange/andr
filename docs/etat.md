@@ -8,21 +8,23 @@
 >
 > *Dernière passe de maintenance : juin 2026 (après Chantier C, M9, routes & sites ; puis **construction
 > visuelle/temporisée + montée de la cabane**, **sentiers dynamiques + dégagement des emprises**, **étiquettes
-> de joueur en P2P** ; puis **M6/M7 : rempart + porte + survie eau/vivres/PV par joueur**).*
+> de joueur en P2P** ; puis **M6/M7 : rempart + porte + survie eau/vivres/PV par joueur** ; puis
+> **M8 : combat temps réel fidèle ADR + R3a fouille des forages (alliage)**).*
 
 ## En une phrase
 **A Dark Room réimaginé en 3D web native** (Babylon.js + Havok + Trystero), simulation **pure, déterministe,
 host-autoritaire**. L'**Acte I jouable de bout en bout** (feu → construction → population → métiers/chaînes),
 le **village vivant et harmonieux**, un **monde carré exploré** (biomes en régions, vraies bordures, sites
-variés, grottes/mines explorables, routes qui se tissent), et la **survie dehors** (M6/M7 : zone sûre,
-eau/vivres/PV, mort = perte du sac). Manquent surtout : **combat, commerce, fin de partie**.
+variés, grottes/mines explorables, routes qui se tissent), la **survie dehors** (M6/M7) et le **combat
+temps réel fidèle ADR** (M8 : rencontres tiérées, armes à cooldown, butin, mort = perte du sac).
+Manquent surtout : **commerce/objets (M10), fin de partie (M11)**.
 
 ## Vérification (tout vert)
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 190 tests de sim/logique (rapide, sans navigateur)
-npm run e2e     # 12 tests Playwright (boucle, P2P, save, perf, sites, survie…) + capture
+npm run test    # 207 tests de sim/logique (rapide, sans navigateur)
+npm run e2e     # 14 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
 
@@ -95,6 +97,25 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   fidèle ADR, partagé entre joueurs — premier-servi) ; remplit **eau + vivres** (PV = manger, M8) ; no-op si
   tout est plein ; verbe « se ravitailler » qui disparaît une fois l'avant-poste épuisé (`SiteProgress.used`).
 
+### Combat temps réel (M8 — récent) — ✅ FIDÈLE ADR
+- **Rencontre NON-SPATIALE par joueur** (duel abstrait 1v1, fidèle à l'écran de combat d'ADR) :
+  `combat[pid]` + déclenchement par TEMPS d'exposition dehors (FIGHT_CHANCE 0.20 d'ADR, tirages RNG
+  hôte), **tiers de danger par anneaux de distance** (1..3 + cavernes), **routes = rencontres
+  raréfiées** (×0.4 — livre R4 « route sécurisée »).
+- **Tables d'ennemis du code source ADR, NON adoucies** : T1 bête grondante/homme décharné/oiseau
+  étrange · T2 homme grelottant (→ **médecine**)/mangeur d'hommes/charognard/grand lézard · T3
+  terreur sauvage/soldat/sniper · cavernes : lézard/bête. **Tier 2/3 mortels sans armure (M10) —
+  design ADR : FUIR est la réponse.**
+- **Armes à COOLDOWN propre** : poings (1 dég/2 s) toujours ; **lance d'os** (2/2 s, recette ADR
+  100 bois + 5 dents, **atelier requis**). `ATTACK` (hit 0.8), `EAT_MEAT` (**F** : +8 PV, viande
+  séchée du sac, cooldown 5 s), `FLEE` sans pénalité ; mort = chemin unifié M7 (sac perdu, respawn).
+- **Rendu** : créatures low-poly (quadrupède/lézard/oiseau/humanoïde sombre) qui **rôdent, font
+  face, fentent** à chaque frappe (`render/encounter.ts`) ; panneau HUD (nom + PV + arme/recharge) ;
+  musique `encounter-tier-N` en overlay ; victoire = effondrement + butin (winSeq), observée par diff.
+- **Fabrication DIÉGÉTIQUE enfin branchée** (trou M9 comblé) : « fabriquer un objet… » chez la
+  constructrice (torche — room-craft ADR) + verbe **E « fabriquer »** sur l'atelier construit (tous
+  les objets, dont la lance d'os).
+
 ### Transverse — ✅
 - **Multijoueur P2P** host-autoritaire (Trystero/WebRTC) : « Ouvrir ma partie » (lien à partager) ; **failover
   par époque** (un hôte silencieux ne fige plus les autres ; heartbeat + Raft-lite) + **STUN** publics ;
@@ -108,6 +129,8 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **M6 (seuil) ✅ · M7 (survie) ✅** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
   du sac, recharge camp) + **ravitaillement aux avant-postes** (`USE_OUTPOST`, usage unique fidèle ADR).
   Reste : fog of war (différé), équilibrage (M12).
+- **M8 (combat) ✅ cœur** — temps réel fidèle ADR (cf. section dédiée). Reste : armes/armures M10
+  (épées, fusil, PV d'armure), perks, audio fin (variations), rendu de l'ennemi d'un pair distant.
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -132,14 +155,16 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
+1. **M10 (atelier complet + commerce + perks)** : armes/armures (rend les tiers 2/3 jouables), poste
+   de traite, perks — la vue « fabriquer » et la station atelier existent déjà (M8).
 2. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire M10) + butin lourd.
-3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
+3. **M11 (fin de partie)** : l'alliage a sa source (R3a) — épave → vaisseau → décollage → fin.
+4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Combat/commerce/fin = absents** : la **survie existe** (M6/M7 : pression eau/vivres dehors, mort = perte
-  du sac, recharge au camp, **ravitaillement aux avant-postes** à usage unique) ; ni combat, ni poste de
-  traite/atelier fonctionnels, ni fin.
+- **Commerce/fin = absents** ; le **combat existe** (M8) mais : l'ennemi d'un joueur DISTANT n'est pas
+  rendu (sim non-spatiale, v1) ; tier/onRoad déclarés par le client (même confiance que SET_OUTSIDE) ;
+  **tiers 2/3 mortels sans armure** (volontaire, fidèle ADR — M10 les rendra jouables).
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;
   entrepôt/village/sites persistent.
 - **Poste de traite & atelier = bâtissables mais sans effet** (commerce/objets = M10).
