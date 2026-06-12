@@ -85,27 +85,39 @@ export function dungeonFor(type: string, cx: number, cz: number, worldSeed: numb
   const entry: DungeonNode = { id: "entry", kind: "entry", depth: 0, pos: { x: 0, z: 0 }, loot: {} };
   nodes.push(entry);
 
-  if (type === "borehole" || type === "battlefield") {
-    // --- SITE DE SURFACE (R3) : pas de tunnel — des points de FOUILLE autour du centre. ---
-    // Le forage est la source PRINCIPALE d'alliage extraterrestre (fidèle ADR) ; le champ de
-    // bataille rend les restes des combats (munitions, métal — les ARMES elles-mêmes = M10).
-    const spots = 2 + nextInt(rng, 2); // 2..3 points de fouille
+  if (type === "borehole") {
+    // --- ADR EXACT (setpieces.js) : UN forage = alliage 1–3 GARANTI (la seule source sûre
+    //     d'alliage avant la fin de partie). Un seul point de fouille. ---
+    const ang = nextFloat(rng) * Math.PI * 2;
+    const r = 4 + nextFloat(rng) * 4;
+    nodes.push({ id: "s0", kind: "chamber", depth: 0, pos: { x: Math.cos(ang) * r, z: Math.sin(ang) * r },
+      loot: { "alien alloy": 1 + nextInt(rng, 3) } }); // 1..3 (min..max-1 de 1–3+1, fidèle)
+    segments.push({ from: "entry", to: "s0" });
+    return { type, nodes, segments };
+  }
+  if (type === "battlefield") {
+    // --- ADR EXACT : la table UNIQUE du champ de bataille (armes lourdes), tirée une fois puis
+    //     RÉPARTIE sur 2-3 points de fouille (adaptation : une scène ADR -> des objets 3D).
+    //     [ressource, chance, min, max] avec tirage min..max-1, fidèle drawLoot. ---
+    const TABLE: Array<[string, number, number, number]> = [
+      ["rifle", 0.5, 1, 3], ["bullets", 0.8, 5, 20], ["laser rifle", 0.3, 1, 3],
+      ["energy cell", 0.5, 5, 10], ["grenade", 0.5, 1, 5], ["alien alloy", 0.3, 1, 1],
+    ];
+    const drops: Array<[string, number]> = [];
+    for (const [res, chance, min, max] of TABLE) {
+      if (nextFloat(rng) >= chance) continue;
+      drops.push([res, min + nextInt(rng, Math.max(1, max - min))]);
+    }
+    const spots = 2 + nextInt(rng, 2); // 2..3 points
+    const loots: Array<Record<string, number>> = Array.from({ length: spots }, () => ({}));
+    drops.forEach(([res, n], i) => { loots[i % spots][res] = (loots[i % spots][res] ?? 0) + n; });
     for (let i = 0; i < spots; i++) {
       const ang = nextFloat(rng) * Math.PI * 2;
-      const r = 4 + nextFloat(rng) * 5; // 4..9 u du centre du site
-      const loot: Record<string, number> = {};
-      if (type === "borehole") {
-        loot["alien alloy"] = 1 + nextInt(rng, 3); // 1..3
-        if (nextFloat(rng) < 0.35) loot["energy cell"] = 1 + nextInt(rng, 2);
-      } else {
-        const roll = nextFloat(rng);
-        if (roll < 0.5) loot["bullets"] = 2 + nextInt(rng, 5);
-        else if (roll < 0.85) loot["steel"] = 1 + nextInt(rng, 3);
-        else loot["energy cell"] = 1 + nextInt(rng, 2);
-        if (nextFloat(rng) < 0.12) loot["alien alloy"] = 1; // éclat rare
-      }
-      nodes.push({ id: "s" + i, kind: "chamber", depth: 0, pos: { x: Math.cos(ang) * r, z: Math.sin(ang) * r }, loot });
-      segments.push({ from: "entry", to: "s" + i });
+      const r = 4 + nextFloat(rng) * 5;
+      const hasLoot = Object.keys(loots[i]).length > 0;
+      nodes.push({ id: "s" + i, kind: hasLoot ? "chamber" : "deadend", depth: 0,
+        pos: { x: Math.cos(ang) * r, z: Math.sin(ang) * r }, loot: loots[i] });
+      if (hasLoot) segments.push({ from: "entry", to: "s" + i });
     }
     return { type, nodes, segments };
   }

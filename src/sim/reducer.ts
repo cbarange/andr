@@ -482,8 +482,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // no-op (on ne gaspille pas l'usage unique).
       const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key];
-      if (!prog?.cleared || prog.used) return state; // pas un avant-poste, ou déjà épuisé
       const pid = action.playerId;
+      // M8.5/F4 : utilisable UNE FOIS PAR EXPÉDITION ET PAR JOUEUR (fidèle `usedOutposts` d'ADR,
+      // remis à zéro au retour au village — cf. SET_OUTSIDE outside=false).
+      if (!prog?.cleared || prog.usedBy?.[pid]) return state; // pas un avant-poste, ou déjà utilisé ce voyage
       const cur = state.survival[pid] ?? baseSurvival();
       const capW = maxWaterOf(state); // M10 : l'outre/baril/citerne agrandit le plein
       if (cur.water >= capW && cur.food >= MAX_FOOD) return state; // rien à remplir
@@ -498,7 +500,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         survival: { ...state.survival, [pid]: rec },
-        sites: { ...state.sites, [key]: { ...prog, used: true } },
+        sites: { ...state.sites, [key]: { ...prog, usedBy: { ...(prog.usedBy ?? {}), [pid]: true } } },
         rng: cloneRng(state.rng),
       };
     }
@@ -588,7 +590,92 @@ export function reduce(state: GameState, action: GameAction): GameState {
           }
         }
       }
-      return { ...state, survival: { ...state.survival, [pid]: rec }, combat, rng: cloneRng(state.rng) };
+      // M8.5/F4 — FIN D'EXPÉDITION : le retour au village « repose » les avant-postes de CE joueur
+      // (fidèle ADR : `usedOutposts` est remis à zéro à chaque embarquement).
+      let sites = state.sites;
+      if (cur.outside && !action.outside) {
+        let changed = false;
+        const next: typeof sites = { ...sites };
+        for (const k of Object.keys(sites)) {
+          const sp = sites[k];
+          if (sp.usedBy?.[pid]) {
+            const { [pid]: _u, ...restUsed } = sp.usedBy;
+            next[k] = { ...sp, usedBy: restUsed };
+            changed = true;
+          }
+        }
+        if (changed) sites = next;
+      }
+      return { ...state, survival: { ...state.survival, [pid]: rec }, combat, sites, rng: cloneRng(state.rng) };
+    }
+
+    case "VISIT_HOUSE": {
+      // M8.5/F3.3 — fidèle au setpiece `house` d'ADR : tirage 25 % médecine ×2–4 / 25 % vivres +
+      // EAU REMPLIE / 50 % SQUATTEUR embusqué (combat). One-shot (`visited` = markVisited).
+      const pid = action.playerId;
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.visited) return state; // déjà fouillée
+      if (state.combat[pid]) return state;
+      const rng = cloneRng(state.rng);
+      const sites = { ...state.sites, [key]: { ...prog, type: prog.type ?? "house", discovered: true, visited: true } };
+      const roll = nextFloat(rng);
+      const sv = state.survival[pid] ?? baseSurvival();
+      if (roll < 0.25) {
+        // Une armoire à pharmacie oubliée : médecine 2–4 (tirage min..max-1 de 2–5, fidèle).
+        const n = 2 + nextInt(rng, 3);
+        const room = carryCapacity(state) - carriedTotal(state, pid);
+        const bag = { ...(state.carried[pid] ?? {}) };
+        bag["medicine"] = (bag["medicine"] ?? 0) + Math.max(0, Math.min(n, room));
+        if (bag["medicine"] === 0) delete bag["medicine"];
+        return { ...state, sites, carried: { ...state.carried, [pid]: bag }, rng };
+      }
+      if (roll < 0.5) {
+        // Des réserves… et un puits encore bon : EAU REMPLIE (fidèle setWater(getMaxWater())).
+        const rec: PlayerSurvival = { ...sv, water: maxWaterOf(state) };
+        let room = carryCapacity(state) - carriedTotal(state, pid);
+        const bag = { ...(state.carried[pid] ?? {}) };
+        const TABLE: Array<[string, number, number, number]> = [["cured meat", 0.8, 1, 10], ["cloth", 0.5, 1, 10], ["leather", 0.2, 1, 10]];
+        for (const [res, chance, min, max] of TABLE) {
+          if (nextFloat(rng) >= chance) continue;
+          const n = Math.min(min + nextInt(rng, Math.max(1, max - min)), room);
+          if (n <= 0) continue;
+          bag[res] = (bag[res] ?? 0) + n;
+          room -= n;
+        }
+        return { ...state, sites, carried: { ...state.carried, [pid]: bag }, survival: { ...state.survival, [pid]: rec }, rng };
+      }
+      // 50 % : la maison est OCCUPÉE — un squatteur charge, lame rouillée au poing.
+      const enemy = enemyById["squatter"];
+      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
+      const enc: Encounter = {
+        enemyId: enemy.id,
+        enemyHp: enemy.hp,
+        enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
+        weaponReadyAt: {},
+        seq: rec.encounterSeq,
+      };
+      return { ...state, sites, combat: { ...state.combat, [pid]: enc }, survival: { ...state.survival, [pid]: rec }, rng };
+    }
+
+    case "TALK_SWAMP": {
+      // M8.5/F3.4 — fidèle au setpiece `swamp` : offrir 1 CHARME (du sac) au vieil ermite ⇒ perk
+      // « gastronome » (viande ×2). One-shot.
+      const pid = action.playerId;
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.visited || state.perks["gastronome"]) return state;
+      if (carriedOf(state, pid, "charm") < 1) return state; // il veut un charme
+      const bag = { ...(state.carried[pid] ?? {}) };
+      bag["charm"] -= 1;
+      if (bag["charm"] <= 0) delete bag["charm"];
+      return {
+        ...state,
+        carried: { ...state.carried, [pid]: bag },
+        perks: { ...state.perks, gastronome: true },
+        sites: { ...state.sites, [key]: { ...prog, type: prog.type ?? "swamp", discovered: true, visited: true } },
+        rng: cloneRng(state.rng),
+      };
     }
 
     case "STEPS": {
@@ -742,9 +829,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const bag = { ...(state.carried[pid] ?? {}) };
       bag["cured meat"] -= 1;
       if (bag["cured meat"] <= 0) delete bag["cured meat"];
+      const heal = state.perks["gastronome"] ? EAT_MEAT_HEAL * 2 : EAT_MEAT_HEAL; // gastronome : viande ×2
       const rec: PlayerSurvival = {
         ...sv,
-        health: Math.min(capHp, sv.health + EAT_MEAT_HEAL),
+        health: Math.min(capHp, sv.health + heal),
         eatReadyAt: state.tick + EAT_COOLDOWN_TICKS,
       };
       return {
@@ -1184,7 +1272,12 @@ export function reduce(state: GameState, action: GameAction): GameState {
 
           if (outside && tick >= respawnReadyAt) {
             if (water > 0 && tick >= waterAt) { water -= 1; waterAt = tick + WATER_DRAIN_TICKS; dirty = true; }
-            if (food > 0 && tick >= foodAt) { food -= 1; foodAt = tick + FOOD_DRAIN_TICKS; dirty = true; }
+            if (food > 0 && tick >= foodAt) {
+              food -= 1; foodAt = tick + FOOD_DRAIN_TICKS; dirty = true;
+              // M8.5/F4 — fidèle `useSupplies` d'ADR : manger en voyage SOIGNE (+8, gastronome ×2).
+              const heal = state.perks["gastronome"] ? EAT_MEAT_HEAL * 2 : EAT_MEAT_HEAL;
+              health = Math.min(capHp, health + heal);
+            }
             // À sec d'eau ET de vivres : la santé décline (plancher 0 ; mort en 8c).
             if (water === 0 && food === 0 && health > 0 && tick >= healthAt) { health -= 1; healthAt = tick + HEALTH_DRAIN_TICKS; dirty = true; }
           } else if (!outside && tick >= waterAt && (water < capWater || food < MAX_FOOD || health < capHp)) {

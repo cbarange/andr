@@ -16,6 +16,7 @@ import {
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, flee, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
+  visitHouse, talkSwamp,
 } from "./actions";
 import { stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
 import { enemyById, weaponById, mineGuardians } from "../../data/world";
@@ -1005,7 +1006,7 @@ describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
     };
   }
 
-  it("remplit eau + vivres (pas les PV) et ÉPUISE l'avant-poste", () => {
+  it("remplit eau + vivres (pas les PV) ; utilisé PAR CE JOUEUR pour l'expédition (M8.5/F4)", () => {
     let s = withOutpost();
     s = reduce(s, setOutside("p1", true));
     s = reduce(s, debugSetSurvival("p1", { water: 2, food: 3, health: 5 }));
@@ -1014,15 +1015,27 @@ describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
     expect(sv.water).toBe(SV.maxWater);
     expect(sv.food).toBe(SV.maxFood);
     expect(sv.health).toBe(5); // les PV ne se soignent pas ici (manger = M8)
-    expect(s.sites[siteKey(3, 4)].used).toBe(true);
+    expect(s.sites[siteKey(3, 4)].usedBy?.["p1"]).toBe(true);
+    expect(reduce(s, useOutpost("p1", 3, 4))).toBe(s); // 2ᵉ usage du MÊME voyage : no-op
   });
 
-  it("usage UNIQUE partagé : le 2ᵉ ravitaillement est un no-op (même pour un autre joueur)", () => {
+  it("PAR EXPÉDITION (fidèle usedOutposts d'ADR) : un autre joueur peut l'utiliser ; le retour au camp le repose", () => {
     let s = withOutpost();
+    s = reduce(s, setOutside("p1", true));
     s = reduce(s, debugSetSurvival("p1", { water: 1 }));
     s = reduce(s, useOutpost("p1", 3, 4));
-    const after = reduce(s, debugSetSurvival("p2", { water: 1 }));
-    expect(reduce(after, useOutpost("p2", 3, 4))).toBe(after); // épuisé pour tout le monde
+    // Un AUTRE joueur peut s'y ravitailler (usage par joueur, pas global).
+    let s2 = reduce(s, setOutside("p2", true));
+    s2 = reduce(s2, debugSetSurvival("p2", { water: 1 }));
+    s2 = reduce(s2, useOutpost("p2", 3, 4));
+    expect(survivalOf(s2, "p2").water).toBe(SV.maxWater);
+    // p1 RENTRE au village -> son usage est remis à zéro -> nouvelle expédition, ré-utilisable.
+    s2 = reduce(s2, setOutside("p1", false));
+    expect(s2.sites[siteKey(3, 4)].usedBy?.["p1"]).toBeUndefined();
+    s2 = reduce(s2, setOutside("p1", true));
+    s2 = reduce(s2, debugSetSurvival("p1", { water: 1 }));
+    s2 = reduce(s2, useOutpost("p1", 3, 4));
+    expect(survivalOf(s2, "p1").water).toBe(SV.maxWater);
   });
 
   it("exige une grotte NETTOYÉE (sinon no-op)", () => {
@@ -1439,26 +1452,79 @@ describe("atelier, commerce & perks (M10) — fidèle ADR", () => {
   });
 });
 
+describe("fidélité M8.5/F4 — soin en marchant, mort 120 s, maisons & marais", () => {
+  const SV = config.survival;
+  const FOOD_T = SV.foodDrainSeconds * HZ;
+
+  it("manger en VOYAGE soigne (+8 à chaque conso de vivres — fidèle useSupplies)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = reduce(s, debugSetSurvival("p1", { health: 1 }));
+    s = advanceTicks(s, FOOD_T); // 1 conso de vivres
+    expect(survivalOf(s, "p1").health).toBe(1 + config.combat.eatMeatHeal);
+  });
+
+  it("GASTRONOME double le soin de la viande", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { gastronome: true }, carried: { p1: { "cured meat": 1 } } };
+    s = reduce(s, debugSetSurvival("p1", { health: 1 }));
+    s = reduce(s, eatMeat("p1"));
+    expect(survivalOf(s, "p1").health).toBe(Math.min(SV.maxHealth, 1 + 16)); // ×2, cap 10
+  });
+
+  it("la MORT impose ~120 s de repos (DEATH_COOLDOWN d'ADR)", () => {
+    expect(SV.respawnCooldownSeconds).toBe(120);
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = reduce(s, debugSetSurvival("p1", { water: 0, food: 0, health: 1 }));
+    s = advanceTicks(s, SV.healthDrainSeconds * HZ + 2); // mort
+    const sv = survivalOf(s, "p1");
+    expect(sv.deathSeq).toBe(1);
+    expect(sv.respawnReadyAt - s.tick).toBeGreaterThan(115 * HZ);
+  });
+
+  it("MAISON : fouille one-shot, une des 3 issues d'ADR (médecine / vivres+eau / squatteur)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = reduce(s, debugSetSurvival("p1", { water: 2 }));
+    const out = reduce(s, visitHouse("p1", 9, 9));
+    expect(out.sites[siteKey(9, 9)].visited).toBe(true); // markVisited
+    const gotMeds = (out.carried["p1"]?.["medicine"] ?? 0) > 0;
+    const gotWater = survivalOf(out, "p1").water === SV.maxWater; // eau REMPLIE (issue vivres)
+    const gotFight = !!out.combat["p1"] && out.combat["p1"].enemyId === "squatter";
+    expect(gotMeds || gotWater || gotFight).toBe(true); // une des 3 issues
+    expect(out).toEqual(reduce(s, visitHouse("p1", 9, 9))); // tirage reproductible
+    expect(reduce(out, visitHouse("p1", 9, 9))).toBe(out); // one-shot
+  });
+
+  it("MARAIS : 1 charme (du sac) ⇒ perk gastronome, one-shot, no-op sans charme", () => {
+    const broke = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    expect(reduce(broke, talkSwamp("p1", 12, 0))).toBe(broke); // pas de charme
+    let s: GameState = { ...broke, carried: { p1: { charm: 1 } } };
+    s = reduce(s, talkSwamp("p1", 12, 0));
+    expect(s.perks["gastronome"]).toBe(true);
+    expect(carriedOf(s, "p1", "charm")).toBe(0); // charme offert
+    expect(s.sites[siteKey(12, 0)].visited).toBe(true);
+    expect(reduce(s, talkSwamp("p1", 12, 0))).toBe(s); // one-shot
+  });
+});
+
 describe("fouille de surface — forages & champs de bataille (R3)", () => {
   const SEED = 1337;
 
-  it("un forage a des points de fouille et donne de l'ALLIAGE", () => {
+  it("un forage donne l'ALLIAGE 1-3 GARANTI, seul, en un point (ADR exact — M8.5)", () => {
     const d = dungeonFor("borehole", 10, -7, SEED);
     const spots = d.nodes.filter((n) => n.kind === "chamber");
-    expect(spots.length).toBeGreaterThanOrEqual(2);
-    expect(spots.every((n) => (n.loot["alien alloy"] ?? 0) >= 1)).toBe(true); // source principale d'alliage
-    expect(spots.every((n) => n.depth === 0)).toBe(true); // en SURFACE (pas de tunnel)
+    expect(spots.length).toBe(1); // une scène ADR = un point
+    expect(spots[0].loot["alien alloy"]).toBeGreaterThanOrEqual(1);
+    expect(spots[0].loot["alien alloy"]).toBeLessThanOrEqual(3);
+    expect(spots[0].depth).toBe(0); // en SURFACE (pas de tunnel)
   });
 
-  it("un champ de bataille rend les restes des combats (balles/acier/cellules)", () => {
+  it("un champ de bataille rend les ARMES LOURDES d'ADR (fusils/laser/grenades/alliage)", () => {
     const d = dungeonFor("battlefield", -20, 14, SEED);
-    const spots = d.nodes.filter((n) => n.kind === "chamber");
-    expect(spots.length).toBeGreaterThanOrEqual(2);
-    const allowed = new Set(["bullets", "steel", "energy cell", "alien alloy"]);
-    for (const n of spots) {
-      expect(Object.keys(n.loot).length).toBeGreaterThan(0);
-      for (const r of Object.keys(n.loot)) expect(allowed.has(r)).toBe(true);
+    const allowed = new Set(["rifle", "bullets", "laser rifle", "energy cell", "grenade", "alien alloy"]);
+    let total = 0;
+    for (const n of d.nodes) {
+      for (const r of Object.keys(n.loot)) { expect(allowed.has(r)).toBe(true); total += n.loot[r]; }
     }
+    expect(total).toBeGreaterThan(0); // la table tombe presque toujours (balles @0.8…)
   });
 
   it("déterministe : même graine -> même butin ; autre graine -> donjon régénéré", () => {

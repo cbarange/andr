@@ -183,6 +183,23 @@ export type EngageGuardianAction = {
   siteType: string;
 };
 
+/** M8.5/F3.3 : fouille une MAISON abandonnée (one-shot) — 25 % médecine / 25 % vivres + eau /
+ *  50 % squatteur embusqué (combat). Fidèle au setpiece `house` d'ADR. */
+export type VisitHouseAction = {
+  type: "VISIT_HOUSE";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
+/** M8.5/F3.4 : offre un CHARME au vieil ermite du marais ⇒ perk « gastronome » (one-shot). */
+export type TalkSwampAction = {
+  type: "TALK_SWAMP";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
 /** Frappe l'ennemi de SA rencontre avec une arme (cooldown PAR arme ; poings toujours dispo). */
 export type AttackAction = {
   type: "ATTACK";
@@ -324,6 +341,8 @@ export type GameAction =
   | SetOutsideAction
   | StepsAction
   | EngageGuardianAction
+  | VisitHouseAction
+  | TalkSwampAction
   | AttackAction
   | EatMeatAction
   | FleeAction
@@ -369,6 +388,8 @@ export type PlayerAction =
   | SetOutsideAction
   | StepsAction
   | EngageGuardianAction
+  | VisitHouseAction
+  | TalkSwampAction
   | AttackAction
   | EatMeatAction
   | FleeAction
@@ -476,6 +497,12 @@ export function steps(playerId: string, n: number, tier: number, biome: string, 
 }
 export function engageGuardian(playerId: string, cx: number, cz: number, siteType: string): EngageGuardianAction {
   return { type: "ENGAGE_GUARDIAN", playerId, cx, cz, siteType };
+}
+export function visitHouse(playerId: string, cx: number, cz: number): VisitHouseAction {
+  return { type: "VISIT_HOUSE", playerId, cx, cz };
+}
+export function talkSwamp(playerId: string, cx: number, cz: number): TalkSwampAction {
+  return { type: "TALK_SWAMP", playerId, cx, cz };
 }
 export function attack(playerId: string, weapon: string): AttackAction {
   return { type: "ATTACK", playerId, weapon };

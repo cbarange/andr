@@ -187,10 +187,15 @@ export interface SiteProgress {
   secured?: boolean;
   /** Grotte : entièrement nettoyée ⇒ se convertit en avant-poste (rendu). */
   cleared?: boolean;
-  /** Avant-poste : ravitaillement déjà CONSOMMÉ (usage unique fidèle ADR, partagé entre joueurs). M7. */
+  /** Avant-poste : ravitaillé par CES joueurs pendant leur expédition COURANTE (remis à zéro au
+   *  retour au village — fidèle `usedOutposts` d'ADR, reset à chaque embarquement). M8.5/F4. */
+  usedBy?: Record<string, true>;
+  /** (Legacy M7 — remplacé par `usedBy` ; ignoré.) */
   used?: boolean;
   /** Mine : nombre de GARDIENS scriptés vaincus (cf. mineGuardians — M8.5/F3.1). */
   guardians?: number;
+  /** Lieu ONE-SHOT déjà visité (maison fouillée, cabane du marais — fidèle `markVisited`). M8.5. */
+  visited?: boolean;
 }
 
 /** Clé d'un site dans `state.sites` à partir de ses coordonnées de cellule. */

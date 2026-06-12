@@ -112,7 +112,7 @@ export const config = {
     foodDrainSeconds: 18, // -1 vivre toutes les 18 s dehors -> la faim suit la soif
     healthDrainSeconds: 6, // quand eau ET vivres = 0 : -1 PV toutes les 6 s -> ~1 min de sursis
     rechargeSeconds: 2, // au camp / avant-poste : +1 (eau/vivres/PV) toutes les 2 s vers le max
-    respawnCooldownSeconds: 20, // après la mort : grâce avant que la survie ne reprenne dehors
+    respawnCooldownSeconds: 120, // DEATH_COOLDOWN d'ADR : 120 s confiné au village après la mort
     deathStoragePenalty: 0, // fraction d'entrepôt perdue à la mort (0 = perte du SAC seul ; knob pour durcir)
   },
 
@@ -154,6 +154,7 @@ export const PERKS: Record<string, { name: string; desc: string }> = {
   precise: { name: "précis", desc: "+10 % de chances de toucher" },
   barbarian: { name: "barbare", desc: "dégâts de mêlée ×1,5" },
   evasive: { name: "insaisissable", desc: "les ennemis touchent moins souvent" },
+  gastronome: { name: "gastronome", desc: "la viande soigne deux fois plus" }, // l'ermite du marais (M8.5)
 };
 
 // --- M10 : POSTE DE TRAITE — biens de troc (Room.TradeGoods d'ADR, valeurs EXACTES).
@@ -198,6 +199,7 @@ export const weapons: WeaponDef[] = [
   { id: "bayonet", name: "baïonnette", damage: 8, cooldownSeconds: 2, kind: "melee" },
   { id: "rifle", name: "fusil", damage: 5, cooldownSeconds: 1, kind: "ranged", ammo: "bullets" },
   { id: "grenade", name: "grenade", damage: 15, cooldownSeconds: 5, kind: "ranged", ammo: "grenade" },
+  { id: "laser rifle", name: "fusil laser", damage: 8, cooldownSeconds: 1, kind: "ranged", ammo: "energy cell" },
 ];
 export const weaponById: Record<string, WeaponDef> = Object.fromEntries(weapons.map((w) => [w.id, w]));
 
@@ -261,6 +263,8 @@ export const enemies: EnemyDef[] = [
     loot: [["cured meat", 1.0, 5, 10], ["cloth", 0.8, 5, 10], ["iron", 0.8, 1, 5]] },
   { id: "veteran", name: "vétéran", hp: 65, damage: 10, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
     loot: [["bayonet", 0.5, 1, 1], ["cured meat", 0.8, 1, 5]] },
+  { id: "squatter", name: "squatteur", hp: 10, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
+    loot: [["cured meat", 0.8, 1, 10], ["cloth", 0.5, 1, 10], ["leather", 0.2, 1, 10]] }, // maison occupée (50 %)
 ];
 export const enemyById: Record<string, EnemyDef> = Object.fromEntries(enemies.map((e) => [e.id, e]));
 /** Ennemis éligibles d'un tier (1..4). (Le tier 0 — setpieces — n'est jamais tiré au hasard.) */
@@ -296,7 +300,7 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
   "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
   medicine: "rare", // butin de l'homme grelottant (M8) ; consommée par USE_MEDS (M10)
-  grenade: "rare", bayonet: "rare", // armes de troc (M10)
+  grenade: "rare", bayonet: "rare", "laser rifle": "rare", // armes de troc / butin (M10/M8.5)
   // Upgrades d'atelier (M10) : possessions de l'ENTREPÔT (max 1 — la rareté importe peu).
   waterskin: "rare", cask: "rare", "water tank": "rare", rucksack: "rare", wagon: "rare", convoy: "rare",
   "l armour": "rare", "i armour": "rare", "s armour": "rare",
@@ -750,7 +754,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   rucksack: "sac de cuir", wagon: "chariot", convoy: "convoi",
   "l armour": "armure de cuir", "i armour": "armure de fer", "s armour": "armure d'acier",
   "iron sword": "épée de fer", "steel sword": "épée d'acier", rifle: "fusil",
-  grenade: "grenade", bayonet: "baïonnette",
+  grenade: "grenade", bayonet: "baïonnette", "laser rifle": "fusil laser",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG
