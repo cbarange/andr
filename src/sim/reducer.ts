@@ -452,6 +452,33 @@ export function reduce(state: GameState, action: GameAction): GameState {
       return { ...state, resources, carried: { ...state.carried, [pid]: bag }, rng: cloneRng(state.rng) };
     }
 
+    case "USE_OUTPOST": {
+      // Reste M7 : se ravitailler à un AVANT-POSTE (grotte nettoyée). USAGE UNIQUE fidèle ADR,
+      // partagé entre joueurs (premier-servi : l'hôte arbitre). Remplit eau + vivres du joueur
+      // (les PV se soignent en mangeant — M8). Pas d'épuisement à vide : si tout est déjà plein,
+      // no-op (on ne gaspille pas l'usage unique).
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key];
+      if (!prog?.cleared || prog.used) return state; // pas un avant-poste, ou déjà épuisé
+      const pid = action.playerId;
+      const cur = state.survival[pid] ?? baseSurvival();
+      if (cur.water >= MAX_WATER && cur.food >= MAX_FOOD) return state; // rien à remplir
+      const rec: PlayerSurvival = {
+        ...cur,
+        water: MAX_WATER,
+        food: MAX_FOOD,
+        // Ré-arme les échéances de drain (on repart « plein », pas à une échéance imminente).
+        waterAt: state.tick + WATER_DRAIN_TICKS,
+        foodAt: state.tick + FOOD_DRAIN_TICKS,
+      };
+      return {
+        ...state,
+        survival: { ...state.survival, [pid]: rec },
+        sites: { ...state.sites, [key]: { ...prog, used: true } },
+        rng: cloneRng(state.rng),
+      };
+    }
+
     case "SET_OUTSIDE": {
       // M6/M7 : le client signale qu'il a franchi la frontière de la zone sûre. Lazy-init de la survie
       // à la 1ʳᵉ référence (plein). NO-OP si le bord n'a pas changé (idempotent ; calque DISCOVER_SITE).

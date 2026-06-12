@@ -53,6 +53,7 @@ export class Player {
   private noclip = false; // /noclip : traverse le décor (collisions désactivées) — implique le vol
   private origCollideMask = 0; // masque de collision d'origine (restauré quand noclip off)
   private speedMul = 1; // multiplicateur de vitesse (double-tap avant ×, arrière ÷)
+  private preStepObs: ReturnType<Scene["onAfterRenderObservable"]["add"]> = null; // fenêtre de téléport en cours
 
   constructor(private readonly scene: Scene) {
     this.mesh = MeshBuilder.CreateCapsule(
@@ -157,16 +158,24 @@ export class Player {
     this.aggregate.shape.filterCollideMask = this.noclip ? 0 : this.origCollideMask;
   }
 
-  /** Téléporte le personnage (debug/tests) : pose au sol et annule la vitesse. */
+  /** Téléporte le personnage (debug/tests, respawn) : pose au sol et annule la vitesse. */
   teleport(x: number, z: number): void {
     this.mesh.position.set(x, terrainHeight(x, z) + HALF_HEIGHT + 0.2, z);
     const body = this.aggregate.body;
     body.setLinearVelocity(Vector3.Zero());
-    // Pour un corps dynamique Havok, on autorise une lecture de la position du mesh
-    // au prochain pas (sinon la physique écrase notre téléportation), puis on rétablit.
+    // Pour un corps dynamique Havok, on autorise une lecture de la position du mesh par la
+    // physique (sinon elle écrase notre téléportation), puis on rétablit. La fenêtre dure
+    // QUELQUES frames (pas une seule) : sur machine lente/headless, le pas physique peut ne
+    // pas tomber dans la frame du téléport — un `addOnce` ré-armait trop tôt et le corps
+    // restait à l'ancienne position (téléport perdu).
     body.disablePreStep = false;
-    this.scene.onAfterRenderObservable.addOnce(() => {
+    if (this.preStepObs) this.scene.onAfterRenderObservable.remove(this.preStepObs); // re-téléport : on repart à 3
+    let frames = 3;
+    this.preStepObs = this.scene.onAfterRenderObservable.add(() => {
+      if (--frames > 0) return;
       body.disablePreStep = true;
+      this.scene.onAfterRenderObservable.remove(this.preStepObs);
+      this.preStepObs = null;
     });
   }
 

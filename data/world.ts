@@ -20,6 +20,7 @@ export const config = {
   trapRange: 3.0, // distance max pour relever un piège
   builderRange: 3.4, // distance max pour parler à la constructrice
   cabinRange: 3.6, // distance max pour interagir avec la cabane / le coffre
+  outpostRange: 8.0, // distance max (au centre de cellule) pour se ravitailler à un avant-poste (M7)
   // Rechargement des pièges : CHAQUE piège tire son PROPRE délai au hasard dans [min, max]
   // à chaque relève (via le RNG à graine -> déterministe, cohérent en P2P). ADR : ~90 s fixe.
   trapsCooldownMinSeconds: 45,

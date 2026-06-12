@@ -14,7 +14,7 @@ import {
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, GameAction,
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
-  isNetworkSafeAction, setOutside, debugSetSurvival,
+  isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
 } from "./actions";
 import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
@@ -985,5 +985,53 @@ describe("survie (M6/M7)", () => {
   it("SET_OUTSIDE est une action réseau-safe (porte playerId)", () => {
     expect(isNetworkSafeAction(setOutside("p1", true), "p1")).toBe(true);
     expect(isNetworkSafeAction(setOutside("p1", true), "p2")).toBe(false); // usurpation refusée
+  });
+});
+
+describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
+  const SV = config.survival;
+  /** État avec une grotte NETTOYÉE (= avant-poste) en (3,4). */
+  function withOutpost(): GameState {
+    return {
+      ...createInitialState(config.rngSeed, 0),
+      sites: { [siteKey(3, 4)]: { type: "cave", discovered: true, cleared: true } },
+    };
+  }
+
+  it("remplit eau + vivres (pas les PV) et ÉPUISE l'avant-poste", () => {
+    let s = withOutpost();
+    s = reduce(s, setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 2, food: 3, health: 5 }));
+    s = reduce(s, useOutpost("p1", 3, 4));
+    const sv = survivalOf(s, "p1");
+    expect(sv.water).toBe(SV.maxWater);
+    expect(sv.food).toBe(SV.maxFood);
+    expect(sv.health).toBe(5); // les PV ne se soignent pas ici (manger = M8)
+    expect(s.sites[siteKey(3, 4)].used).toBe(true);
+  });
+
+  it("usage UNIQUE partagé : le 2ᵉ ravitaillement est un no-op (même pour un autre joueur)", () => {
+    let s = withOutpost();
+    s = reduce(s, debugSetSurvival("p1", { water: 1 }));
+    s = reduce(s, useOutpost("p1", 3, 4));
+    const after = reduce(s, debugSetSurvival("p2", { water: 1 }));
+    expect(reduce(after, useOutpost("p2", 3, 4))).toBe(after); // épuisé pour tout le monde
+  });
+
+  it("exige une grotte NETTOYÉE (sinon no-op)", () => {
+    const notCleared: GameState = {
+      ...createInitialState(config.rngSeed, 0),
+      sites: { [siteKey(3, 4)]: { type: "cave", discovered: true } },
+    };
+    expect(reduce(notCleared, useOutpost("p1", 3, 4))).toBe(notCleared);
+    const empty = createInitialState(config.rngSeed, 0);
+    expect(reduce(empty, useOutpost("p1", 9, 9))).toBe(empty); // site inconnu
+  });
+
+  it("déjà plein -> no-op (on ne gaspille pas l'usage unique)", () => {
+    const s = withOutpost();
+    const out = reduce(s, useOutpost("p1", 3, 4));
+    expect(out).toBe(s);
+    expect(s.sites[siteKey(3, 4)].used).toBeUndefined(); // pas consommé
   });
 });

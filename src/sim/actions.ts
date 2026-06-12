@@ -126,6 +126,17 @@ export type ClearCaveAction = {
   cz: number;
 };
 
+/**
+ * Se RAVITAILLER à un avant-poste (grotte nettoyée) : remplit l'eau + les vivres du joueur.
+ * USAGE UNIQUE fidèle ADR, partagé entre joueurs (premier-servi : l'hôte arbitre). Reste M7.
+ */
+export type UseOutpostAction = {
+  type: "USE_OUTPOST";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
 /** Fabrique un OBJET (torche…) : débite l'entrepôt, ajoute l'objet au SAC. M9/M10. */
 export type CraftItemAction = {
   type: "CRAFT_ITEM";
@@ -230,6 +241,7 @@ export type GameAction =
   | ClearHazardAction
   | SecureMineAction
   | ClearCaveAction
+  | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
   | TickAction
@@ -265,6 +277,7 @@ export type PlayerAction =
   | ClearHazardAction
   | SecureMineAction
   | ClearCaveAction
+  | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
   | DebugGrantAction
@@ -352,6 +365,9 @@ export function secureMine(playerId: string, cx: number, cz: number, siteType: s
 }
 export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAction {
   return { type: "CLEAR_CAVE", playerId, cx, cz };
+}
+export function useOutpost(playerId: string, cx: number, cz: number): UseOutpostAction {
+  return { type: "USE_OUTPOST", playerId, cx, cz };
 }
 export function craftItem(playerId: string, itemId: string): CraftItemAction {
   return { type: "CRAFT_ITEM", playerId, itemId };

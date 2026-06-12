@@ -45,7 +45,7 @@ import { generateWorld } from "./sim/worldgen";
 import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
-  takeLoot, secureMine, setOutside, debugSetSurvival,
+  takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import {
@@ -849,6 +849,26 @@ async function boot(): Promise<void> {
           if (isFilon) { emit(secureMine(self(), lt.cx, lt.cz, lt.siteType)); hud.toast("filon sécurisé — un mineur peut être assigné au village."); }
           else hud.toast("butin ramassé.");
           audio.playSfx("checkTraps");
+        },
+      }));
+    }
+
+    // Reste M7 — AVANT-POSTES : une grotte nettoyée (`cleared`) se ravitaille UNE fois (eau + vivres,
+    // usage unique partagé — l'hôte arbitre). Le verbe disparaît une fois l'avant-poste épuisé (`used`).
+    // On itère `state.sites` (petit : seuls les sites VISITÉS y vivent), pas les ~57 sites du monde.
+    for (const k of Object.keys(state.sites ?? {})) {
+      const prog = state.sites[k];
+      if (!prog.cleared || prog.used) continue;
+      const ci = k.indexOf(",");
+      const cx = Number(k.slice(0, ci)), cz = Number(k.slice(ci + 1));
+      const w = worldMap.cellToWorldCenter(cx, cz);
+      consider(Math.hypot(w.x - p.x, w.z - p.z), config.outpostRange, () => ({
+        world: new Vector3(w.x, terrainHeight(w.x, w.z) + 2.4, w.z),
+        verb: "se ravitailler",
+        act: () => {
+          emit(useOutpost(self(), cx, cz));
+          audio.playSfx("deposit");
+          hud.toast("gourdes et vivres remplis — l'avant-poste est épuisé.");
         },
       }));
     }

@@ -151,6 +151,8 @@ export interface SiteProgress {
   secured?: boolean;
   /** Grotte : entièrement nettoyée ⇒ se convertit en avant-poste (rendu). */
   cleared?: boolean;
+  /** Avant-poste : ravitaillement déjà CONSOMMÉ (usage unique fidèle ADR, partagé entre joueurs). M7. */
+  used?: boolean;
 }
 
 /** Clé d'un site dans `state.sites` à partir de ses coordonnées de cellule. */
