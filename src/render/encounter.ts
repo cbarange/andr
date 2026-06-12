@@ -17,6 +17,7 @@ import type { Encounter as EncounterState } from "../sim/state";
 
 const STALK_DIST = 2.4; // distance de rôdaille (l'ennemi se tient là, face au joueur)
 const APPROACH = 3.5; // vitesse d'approche (lissage)
+const CHASE_MAX = 8; // u/s — vitesse de POURSUITE max (> marche 6, < sprint) : on PEUT le distancer (F4)
 const LUNGE_TIME = 0.35; // durée de la fente d'attaque (aller-retour)
 const DESPAWN_TIME = 0.6; // durée de l'effondrement / de la fuite
 
@@ -91,7 +92,9 @@ export class EncounterFx {
       const dist = Math.hypot(dx, dz) || 1e-4;
       // Cible : à STALK_DIST du joueur (la fente s'approche davantage).
       const want = e.lunge > 0 ? 0.8 : STALK_DIST;
-      const move = (dist - want) * Math.min(1, dtSec * APPROACH);
+      // Poursuite BORNÉE (CHASE_MAX) : sprinter/distancer l'ennemi est possible -> le client
+      // rompt la rencontre au-delà de 18 u (désengagement physique, M8.5/F4).
+      const move = Math.min((dist - want) * Math.min(1, dtSec * APPROACH), CHASE_MAX * dtSec);
       e.root.position.x += (dx / dist) * move;
       e.root.position.z += (dz / dist) * move;
       // Recul « touché » (s'éloigne brièvement).

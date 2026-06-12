@@ -48,6 +48,7 @@ import {
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, flee, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
+  visitHouse, talkSwamp,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon } from "./sim/combat";
@@ -1046,12 +1047,39 @@ async function boot(): Promise<void> {
       }));
     }
 
+    // M8.5/F3.3-3.4 — MAISONS (fouille one-shot 25/25/50) & MARAIS (charme -> gastronome).
+    for (const st of worldMap.sites) {
+      if (st.type !== "house" && st.type !== "swamp") continue;
+      const k = st.cx + "," + st.cz;
+      if (state.sites?.[k]?.visited) continue;
+      if (st.type === "swamp" && state.perks["gastronome"]) continue;
+      const w = worldMap.cellToWorldCenter(st.cx, st.cz);
+      const d = Math.hypot(w.x - p.x, w.z - p.z);
+      if (st.type === "house") {
+        consider(d, 7.0, () => ({
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 2.4, w.z),
+          verb: "fouiller la maison",
+          act: () => { emit(visitHouse(self(), st.cx, st.cz)); audio.playSfx("checkTraps"); },
+        }));
+      } else {
+        consider(d, 7.0, () => ({
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 2.4, w.z),
+          verb: "offrir un charme",
+          act: () => {
+            if (carriedOf(state, self(), "charm") < 1) { hud.toast("le vieil ermite veut un charme (les pièges en attrapent, rarement)."); return; }
+            emit(talkSwamp(self(), st.cx, st.cz));
+            hud.toast("l'ermite parle longtemps. la viande nourrira deux fois mieux — gastronome.");
+          },
+        }));
+      }
+    }
+
     // Reste M7 — AVANT-POSTES : une grotte nettoyée (`cleared`) se ravitaille UNE fois (eau + vivres,
     // usage unique partagé — l'hôte arbitre). Le verbe disparaît une fois l'avant-poste épuisé (`used`).
     // On itère `state.sites` (petit : seuls les sites VISITÉS y vivent), pas les ~57 sites du monde.
     for (const k of Object.keys(state.sites ?? {})) {
       const prog = state.sites[k];
-      if (!prog.cleared || prog.used) continue;
+      if (!prog.cleared || prog.usedBy?.[self()]) continue; // une fois PAR EXPÉDITION (M8.5/F4)
       const ci = k.indexOf(",");
       const cx = Number(k.slice(0, ci)), cz = Number(k.slice(ci + 1));
       const w = worldMap.cellToWorldCenter(cx, cz);
@@ -1176,6 +1204,7 @@ async function boot(): Promise<void> {
   let lastEncSeen: GameState["combat"][string] | null = null; // dernière rencontre vue (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
   let prevOnRoad: boolean | null = null;
+  let prevDangerWarn = 0; // niveau d'avertissement checkDanger déjà signalé (0/1/2)
   let prevDialogueSig = ""; // signature de l'état dont dépendent les dialogues (resync MP, cf. plus bas)
 
   /** Tier de DANGER local (0 = zone sûre, 1..3 = anneaux de distance ADR ×2, 4 = caverne). */
@@ -1255,6 +1284,20 @@ async function boot(): Promise<void> {
       prevInVillage = inVillage;
       prevDangerTier = tier;
       prevOnRoad = onRoad;
+    }
+    // M8.5/F4 — `checkDanger` d'ADR : avertissement aux seuils de distance sans l'armure adéquate
+    // (≥ 16 cellules sans armure de fer ; ≥ 36 sans armure d'acier — seuils ADR ×2, monde ×2).
+    {
+      const rCells = Math.hypot(player.position.x, player.position.z) / worldgen.cellSize;
+      const hasIron = stockOf(state, "i armour") > 0 || stockOf(state, "s armour") > 0;
+      const hasSteel = stockOf(state, "s armour") > 0;
+      const lvl = rCells >= 36 && !hasSteel ? 2 : rCells >= 16 && !hasIron ? 1 : 0;
+      if (lvl > prevDangerWarn) {
+        hud.toast(lvl === 2
+          ? "il est périlleux d'aller si loin sans armure d'acier."
+          : "il est dangereux d'être si loin du village sans protection.");
+      }
+      prevDangerWarn = lvl;
     }
 
     world.setFireLevel(state.fire);
@@ -1443,6 +1486,8 @@ async function boot(): Promise<void> {
   let encountersPaused = false; // DEBUG (e2e) : bloque l'émission de STEPS (podomètre)
   let pedoPrev: { x: number; z: number } | null = null; // podomètre (M8.5/F1)
   let pedoAcc = 0; // distance accumulée vers le prochain « pas » (12 u)
+  let disengageAcc = 0; // secondes passées hors de portée de l'ennemi (désengagement physique, F4)
+  let lastDeathGateToast = 0; // throttle du toast « trop faible pour repartir »
   let transformAcc = 0;
   let snapshotAcc = 0;
   let saveAcc = 0;
@@ -1655,6 +1700,38 @@ async function boot(): Promise<void> {
         }
       }
       pedoPrev = { x: px, z: pz };
+    }
+    // M8.5/F4 — DÉSENGAGEMENT PHYSIQUE : distancer l'ennemi (> 18 u) rompt la rencontre (adaptation
+    // monde continu du « pas de bouton fuir » d'ADR) ; les DERNIERS gardiens de mine sont incassables
+    // (la sim refuse le flee) -> ils poursuivent jusqu'à la mort ou la victoire.
+    {
+      const encNow = state.combat[self()];
+      const ep = encNow ? encounterFx.enemyWorldPos() : null;
+      if (encNow && ep) {
+        const d = Math.hypot(ep.x - player.position.x, ep.z - player.position.z);
+        disengageAcc = d > 18 ? disengageAcc + dtSec : 0;
+        if (disengageAcc > 1.2) { // > 18 u pendant ~1 s : l'ennemi décroche
+          disengageAcc = 0;
+          emit(flee(self()));
+          hud.toast("vous le distancez — la bête abandonne.");
+        }
+      } else {
+        disengageAcc = 0;
+      }
+    }
+    // M8.5/F4 — COOLDOWN DE MORT (120 s, fidèle DEATH_COOLDOWN) : trop faible pour repartir — le
+    // franchissement de la porte est refusé (retour au camp + toast).
+    {
+      const svNow = survivalOf(state, self());
+      if (svNow.deathSeq > 0 && state.tick < svNow.respawnReadyAt
+          && Math.hypot(player.position.x, player.position.z) > VILLAGE_RADIUS) {
+        player.teleport(cabin.center.x + 1, cabin.center.z + 0.5);
+        const remain = Math.ceil((svNow.respawnReadyAt - state.tick) / config.simTickHz);
+        if (performance.now() - lastDeathGateToast > 3000) {
+          lastDeathGateToast = performance.now();
+          hud.toast(`trop faible pour repartir — repos forcé (${remain} s).`);
+        }
+      }
     }
     const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
     sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
