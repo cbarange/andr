@@ -24,7 +24,7 @@ de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 222 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 227 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -175,13 +175,12 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 
 ## Prochaine étape recommandée
 1. **M8.5 — FIDÉLITÉ combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) :
-   **F1 ✅ F2 ✅ F3.1 ✅** — les rencontres se déclenchent désormais **PAR PAS de déplacement**
-   (20 %/pas, min 3 pas, immobile = RIEN, routes = ZÉRO — fidèle `checkFight`), tables d'ennemis
-   **exactes et gatées par BIOME** (annexe A en oracle de tests, créature à deux têtes, ranged,
-   fusil 20 %), et **mines GARDÉES** (matriarche / hommes + chef / soldats + vétéran à vaincre
-   avant `SECURE_MINE`, dernier gardien sans fuite). **Reste** : F3.2-5 (grottes scriptées,
-   maisons 25/25/50, marais→gastronome, villes/cités = R3b), F4 (écran de butin, avant-postes par
-   expédition, cooldown de mort 120 s, viande qui soigne en marchant), F5 (perks d'usage).
+   **F1-F2-F3.1-F3.3-F3.4-F4 ✅** — rencontres **PAR PAS** (immobile = rien, routes = zéro),
+   tables **exactes/biomes**, **mines gardées**, **maisons** 25/25/50 (médecine / vivres + eau /
+   squatteur), **marais → gastronome**, champ de bataille = **armes lourdes ADR**, forage =
+   **alliage garanti**, **viande soigne en voyage**, **mort = 120 s de repos**, **avant-postes par
+   expédition**, **désengagement physique** (poursuite bornée), avertissements de danger.
+   **Reste** : F3.2 (grottes scriptées), F3.5 (villes/cités = R3b), écran de butin, F5 (perks d'usage).
 2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
 3. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin

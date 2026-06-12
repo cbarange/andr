@@ -108,10 +108,14 @@ torches et butins précis (annexe B). En bref :
 
 ## 4. Plan de remise en conformité — « M8.5 : fidélité combat & lieux »
 
-> **État (juin 2026)** : **F1 ✅ · F2 ✅ · F3.1 ✅ LIVRÉS** (déclencheur par pas + tables exactes
-> par biome + mines gardées). Restent : F3.2-3.5 (grottes scriptées, maisons, marais/champ de
-> bataille, villes/cités = R3b), F4 (écran de butin, avant-postes par expédition, cooldown de mort,
-> viande qui soigne en marchant), F5 (perks d'usage).
+> **État (juin 2026)** : **F1 ✅ F2 ✅ F3.1 ✅ F3.3 ✅ F3.4 ✅ F4 ✅** (sauf écran de butin —
+> différé). Livrés : déclencheur par pas · tables exactes/biomes · mines gardées · **maisons
+> 25/25/50 (médecine / vivres + eau / squatteur)** · **marais → gastronome (1 charme)** · **champ
+> de bataille = armes lourdes ADR · forage = alliage 1–3 garanti seul** · **viande soigne en
+> voyage (+8, gastronome ×2)** · **mort = 120 s de repos forcé** · **avant-postes par expédition**
+> · **désengagement physique** (distancer l'ennemi > 18 u — poursuite bornée 8 u/s ; derniers
+> gardiens incassables) · **avertissements checkDanger**. Restent : **F3.2** (grottes scriptées),
+> **F3.5** (villes/cités = R3b), **écran de butin** (F4), **F5** (perks d'usage : furtif, boxeur…).
 
 > Principe : on garde le **monde 3D continu** (acté) — l'unité « pas » d'ADR devient la **distance
 > parcourue** (1 pas ≡ 1 cellule de 12 u), mesurée localement et signalée à la sim comme
