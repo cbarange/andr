@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { RngState, createRng } from "./rng";
-import { config, worldgen } from "../../data/world";
+import { config, worldgen, WATER_BONUS, CARRY_BONUS, ARMOR_HEALTH } from "../../data/world";
 
 // --- M1 : énumérations du feu, de la température et de l'étrangère ---
 // (entiers volontairement : sérialisables, comparables, indexent les libellés)
@@ -123,6 +123,11 @@ export interface GameState {
   //     Champ ADDITIF (backfill `{}`, strippé à la save comme `carried`/`survival`). Autoritaire :
   //     déclenchement + frappes ennemies dans TICK (hôte), dégâts/butin via le RNG à graine. ---
   combat: Record<string, Encounter>;
+
+  // --- M10 : PERKS du VILLAGE (clés de PERKS, accordés par l'événement « le Maître »). Partagés
+  //     entre joueurs (divergence coop assumée — ADR est solo ; un perk par-joueur serait perdu au
+  //     reload, selfId volatile). ADDITIF, autoritaire, et PERSISTÉ (contrairement au sac/survie). ---
+  perks: Record<string, true>;
 }
 
 /**
@@ -159,6 +164,7 @@ export interface PlayerSurvival {
   onRoad: boolean; // sur une cellule de ROUTE -> rencontres raréfiées (R4 « route sécurisée »)
   encounterRollAt: number; // tic du prochain TIRAGE de rencontre (dehors, hors combat)
   eatReadyAt: number; // tic à partir duquel on peut re-MANGER (anti-spam, EAT_COOLDOWN d'ADR)
+  medsReadyAt: number; // tic à partir duquel on peut re-SE SOIGNER (médecine, MEDS_COOLDOWN d'ADR)
   winSeq: number; // nombre de VICTOIRES (signal rendu : effondrement de l'ennemi + toast butin)
   encounterSeq: number; // nombre de RENCONTRES créées (monotone ; copié dans Encounter.seq -> diff rendu)
 }
@@ -230,6 +236,7 @@ export function baseSurvival(): PlayerSurvival {
     onRoad: false,
     encounterRollAt: 0,
     eatReadyAt: 0,
+    medsReadyAt: 0,
     winSeq: 0,
     encounterSeq: 0,
   };
@@ -249,10 +256,27 @@ export function carriedTotal(state: GameState, playerId: string): number {
   return n;
 }
 
-/** Capacité de transport du sac (base + bonus de la charrette). */
+/**
+ * Capacité de transport du sac : base + charrette (bâtiment) + MEILLEUR upgrade de portage
+ * possédé à l'ENTREPÔT (sac de cuir/chariot/convoi — les *stores* d'ADR, M10). Best-of, pas de cumul.
+ */
 export function carryCapacity(state: GameState): number {
   const cart = (state.buildings["cart"] ?? 0) > 0 ? config.cartCapBonus : 0;
-  return config.carryCapBase + cart;
+  let bonus = 0;
+  for (const [id, b] of CARRY_BONUS) if (stockOf(state, id) > 0) { bonus = b; break; } // trié du meilleur au moindre
+  return config.carryCapBase + cart + bonus;
+}
+
+/** Capacité d'EAU d'un joueur : base + meilleur contenant possédé à l'entrepôt (outre/baril/citerne). M10. */
+export function maxWaterOf(state: GameState): number {
+  for (const [id, b] of WATER_BONUS) if (stockOf(state, id) > 0) return config.survival.maxWater + b;
+  return config.survival.maxWater;
+}
+
+/** PV MAX d'un joueur : 10 de base, ou la MEILLEURE armure possédée à l'entrepôt (15/25/45 — ADR). M10. */
+export function maxHealthOf(state: GameState): number {
+  for (const [id, hp] of ARMOR_HEALTH) if (stockOf(state, id) > 0) return hp;
+  return config.survival.maxHealth;
 }
 
 /**
@@ -299,5 +323,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     roads: {},
     survival: {},
     combat: {},
+    perks: {},
   };
 }

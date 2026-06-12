@@ -11,17 +11,17 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival, Encounter,
+  PlayerSurvival, baseSurvival, Encounter, maxWaterOf, maxHealthOf,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
 import { lootForNode, lootNodeIds } from "./dungeon";
 import { drawRoad } from "./roads";
-import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, ownsWeapon } from "./combat";
+import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit } from "./combat";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById,
+  weaponById, enemyById, tradeGoodById,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -53,17 +53,16 @@ const FOOD_DRAIN_TICKS = config.survival.foodDrainSeconds * HZ;
 const HEALTH_DRAIN_TICKS = config.survival.healthDrainSeconds * HZ;
 const RECHARGE_TICKS = config.survival.rechargeSeconds * HZ;
 const RESPAWN_COOLDOWN_TICKS = config.survival.respawnCooldownSeconds * HZ;
-const MAX_WATER = config.survival.maxWater;
 const MAX_FOOD = config.survival.maxFood;
-const MAX_HEALTH = config.survival.maxHealth;
 const DEATH_STORAGE_PENALTY = config.survival.deathStoragePenalty;
 // --- M8 : combat (échéances en tics, dérivées des secondes des données) ---
 const ENCOUNTER_ROLL_TICKS = config.combat.rollSeconds * HZ;
 const POST_VICTORY_TICKS = config.combat.postVictorySeconds * HZ;
 const POST_FLEE_TICKS = config.combat.postFleeSeconds * HZ;
-const PLAYER_HIT_CHANCE = config.combat.playerHitChance;
 const EAT_COOLDOWN_TICKS = config.combat.eatCooldownSeconds * HZ;
 const EAT_MEAT_HEAL = config.combat.eatMeatHeal;
+const MEDS_COOLDOWN_TICKS = config.combat.medsCooldownSeconds * HZ;
+const MEDS_HEAL = config.combat.medsHeal;
 
 /** Durée d'un chantier en TICS (>= 1) — la constructrice bâtit ce bâtiment en autant de tics. */
 function buildTicks(id: string): number {
@@ -80,6 +79,7 @@ type EffectDraft = {
   pendingEffects: GameState["pendingEffects"];
   tick: number;
   cabinTier: number; // pour borner les stocks au plafond de l'entrepôt (cf. storageCap)
+  perks: Record<string, true>; // M10 : perks du village (grantPerk)
 };
 
 /** Ajoute un delta de stocks en bornant chaque ressource à [0, plafond de l'entrepôt]. */
@@ -141,6 +141,7 @@ function applyEffect(d: EffectDraft, eff: EventEffect, rng: RngState): void {
       ];
     }
   }
+  if (eff.grantPerk) d.perks[eff.grantPerk] = true; // M10 : perk du village (idempotent)
 }
 
 /** Tire une scène dans une map de poids cumulés : le plus petit seuil tel que r < seuil (façon ADR). */
@@ -447,15 +448,26 @@ export function reduce(state: GameState, action: GameAction): GameState {
     }
 
     case "CRAFT_ITEM": {
-      // Fabrique un OBJET : recette puisée dans l'ENTREPÔT, objet ajouté au SAC (occupe 1 de portage).
+      // Fabrique un OBJET : recette puisée dans l'ENTREPÔT. Destination selon le type (M10, fidèle
+      // ADR) : un `upgrade` est une possession PERMANENTE du village -> crédité à l'ENTREPÔT (les
+      // *stores* d'ADR, jamais perdu à la mort), max 1 ; les autres (arme/outil) vont au SAC
+      // (l'outfit — perdus à la mort).
       const item = craftableItemById[action.itemId];
       if (!item) return state;
       if (item.building && (state.buildings[item.building] ?? 0) === 0) return state; // prérequis bâtiment
-      for (const r of Object.keys(item.recipe)) if (stockOf(state, r) < item.recipe[r]) return state; // ressources manquantes
       const pid = action.playerId;
-      if (carryCapacity(state) - carriedTotal(state, pid) <= 0) return state; // sac plein
+      if (item.maximum !== undefined) {
+        const owned = item.type === "upgrade" ? stockOf(state, item.id) : carriedOf(state, pid, item.id);
+        if (owned >= item.maximum) return state; // déjà possédé (upgrades ADR : max 1)
+      }
+      for (const r of Object.keys(item.recipe)) if (stockOf(state, r) < item.recipe[r]) return state; // ressources manquantes
       const resources = { ...state.resources };
       for (const r of Object.keys(item.recipe)) resources[r] = (resources[r] ?? 0) - item.recipe[r];
+      if (item.type === "upgrade") {
+        resources[item.id] = (resources[item.id] ?? 0) + 1; // -> entrepôt (possession du village)
+        return { ...state, resources, rng: cloneRng(state.rng) };
+      }
+      if (carryCapacity(state) - carriedTotal(state, pid) <= 0) return state; // sac plein
       const bag = { ...(state.carried[pid] ?? {}) };
       bag[item.id] = (bag[item.id] ?? 0) + 1;
       return { ...state, resources, carried: { ...state.carried, [pid]: bag }, rng: cloneRng(state.rng) };
@@ -471,10 +483,11 @@ export function reduce(state: GameState, action: GameAction): GameState {
       if (!prog?.cleared || prog.used) return state; // pas un avant-poste, ou déjà épuisé
       const pid = action.playerId;
       const cur = state.survival[pid] ?? baseSurvival();
-      if (cur.water >= MAX_WATER && cur.food >= MAX_FOOD) return state; // rien à remplir
+      const capW = maxWaterOf(state); // M10 : l'outre/baril/citerne agrandit le plein
+      if (cur.water >= capW && cur.food >= MAX_FOOD) return state; // rien à remplir
       const rec: PlayerSurvival = {
         ...cur,
-        water: MAX_WATER,
+        water: capW,
         food: MAX_FOOD,
         // Ré-arme les échéances de drain (on repart « plein », pas à une échéance imminente).
         waterAt: state.tick + WATER_DRAIN_TICKS,
@@ -486,6 +499,59 @@ export function reduce(state: GameState, action: GameAction): GameState {
         sites: { ...state.sites, [key]: { ...prog, used: true } },
         rng: cloneRng(state.rng),
       };
+    }
+
+    case "BUY": {
+      // M10 : POSTE DE TRAITE — achète UN bien (Room.TradeGoods d'ADR, coûts exacts). Coûts payés
+      // à l'ENTREPÔT, gain à l'ENTREPÔT (borné par le plafond). Exige le bâtiment construit.
+      const good = tradeGoodById[action.goodId];
+      if (!good) return state;
+      if ((state.buildings["trading post"] ?? 0) === 0) return state; // pas de poste de traite
+      for (const r of Object.keys(good.cost)) if (stockOf(state, r) < good.cost[r]) return state; // fonds insuffisants
+      const resources = { ...state.resources };
+      for (const r of Object.keys(good.cost)) resources[r] = (resources[r] ?? 0) - good.cost[r];
+      resources[good.id] = Math.min(storageCap(state.cabinTier, good.id), (resources[good.id] ?? 0) + 1);
+      return { ...state, resources, rng: cloneRng(state.rng) };
+    }
+
+    case "USE_MEDS": {
+      // M10 : se soigne avec une MÉDECINE du SAC (+20 PV, cap armure, cooldown 7 s — ADR exact).
+      const pid = action.playerId;
+      if (carriedOf(state, pid, "medicine") < 1) return state;
+      const sv = state.survival[pid] ?? baseSurvival();
+      const capHp = maxHealthOf(state);
+      if (sv.health >= capHp) return state;
+      if (state.tick < sv.medsReadyAt) return state;
+      const bag = { ...(state.carried[pid] ?? {}) };
+      bag["medicine"] -= 1;
+      if (bag["medicine"] <= 0) delete bag["medicine"];
+      const rec: PlayerSurvival = {
+        ...sv,
+        health: Math.min(capHp, sv.health + MEDS_HEAL),
+        medsReadyAt: state.tick + MEDS_COOLDOWN_TICKS,
+      };
+      return {
+        ...state,
+        carried: { ...state.carried, [pid]: bag },
+        survival: { ...state.survival, [pid]: rec },
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "WITHDRAW": {
+      // M10 : S'ÉQUIPER au coffre (l'outfitting d'ADR) — transfert ENTREPÔT -> SAC, borné par le
+      // stock ET la capacité de portage. Réciproque de DEPOSIT.
+      const pid = action.playerId;
+      const want = Math.floor(action.amount);
+      if (want <= 0) return state;
+      const have = stockOf(state, action.resource);
+      const room = carryCapacity(state) - carriedTotal(state, pid);
+      const n = Math.min(want, have, room);
+      if (n <= 0) return state;
+      const resources = { ...state.resources, [action.resource]: have - n };
+      const bag = { ...(state.carried[pid] ?? {}) };
+      bag[action.resource] = (bag[action.resource] ?? 0) + n;
+      return { ...state, resources, carried: { ...state.carried, [pid]: bag }, rng: cloneRng(state.rng) };
     }
 
     case "SET_OUTSIDE": {
@@ -532,23 +598,34 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const weapon = weaponById[action.weapon];
       if (!weapon) return state;
       if (!ownsWeapon(state, pid, weapon.id)) return state;
+      if (!hasAmmo(state, pid, weapon)) return state; // fusil sans balle / sans grenade (M10)
       if (state.tick < (enc.weaponReadyAt[weapon.id] ?? 0)) return state; // l'arme recharge
       const rng = cloneRng(state.rng);
-      const hit = nextFloat(rng) < PLAYER_HIT_CHANCE;
-      const enemyHp = hit ? enc.enemyHp - weapon.damage : enc.enemyHp;
+      // Munition consommée À CHAQUE tir (touché ou non — fidèle ADR), depuis le SAC.
+      let carriedAfter = state.carried;
+      if (weapon.ammo) {
+        const bag0 = { ...(state.carried[pid] ?? {}) };
+        bag0[weapon.ammo] -= 1;
+        if (bag0[weapon.ammo] <= 0) delete bag0[weapon.ammo];
+        carriedAfter = { ...state.carried, [pid]: bag0 };
+      }
+      const hit = nextFloat(rng) < playerHit(state.perks);
+      const enemyHp = hit ? enc.enemyHp - attackDamage(weapon, state.perks) : enc.enemyHp;
       if (enemyHp > 0) {
         const nextEnc: Encounter = {
           ...enc,
           enemyHp,
           weaponReadyAt: { ...enc.weaponReadyAt, [weapon.id]: state.tick + Math.round(weapon.cooldownSeconds * HZ) },
         };
-        return { ...state, combat: { ...state.combat, [pid]: nextEnc }, rng };
+        return { ...state, carried: carriedAfter, combat: { ...state.combat, [pid]: nextEnc }, rng };
       }
       // VICTOIRE : butin de l'ennemi -> SAC (borné, boucle clamp de TAKE_LOOT) ; rencontre fermée.
       const enemy = enemyById[enc.enemyId];
       const loot = enemy ? rollEnemyLoot(rng, enemy) : {};
-      let room = carryCapacity(state) - carriedTotal(state, pid);
-      const bag = { ...(state.carried[pid] ?? {}) };
+      let bagTotal = 0;
+      for (const k of Object.keys(carriedAfter[pid] ?? {})) bagTotal += carriedAfter[pid][k];
+      let room = carryCapacity(state) - bagTotal;
+      const bag = { ...(carriedAfter[pid] ?? {}) };
       for (const r of Object.keys(loot)) {
         if (room <= 0) break;
         const add = Math.min(loot[r], room);
@@ -560,7 +637,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const rec: PlayerSurvival = { ...sv, winSeq: sv.winSeq + 1, encounterRollAt: state.tick + POST_VICTORY_TICKS };
       return {
         ...state,
-        carried: { ...state.carried, [pid]: bag },
+        carried: { ...carriedAfter, [pid]: bag },
         combat: restCombat,
         survival: { ...state.survival, [pid]: rec },
         rng,
@@ -572,14 +649,15 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const pid = action.playerId;
       if (carriedOf(state, pid, "cured meat") < 1) return state;
       const sv = state.survival[pid] ?? baseSurvival();
-      if (sv.health >= MAX_HEALTH) return state; // déjà plein -> on ne gaspille pas
+      const capHp = maxHealthOf(state); // M10 : la meilleure ARMURE de l'entrepôt fixe les PV max
+      if (sv.health >= capHp) return state; // déjà plein -> on ne gaspille pas
       if (state.tick < sv.eatReadyAt) return state; // trop tôt
       const bag = { ...(state.carried[pid] ?? {}) };
       bag["cured meat"] -= 1;
       if (bag["cured meat"] <= 0) delete bag["cured meat"];
       const rec: PlayerSurvival = {
         ...sv,
-        health: Math.min(MAX_HEALTH, sv.health + EAT_MEAT_HEAL),
+        health: Math.min(capHp, sv.health + EAT_MEAT_HEAL),
         eatReadyAt: state.tick + EAT_COOLDOWN_TICKS,
       };
       return {
@@ -630,10 +708,16 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const choice = scene.choices.find((c) => c.id === action.choice);
       if (!choice) return state;
       if (choice.available && !choice.available(state)) return state;
-      // Le coût est payé depuis l'ENTREPÔT (gestion village).
+      // Le coût est payé depuis l'ENTREPÔT (gestion village) ; `costCarried` depuis le SAC du
+      // joueur qui résout (M10 — ex. la torche du Maître, fidèle ADR).
       if (choice.cost) {
         for (const r of Object.keys(choice.cost)) {
           if (stockOf(state, r) < choice.cost[r]) return state; // pas les moyens -> no-op
+        }
+      }
+      if (choice.costCarried) {
+        for (const r of Object.keys(choice.costCarried)) {
+          if (carriedOf(state, action.playerId, r) < choice.costCarried[r]) return state; // pas dans le sac
         }
       }
       const rng = cloneRng(state.rng);
@@ -645,9 +729,20 @@ export function reduce(state: GameState, action: GameAction): GameState {
         pendingEffects: [...state.pendingEffects],
         tick: state.tick,
         cabinTier: state.cabinTier,
+        perks: { ...state.perks },
       };
       if (choice.cost) for (const r of Object.keys(choice.cost)) draft.resources[r] = (draft.resources[r] ?? 0) - choice.cost[r];
       if (choice.reward) addStores(draft.resources, choice.reward, state.cabinTier);
+      // Débit du SAC (costCarried) — hors draft (le sac n'y vit pas) : appliqué au retour.
+      let carriedOut = state.carried;
+      if (choice.costCarried) {
+        const bag = { ...(state.carried[action.playerId] ?? {}) };
+        for (const r of Object.keys(choice.costCarried)) {
+          bag[r] -= choice.costCarried[r];
+          if (bag[r] <= 0) delete bag[r];
+        }
+        carriedOut = { ...state.carried, [action.playerId]: bag };
+      }
 
       let activeEvent: GameState["activeEvent"] = state.activeEvent;
       let eventScheduledAt = state.eventScheduledAt;
@@ -676,6 +771,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
         population: draft.population,
         workers: draft.workers,
         pendingEffects: draft.pendingEffects,
+        perks: draft.perks,
+        carried: carriedOut,
         activeEvent,
         eventScheduledAt,
         rng,
@@ -695,6 +792,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         pendingEffects: [...state.pendingEffects],
         tick: state.tick,
         cabinTier: state.cabinTier,
+        perks: { ...state.perks },
       };
       const start = ev.scenes["start"];
       if (start?.onLoad) applyEffect(draft, start.onLoad, rng);
@@ -746,6 +844,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const draft: EffectDraft = {
         resources: { ...state.resources }, buildings: { ...state.buildings },
         population, workers: { ...state.workers }, pendingEffects: [...state.pendingEffects], tick: state.tick, cabinTier: state.cabinTier,
+        perks: { ...state.perks },
       };
       trimWorkersToPopulation(draft); // si réduction : ramène les ouvriers spécialisés
       return { ...state, population, workers: draft.workers, rng: cloneRng(state.rng) };
@@ -910,6 +1009,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       let eventScheduledAt = state.eventScheduledAt;
       let pendingEffects = state.pendingEffects;
       let workers = state.workers;
+      let perksOut = state.perks;
       // `buildings` est déclaré plus haut (avance des chantiers) ; les événements peuvent le modifier.
 
       const pendingDue = pendingEffects.length > 0 && pendingEffects.some((p) => p.at <= tick);
@@ -924,6 +1024,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
           pendingEffects: [...pendingEffects],
           tick,
           cabinTier: state.cabinTier,
+          perks: { ...state.perks },
         };
 
         // a) Drainer les effets différés échus (ex. retour du marchand).
@@ -965,6 +1066,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         population = draft.population;
         workers = draft.workers;
         pendingEffects = draft.pendingEffects;
+        perksOut = draft.perks;
       }
 
       // 7) SURVIE (M6/M7) : par joueur, PAR TEMPS passé DEHORS (pas par case). DEHORS : l'eau puis les
@@ -974,6 +1076,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
       let survival = state.survival;
       let carried = state.carried;
       let combat = state.combat;
+      const capWater = maxWaterOf(state); // M10 : caps d'équipement (entrepôt, communs)
+      const capHp = maxHealthOf(state);
       const survIds = Object.keys(state.survival).sort();
       if (survIds.length > 0) {
         const nextSurv: Record<string, PlayerSurvival> = { ...state.survival };
@@ -989,11 +1093,11 @@ export function reduce(state: GameState, action: GameAction): GameState {
             if (food > 0 && tick >= foodAt) { food -= 1; foodAt = tick + FOOD_DRAIN_TICKS; dirty = true; }
             // À sec d'eau ET de vivres : la santé décline (plancher 0 ; mort en 8c).
             if (water === 0 && food === 0 && health > 0 && tick >= healthAt) { health -= 1; healthAt = tick + HEALTH_DRAIN_TICKS; dirty = true; }
-          } else if (!outside && tick >= waterAt && (water < MAX_WATER || food < MAX_FOOD || health < MAX_HEALTH)) {
-            // DEDANS : recharge cadencée (waterAt sert d'horloge de recharge unique).
-            if (water < MAX_WATER) water += 1;
+          } else if (!outside && tick >= waterAt && (water < capWater || food < MAX_FOOD || health < capHp)) {
+            // DEDANS : recharge cadencée (waterAt sert d'horloge unique) — caps M10 (outre/armure).
+            if (water < capWater) water += 1;
             if (food < MAX_FOOD) food += 1;
-            if (health < MAX_HEALTH) health += 1;
+            if (health < capHp) health += 1;
             waterAt = tick + RECHARGE_TICKS; foodAt = tick + RECHARGE_TICKS; healthAt = tick + RECHARGE_TICKS;
             dirty = true;
           }
@@ -1059,7 +1163,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
           rng = rng === state.rng ? cloneRng(state.rng) : rng;
           nextCombat = nextCombat ?? { ...combat };
           nextCombat[pid] = { ...enc, enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ) };
-          if (nextFloat(rng) < enemy.hit) {
+          if (nextFloat(rng) < enemyHit(enemy.hit, state.perks)) {
             nextSurv = nextSurv ?? { ...survival };
             nextSurv[pid] = { ...sv, health: Math.max(0, sv.health - enemy.damage) };
           }
@@ -1123,6 +1227,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         activeEvent,
         eventScheduledAt,
         pendingEffects,
+        perks: perksOut,
         rng: rng === state.rng ? cloneRng(state.rng) : rng,
       };
     }

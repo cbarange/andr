@@ -53,14 +53,37 @@ export function ownsWeapon(state: GameState, playerId: string, weaponId: string)
   return carriedOf(state, playerId, weaponId) > 0;
 }
 
+/** L'arme a-t-elle ses MUNITIONS (au SAC) ? (fusil -> balle ; grenade -> elle-même ; sinon oui.) */
+export function hasAmmo(state: GameState, playerId: string, w: WeaponDef): boolean {
+  if (!w.ammo) return true;
+  return carriedOf(state, playerId, w.ammo) >= 1;
+}
+
+/** Dégâts d'une frappe : « barbare » booste la MÊLÉE ×1,5 (floor) — fidèle events.js d'ADR. M10. */
+export function attackDamage(w: WeaponDef, perks: Record<string, true>): number {
+  if (w.kind === "melee" && perks["barbarian"]) return Math.floor(w.damage * 1.5);
+  return w.damage;
+}
+
+/** Chance de toucher du JOUEUR : 0.8 +0.1 si « précis » — fidèle getHitChance d'ADR. M10. */
+export function playerHit(perks: Record<string, true>): number {
+  return config.combat.playerHitChance + (perks["precise"] ? 0.1 : 0);
+}
+
+/** Chance de toucher de L'ENNEMI : son `hit`, ×0.8 si « insaisissable » — fidèle ADR. M10. */
+export function enemyHit(enemyHitChance: number, perks: Record<string, true>): number {
+  return enemyHitChance * (perks["evasive"] ? 0.8 : 1);
+}
+
 /**
  * Meilleure arme PRÊTE du joueur (plus gros dégâts d'abord, poings en dernier recours), ou
- * `null` si tout est en recharge. Sert au verbe « frapper » (UI) — PUR, partagé avec le rendu.
+ * `null` si tout est en recharge / sans munitions. Sert au verbe « frapper » (UI) — PUR.
  */
 export function bestReadyWeapon(state: GameState, playerId: string, enc: Encounter): WeaponDef | null {
   let best: WeaponDef | null = null;
   for (const w of weapons) {
     if (!ownsWeapon(state, playerId, w.id)) continue;
+    if (!hasAmmo(state, playerId, w)) continue;
     if (state.tick < (enc.weaponReadyAt[w.id] ?? 0)) continue;
     if (!best || w.damage > best.damage) best = w;
   }

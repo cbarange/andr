@@ -179,6 +179,29 @@ export type FleeAction = {
   playerId: string;
 };
 
+// ---- M10 : commerce, soin & équipement (outfitting) ----
+
+/** Achète UN bien au poste de traite (coûts ADR depuis l'ENTREPÔT, gain à l'ENTREPÔT). */
+export type BuyAction = {
+  type: "BUY";
+  playerId: string;
+  goodId: string;
+};
+
+/** Se soigne avec une MÉDECINE du SAC : +20 PV (cap armure), cooldown 7 s — fidèle ADR. */
+export type UseMedsAction = {
+  type: "USE_MEDS";
+  playerId: string;
+};
+
+/** S'ÉQUIPE au coffre (l'outfitting d'ADR) : transfert ENTREPÔT -> SAC, borné par la capacité. */
+export type WithdrawAction = {
+  type: "WITHDRAW";
+  playerId: string;
+  resource: string;
+  amount: number;
+};
+
 /** Avance d'un pas fixe de simulation (§3.6). Émise par la boucle, pas par le joueur. */
 export type TickAction = {
   type: "TICK";
@@ -279,6 +302,9 @@ export type GameAction =
   | AttackAction
   | EatMeatAction
   | FleeAction
+  | BuyAction
+  | UseMedsAction
+  | WithdrawAction
   | TickAction
   | DebugTriggerEventAction
   | DebugGrantAction
@@ -319,6 +345,9 @@ export type PlayerAction =
   | AttackAction
   | EatMeatAction
   | FleeAction
+  | BuyAction
+  | UseMedsAction
+  | WithdrawAction
   | DebugGrantAction
   | DebugSetAction
   | DebugClearAction
@@ -423,6 +452,15 @@ export function eatMeat(playerId: string): EatMeatAction {
 }
 export function flee(playerId: string): FleeAction {
   return { type: "FLEE", playerId };
+}
+export function buy(playerId: string, goodId: string): BuyAction {
+  return { type: "BUY", playerId, goodId };
+}
+export function useMeds(playerId: string): UseMedsAction {
+  return { type: "USE_MEDS", playerId };
+}
+export function withdraw(playerId: string, resource: string, amount: number): WithdrawAction {
+  return { type: "WITHDRAW", playerId, resource, amount };
 }
 
 export function tick(): TickAction {

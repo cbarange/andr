@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createInitialState, Fire, Temp, BUILDER_ABSENT, carriedTotal, carriedOf, carryCapacity, freeWorkers, siteKey, GameState,
-  survivalOf,
+  survivalOf, maxWaterOf, maxHealthOf,
 } from "./state";
 import { reduce, reduceAll, advanceTicks } from "./reducer";
 import {
@@ -15,10 +15,10 @@ import {
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter,
+  attack, eatMeat, flee, debugStartEncounter, buy, useMeds, withdraw,
 } from "./actions";
-import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, bestReadyWeapon } from "./combat";
-import { enemyById } from "../../data/world";
+import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
+import { enemyById, weaponById } from "../../data/world";
 import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -1223,6 +1223,147 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
       ...Array.from({ length: 300 }, () => tick()),
     ];
     const s0 = createInitialState(config.rngSeed, 0);
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
+  });
+});
+
+describe("atelier, commerce & perks (M10) — fidèle ADR", () => {
+  const SV = config.survival;
+  /** État avec atelier + poste de traite construits et l'entrepôt fourni. */
+  function equipped(res: Record<string, number> = {}): GameState {
+    return repaired({
+      buildings: { workshop: 1, "trading post": 1 },
+      resources: { ...res },
+    });
+  }
+
+  it("UPGRADES -> ENTREPÔT (les *stores* d'ADR), max 1, recettes exactes", () => {
+    let s = equipped({ leather: 60 });
+    s = reduce(s, craftItem("a", "waterskin")); // 50 cuir
+    expect(s.resources.waterskin).toBe(1); // à l'ENTREPÔT, pas au sac
+    expect(carriedOf(s, "a", "waterskin")).toBe(0);
+    expect(s.resources.leather).toBe(10);
+    const again = reduce({ ...s, resources: { ...s.resources, leather: 999 } }, craftItem("a", "waterskin"));
+    expect(again.resources.waterskin).toBe(1); // max 1 -> no-op
+  });
+
+  it("caps BEST-OF : outre +10 eau · armure de cuir 15 PV · sac de cuir +10 portage", () => {
+    const s0 = createInitialState(config.rngSeed, 0);
+    expect(maxWaterOf(s0)).toBe(SV.maxWater);
+    expect(maxHealthOf(s0)).toBe(SV.maxHealth);
+    const s = { ...s0, resources: { waterskin: 1, cask: 1, "l armour": 1, rucksack: 1 } };
+    expect(maxWaterOf(s)).toBe(SV.maxWater + 20); // le baril (20) bat l'outre (10)
+    expect(maxHealthOf(s)).toBe(15); // armure de cuir
+    expect(carryCapacity(s)).toBe(config.carryCapBase + 10); // sac de cuir (sans charrette)
+  });
+
+  it("la recharge au camp et l'avant-poste remplissent jusqu'aux NOUVEAUX caps", () => {
+    let s: GameState = {
+      ...createInitialState(config.rngSeed, 0),
+      resources: { waterskin: 1, "l armour": 1 },
+      sites: { [siteKey(3, 4)]: { type: "cave", discovered: true, cleared: true } },
+    };
+    s = reduce(s, setOutside("p1", true, 1));
+    s = reduce(s, useOutpost("p1", 3, 4)); // ravitaillement -> plein d'eau à 20 (outre)
+    expect(survivalOf(s, "p1").water).toBe(SV.maxWater + 10);
+    s = reduce(s, setOutside("p1", false, 0));
+    s = advanceTicks(s, SV.rechargeSeconds * HZ * 30); // recharge au camp
+    expect(survivalOf(s, "p1").health).toBe(15); // PV montent au cap d'armure
+  });
+
+  it("FUSIL : consomme 1 balle PAR TIR (touché ou non), no-op sans munition", () => {
+    let s: GameState = { ...equipped(), carried: { p1: { rifle: 1, bullets: 2 } } };
+    s = reduce(s, debugStartEncounter("p1", "soldier"));
+    const s1 = reduce(s, attack("p1", "rifle"));
+    expect(carriedOf(s1, "p1", "bullets")).toBe(1); // balle consommée
+    const s2 = advanceTicks(s1, 1 * HZ); // cooldown fusil : 1 s
+    const s3 = reduce(s2, attack("p1", "rifle"));
+    expect(carriedOf(s3, "p1", "bullets")).toBe(0);
+    const s4 = advanceTicks(s3, 1 * HZ);
+    expect(reduce(s4, attack("p1", "rifle"))).toBe(s4); // plus de balles -> no-op
+    if (s4.combat["p1"]) {
+      expect(bestReadyWeapon(s4, "p1", s4.combat["p1"])?.id).toBe("fists"); // le fusil est exclu sans munitions
+    }
+  });
+
+  it("PERKS : barbare ×1,5 mêlée seulement · précis +0.1 · insaisissable ×0.8 (helpers purs)", () => {
+    const none: Record<string, true> = {};
+    const all: Record<string, true> = { barbarian: true, precise: true, evasive: true };
+    expect(attackDamage(weaponById["steel sword"], none)).toBe(6);
+    expect(attackDamage(weaponById["steel sword"], all)).toBe(9); // 6 × 1.5
+    expect(attackDamage(weaponById["rifle"], all)).toBe(5); // ranged : pas de bonus barbare
+    expect(attackDamage(weaponById["fists"], all)).toBe(1); // unarmed : pas de bonus
+    expect(playerHit(none)).toBeCloseTo(0.8);
+    expect(playerHit(all)).toBeCloseTo(0.9);
+    expect(enemyHit(0.8, all)).toBeCloseTo(0.64);
+  });
+
+  it("POSTE DE TRAITE : coûts ADR exacts, exige le bâtiment, gain borné", () => {
+    const noPost = repaired({ resources: { fur: 999 } });
+    expect(reduce(noPost, buy("p1", "scales"))).toBe(noPost); // pas de poste -> no-op
+    let s = equipped({ fur: 200 });
+    s = reduce(s, buy("p1", "scales")); // 150 fourrure -> 1 écaille
+    expect(s.resources.scales).toBe(1);
+    expect(s.resources.fur).toBe(50);
+    expect(reduce(s, buy("p1", "scales"))).toBe(s); // fonds insuffisants -> no-op
+    expect(reduce(s, buy("p1", "inconnu"))).toBe(s);
+  });
+
+  it("USE_MEDS : +20 PV (cap armure), consomme du SAC, cooldown 7 s", () => {
+    let s: GameState = { ...equipped({ "i armour": 1 }), carried: { p1: { medicine: 2 } } }; // cap 25
+    s = reduce(s, debugSetSurvival("p1", { health: 2 }));
+    s = reduce(s, useMeds("p1"));
+    expect(survivalOf(s, "p1").health).toBe(22); // 2 + 20
+    expect(carriedOf(s, "p1", "medicine")).toBe(1);
+    expect(reduce(s, useMeds("p1"))).toBe(s); // cooldown
+    s = advanceTicks(s, config.combat.medsCooldownSeconds * HZ);
+    s = reduce(s, useMeds("p1"));
+    expect(survivalOf(s, "p1").health).toBe(25); // cap d'armure de fer
+  });
+
+  it("WITHDRAW (outfitting) : entrepôt -> sac, borné par stock ET capacité", () => {
+    let s = equipped({ "cured meat": 5, bullets: 100 });
+    s = reduce(s, withdraw("p1", "cured meat", 3));
+    expect(carriedOf(s, "p1", "cured meat")).toBe(3);
+    expect(s.resources["cured meat"]).toBe(2);
+    s = reduce(s, withdraw("p1", "cured meat", 99)); // borné par le stock restant
+    expect(carriedOf(s, "p1", "cured meat")).toBe(5);
+    s = reduce(s, withdraw("p1", "bullets", 999)); // borné par la capacité du sac (24 - 5)
+    expect(carriedTotal(s, "p1")).toBe(carryCapacity(s));
+    expect(reduce(s, withdraw("p1", "bullets", 1))).toBe(s); // sac plein -> no-op
+  });
+
+  it("LE MAÎTRE : coût ADR (100 viande + 100 fourrure + 1 TORCHE du sac) -> perk au village", () => {
+    let s: GameState = {
+      ...repaired({ resources: { "cured meat": 150, fur: 150 } }),
+      carried: { p1: { torch: 1 } },
+    };
+    s = trigger(s, "master");
+    const noTorch = reduce({ ...s, carried: {} }, resolveEventChoice("p1", "agree"));
+    expect(noTorch.activeEvent?.scene).toBe("start"); // sans torche au sac -> no-op
+    s = reduce(s, resolveEventChoice("p1", "agree"));
+    expect(s.activeEvent?.scene).toBe("wisdom");
+    expect(carriedOf(s, "p1", "torch")).toBe(0); // torche consommée (costCarried)
+    expect(s.resources["cured meat"]).toBe(50);
+    s = reduce(s, resolveEventChoice("p1", "force"));
+    expect(s.perks["barbarian"]).toBe(true); // l'art de frapper -> perk barbare
+  });
+
+  it("L'HOMME MALADE : 1 médecine -> issue PONDÉRÉE déterministe (alliage/cellules/écailles/rien)", () => {
+    let s = repaired({ resources: { medicine: 1 } });
+    s = trigger(s, "sickman");
+    const out = reduce(s, resolveEventChoice("p1", "help"));
+    expect(out.resources.medicine ?? 0).toBe(0); // médecine donnée
+    expect(["alloy", "cells", "scales", "nothing"]).toContain(out.activeEvent?.scene);
+    expect(out).toEqual(reduce(s, resolveEventChoice("p1", "help"))); // tirage reproductible
+  });
+
+  it("REPLAY M10 : craft/troc/soin/perk déterministes", () => {
+    const acts: GameAction[] = [
+      craftItem("a", "waterskin"), buy("a", "scales"), withdraw("a", "cured meat", 2),
+      ...Array.from({ length: 100 }, () => tick()),
+    ];
+    const s0 = equipped({ leather: 60, fur: 200, "cured meat": 5 });
     expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
 });

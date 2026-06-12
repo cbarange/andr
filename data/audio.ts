@@ -54,9 +54,13 @@ export const audioManifest = {
     footsteps: ["footsteps-1", "footsteps-2", "footsteps-3", "footsteps-4", "footsteps-5", "footsteps-6"],
     // M8 — combat (assets ADR déjà dans public/audio/) :
     weaponUnarmed: ["weapon-unarmed-1", "weapon-unarmed-2", "weapon-unarmed-3"], // poings
-    weaponMelee: ["weapon-melee-1", "weapon-melee-2", "weapon-melee-3"], // lance d'os, épées (M10)
+    weaponMelee: ["weapon-melee-1", "weapon-melee-2", "weapon-melee-3"], // lance d'os, épées
+    weaponRanged: ["weapon-ranged-1", "weapon-ranged-2", "weapon-ranged-3"], // fusil, grenade (M10)
     death: "death",
     eatMeat: "eat-meat",
+    // M10 — commerce & soin :
+    buy: "buy",
+    useMeds: "use-meds",
   },
 } as const;
 

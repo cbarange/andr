@@ -127,23 +127,78 @@ export const config = {
     roadChanceFactor: 0.4, // R4 « route sécurisée » : chance réduite sur les cellules de route
     postVictorySeconds: 45, // répit après une victoire (cf. FIGHT_DELAY d'ADR, min entre combats)
     postFleeSeconds: 20, // répit (plus court) après une fuite
-    playerHitChance: 0.8, // chance de toucher du joueur (défaut ADR ; les perks M10 la moduleront)
+    playerHitChance: 0.8, // chance de toucher du joueur (défaut ADR ; perk « précis » : +0.1)
     eatCooldownSeconds: 5, // délai entre deux viandes mangées (EAT_COOLDOWN d'ADR)
     eatMeatHeal: 8, // PV rendus par viande séchée (meatHeal de base d'ADR)
+    medsCooldownSeconds: 7, // délai entre deux médecines (MEDS_COOLDOWN d'ADR)
+    medsHeal: 20, // PV rendus par médecine (MEDS_HEAL d'ADR)
   },
 } as const;
 
-// --- M8 : ARMES (stats ADR exactes). `fists` est TOUJOURS disponible (pas un objet) ; les autres
-//     sont possédées si présentes dans le SAC (pattern torche). M10 ajoutera épées/fusil ici. ---
+// --- M10 : EFFETS des UPGRADES (valeurs ADR exactes — world.js/path.js). Fidèle aux *stores*
+//     d'ADR : ces possessions vivent à l'ENTREPÔT (permanentes, jamais perdues à la mort) et
+//     SEUL LE MEILLEUR possédé compte (pas de cumul). Base : eau 10, portage 10(+cart), PV 10. ---
+export const WATER_BONUS: Array<[string, number]> = [
+  ["water tank", 50], ["cask", 20], ["waterskin", 10], // du meilleur au moindre
+];
+export const CARRY_BONUS: Array<[string, number]> = [
+  ["convoy", 60], ["wagon", 30], ["rucksack", 10],
+];
+export const ARMOR_HEALTH: Array<[string, number]> = [
+  ["s armour", 45], ["i armour", 25], ["l armour", 15], // PV MAX totaux (base 10 sinon)
+];
+
+// --- M10 : PERKS (partagés au niveau du village — divergence coop assumée, ADR est solo).
+//     Effets (events.js/world.js ADR) : précis +0.1 hit · barbare dégâts mêlée ×1.5 · insaisissable
+//     hit ennemi ×0.8. Accordés par l'événement « le Maître » (grantPerk). ---
+export const PERKS: Record<string, { name: string; desc: string }> = {
+  precise: { name: "précis", desc: "+10 % de chances de toucher" },
+  barbarian: { name: "barbare", desc: "dégâts de mêlée ×1,5" },
+  evasive: { name: "insaisissable", desc: "les ennemis touchent moins souvent" },
+};
+
+// --- M10 : POSTE DE TRAITE — biens de troc (Room.TradeGoods d'ADR, valeurs EXACTES).
+//     Fourrure/écailles/dents = monnaies ; coûts payés à l'ENTREPÔT, gains à l'ENTREPÔT (bornés
+//     par storageCap). bolas (stun) et compass (carte) différés — cf. roadmap-v2 §5. ---
+export interface TradeGood {
+  id: string; // ressource (ou arme) reçue, ×1 par achat
+  cost: Record<string, number>;
+}
+export const tradeGoods: TradeGood[] = [
+  { id: "scales", cost: { fur: 150 } },
+  { id: "teeth", cost: { fur: 300 } },
+  { id: "iron", cost: { fur: 150, scales: 50 } },
+  { id: "coal", cost: { fur: 200, teeth: 50 } },
+  { id: "steel", cost: { fur: 300, scales: 50, teeth: 50 } },
+  { id: "medicine", cost: { scales: 50, teeth: 30 } },
+  { id: "bullets", cost: { scales: 10 } },
+  { id: "energy cell", cost: { scales: 10, teeth: 10 } },
+  { id: "grenade", cost: { scales: 100, teeth: 50 } },
+  { id: "bayonet", cost: { scales: 500, teeth: 250 } },
+  { id: "alien alloy", cost: { fur: 1500, scales: 750, teeth: 300 } },
+];
+export const tradeGoodById: Record<string, TradeGood> = Object.fromEntries(tradeGoods.map((t) => [t.id, t]));
+
+// --- M8/M10 : ARMES (stats ADR exactes — world.js Weapons). `fists` est TOUJOURS disponible
+//     (pas un objet) ; les autres sont possédées si présentes dans le SAC (= l'outfit d'ADR :
+//     PERDUES à la mort, fidèle). `kind` : barbare ne booste que la MÊLÉE ; `ammo` : consommée
+//     du SAC à chaque tir (fusil -> 1 balle ; grenade -> se consomme elle-même). ---
 export interface WeaponDef {
   id: string;
   name: string;
   damage: number;
   cooldownSeconds: number;
+  kind: "unarmed" | "melee" | "ranged";
+  ammo?: string; // ressource du SAC consommée par tir (absent = aucune)
 }
 export const weapons: WeaponDef[] = [
-  { id: "fists", name: "poings", damage: 1, cooldownSeconds: 2 },
-  { id: "bone spear", name: "lance d'os", damage: 2, cooldownSeconds: 2 },
+  { id: "fists", name: "poings", damage: 1, cooldownSeconds: 2, kind: "unarmed" },
+  { id: "bone spear", name: "lance d'os", damage: 2, cooldownSeconds: 2, kind: "melee" },
+  { id: "iron sword", name: "épée de fer", damage: 4, cooldownSeconds: 2, kind: "melee" },
+  { id: "steel sword", name: "épée d'acier", damage: 6, cooldownSeconds: 2, kind: "melee" },
+  { id: "bayonet", name: "baïonnette", damage: 8, cooldownSeconds: 2, kind: "melee" },
+  { id: "rifle", name: "fusil", damage: 5, cooldownSeconds: 1, kind: "ranged", ammo: "bullets" },
+  { id: "grenade", name: "grenade", damage: 15, cooldownSeconds: 5, kind: "ranged", ammo: "grenade" },
 ];
 export const weaponById: Record<string, WeaponDef> = Object.fromEntries(weapons.map((w) => [w.id, w]));
 
@@ -218,6 +273,10 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
   "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
   medicine: "rare", // butin de l'homme grelottant (M8) ; consommée par USE_MEDS (M10)
+  grenade: "rare", bayonet: "rare", // armes de troc (M10)
+  // Upgrades d'atelier (M10) : possessions de l'ENTREPÔT (max 1 — la rareté importe peu).
+  waterskin: "rare", cask: "rare", "water tank": "rare", rucksack: "rare", wagon: "rare", convoy: "rare",
+  "l armour": "rare", "i armour": "rare", "s armour": "rare",
 };
 
 /** Plafond de base (palier ×1) par rareté. */
@@ -596,9 +655,12 @@ export const jobById: Record<string, Job> = Object.fromEntries(jobs.map((j) => [
 export interface CraftableItem {
   id: string;
   name: string;
-  type: "good" | "tool" | "weapon";
+  /** `upgrade` (M10) : possession PERMANENTE du village -> créditée à l'ENTREPÔT (les *stores*
+   *  d'ADR — jamais perdue à la mort), max 1. Les autres types vont au SAC (l'outfit). */
+  type: "good" | "tool" | "weapon" | "upgrade";
   building: string | null; // prérequis bâtiment (M10 : "workshop") ; null = aucun (v1)
   recipe: Record<string, number>; // coût en ressources de l'entrepôt
+  maximum?: number; // nombre max possédé (upgrades ADR : 1)
 }
 
 export const craftableItems: CraftableItem[] = [
@@ -606,6 +668,23 @@ export const craftableItems: CraftableItem[] = [
   { id: "torch", name: "torche", type: "tool", building: null, recipe: { wood: 1, cloth: 1 } },
   // M8 — ADR exact : lance d'os = 100 bois + 5 dents, type weapon => ATELIER requis (needsWorkshop).
   { id: "bone spear", name: "lance d'os", type: "weapon", building: "workshop", recipe: { wood: 100, teeth: 5 } },
+  // --- M10 : objets d'ATELIER (Room.Craftables d'ADR, recettes EXACTES) ---
+  // Eau (capacité d'expédition ; le meilleur compte) :
+  { id: "waterskin", name: "outre", type: "upgrade", building: "workshop", recipe: { leather: 50 }, maximum: 1 },
+  { id: "cask", name: "baril", type: "upgrade", building: "workshop", recipe: { leather: 100, iron: 20 }, maximum: 1 },
+  { id: "water tank", name: "citerne", type: "upgrade", building: "workshop", recipe: { iron: 100, steel: 50 }, maximum: 1 },
+  // Portage (capacité du sac ; le meilleur compte) :
+  { id: "rucksack", name: "sac de cuir", type: "upgrade", building: "workshop", recipe: { leather: 200 }, maximum: 1 },
+  { id: "wagon", name: "chariot", type: "upgrade", building: "workshop", recipe: { wood: 500, iron: 100 }, maximum: 1 },
+  { id: "convoy", name: "convoi", type: "upgrade", building: "workshop", recipe: { wood: 1000, iron: 200, steel: 100 }, maximum: 1 },
+  // Armures (PV max ; la meilleure compte) :
+  { id: "l armour", name: "armure de cuir", type: "upgrade", building: "workshop", recipe: { leather: 200, scales: 20 }, maximum: 1 },
+  { id: "i armour", name: "armure de fer", type: "upgrade", building: "workshop", recipe: { leather: 200, iron: 100 }, maximum: 1 },
+  { id: "s armour", name: "armure d'acier", type: "upgrade", building: "workshop", recipe: { leather: 200, steel: 100 }, maximum: 1 },
+  // Armes (au SAC — perdues à la mort, fidèle à l'outfit d'ADR) :
+  { id: "iron sword", name: "épée de fer", type: "weapon", building: "workshop", recipe: { wood: 200, leather: 50, iron: 20 } },
+  { id: "steel sword", name: "épée d'acier", type: "weapon", building: "workshop", recipe: { wood: 500, leather: 100, steel: 20 } },
+  { id: "rifle", name: "fusil", type: "weapon", building: "workshop", recipe: { wood: 200, steel: 50, sulphur: 50 } },
 ];
 
 export const craftableItemById: Record<string, CraftableItem> = Object.fromEntries(craftableItems.map((i) => [i.id, i]));
@@ -643,6 +722,12 @@ export const RESOURCE_LABELS: Record<string, string> = {
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
   "alien alloy": "alliage", "energy cell": "cellule", torch: "torche",
   medicine: "médecine", "bone spear": "lance d'os",
+  // M10 — atelier & troc :
+  waterskin: "outre", cask: "baril", "water tank": "citerne",
+  rucksack: "sac de cuir", wagon: "chariot", convoy: "convoi",
+  "l armour": "armure de cuir", "i armour": "armure de fer", "s armour": "armure d'acier",
+  "iron sword": "épée de fer", "steel sword": "épée d'acier", rifle: "fusil",
+  grenade: "grenade", bayonet: "baïonnette",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG
@@ -680,12 +765,16 @@ export interface EventEffect {
   destroyBuildings?: { id: string; min: number; max: number };
   /** Récompense DIFFÉRÉE et probabiliste (le marchand qui « revient plus tard »). */
   delayedStores?: { chance: number; delaySeconds: number; stores: Record<string, number>; note?: string };
+  /** M10 : accorde un PERK au village (clé de PERKS). Idempotent (Record<string, true>). */
+  grantPerk?: string;
 }
 
 export interface EventChoice {
   id: string; // identifiant STABLE : c'est lui qui circule dans l'action RESOLVE_EVENT_CHOICE
   text: string;
   cost?: Record<string, number>; // payé depuis l'ENTREPÔT
+  /** M10 : coût payé depuis le SAC du joueur qui résout (ex. la torche du Maître — fidèle ADR). */
+  costCarried?: Record<string, number>;
   reward?: Record<string, number>; // gain immédiat (entrepôt)
   available?: (g: GameState) => boolean; // lecture seule (sinon : toujours disponible)
   /** 'end' ferme ; absent = reste sur la scène ; map de poids = tirage de la scène suivante. */
@@ -889,6 +978,84 @@ export const events: GameEvent[] = [
           { id: "buyBait", text: "acheter de l'appât", cost: { fur: 5 }, reward: { bait: 1 } },
           { id: "goodbye", text: "le saluer", next: "end" },
         ],
+      },
+    },
+  },
+  { // M10 — LE MAÎTRE (events/room.js d'ADR) : un vieux vagabond enseigne UN savoir (perk).
+    //  Coût ADR exact : 100 viande séchée + 100 fourrure (entrepôt) + 1 torche (SAC du résolveur).
+    id: "master",
+    title: "le maître",
+    isAvailable: (g) => g.cabinRepaired && g.population >= 5 && !(g.perks["evasive"] && g.perks["precise"] && g.perks["barbarian"]),
+    scenes: {
+      start: {
+        text: [
+          "un vieux vagabond demande le gîte pour la nuit.",
+          "il y a dans ses gestes une assurance qui ne trompe pas : cet homme sait se battre.",
+        ],
+        notification: "un vieux vagabond demande l'hospitalité.",
+        choices: [
+          { id: "agree", text: "l'héberger", cost: { "cured meat": 100, fur: 100 }, costCarried: { torch: 1 }, next: "wisdom" },
+          { id: "deny", text: "refuser", next: "end" },
+        ],
+      },
+      wisdom: {
+        text: ["au matin, reposé, il offre de partager un peu de son savoir avant de partir."],
+        choices: [
+          { id: "evasion", text: "l'art d'esquiver", available: (g) => !g.perks["evasive"], next: "taughtEvasive" },
+          { id: "precision", text: "l'art de viser", available: (g) => !g.perks["precise"], next: "taughtPrecise" },
+          { id: "force", text: "l'art de frapper", available: (g) => !g.perks["barbarian"], next: "taughtBarbarian" },
+          { id: "nothing", text: "rien", next: "end" },
+        ],
+      },
+      taughtEvasive: {
+        text: ["une journée durant, il vous apprend à n'être jamais là où l'on frappe."],
+        onLoad: { grantPerk: "evasive" },
+        choices: [{ id: "leave", text: "le remercier", next: "end" }],
+      },
+      taughtPrecise: {
+        text: ["une journée durant, il vous apprend à lire le mouvement avant qu'il ne naisse."],
+        onLoad: { grantPerk: "precise" },
+        choices: [{ id: "leave", text: "le remercier", next: "end" }],
+      },
+      taughtBarbarian: {
+        text: ["une journée durant, il vous apprend à mettre tout votre poids dans chaque coup."],
+        onLoad: { grantPerk: "barbarian" },
+        choices: [{ id: "leave", text: "le remercier", next: "end" }],
+      },
+    },
+  },
+  { // M10 — L'HOMME MALADE (events/room.js d'ADR) : 1 médecine -> issue PONDÉRÉE (10 % alliage /
+    //  30 % cellules ×3 / 50 % écailles ×5 / sinon rien). Le `next` pondéré du moteur M5 fait le tirage.
+    id: "sickman",
+    title: "l'homme malade",
+    isAvailable: (g) => stock(g, "medicine") > 0,
+    scenes: {
+      start: {
+        text: ["un homme s'approche en claudiquant, secoué de quintes de toux.", "il supplie qu'on lui donne un remède."],
+        notification: "un homme malade demande de l'aide.",
+        choices: [
+          { id: "help", text: "lui donner une médecine", cost: { medicine: 1 }, next: { 0.1: "alloy", 0.4: "cells", 0.9: "scales", 1.0: "nothing" } },
+          { id: "ignore", text: "l'ignorer", next: "end" },
+        ],
+      },
+      alloy: {
+        text: ["« merci. tenez — j'ai trouvé ça, je n'en ai pas l'usage. »", "il vous tend un fragment d'un métal étrangement léger."],
+        onLoad: { stores: { "alien alloy": 1 } },
+        choices: [{ id: "leave", text: "le saluer", next: "end" }],
+      },
+      cells: {
+        text: ["« merci infiniment. prenez ceci en échange. »", "il dépose trois cellules luisantes dans votre main."],
+        onLoad: { stores: { "energy cell": 3 } },
+        choices: [{ id: "leave", text: "le saluer", next: "end" }],
+      },
+      scales: {
+        text: ["« c'est tout ce que j'ai à offrir. »", "il laisse une poignée d'écailles."],
+        onLoad: { stores: { scales: 5 } },
+        choices: [{ id: "leave", text: "le saluer", next: "end" }],
+      },
+      nothing: {
+        text: ["il avale le remède et disparaît dans la nuit sans un mot."],
+        choices: [{ id: "leave", text: "rentrer", next: "end" }],
       },
     },
   },
