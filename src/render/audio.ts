@@ -237,10 +237,11 @@ export class AudioManager {
     const existing = this.musicTracks.get(name);
     if (existing) return existing;
     if (!this.engine) return null;
-    // Routage par préfixe : event-* -> bus event (A5) ; fire-* -> bus musique + SPATIAL (A4) ;
+    // Routage par préfixe : event-*/encounter-* -> bus event (A5/M8 : overlay NON ducké — la
+    // musique de combat doit dominer, pas chuchoter) ; fire-* -> bus musique + SPATIAL (A4) ;
     // sinon (village/world) -> bus musique, non spatial.
     const isFire = name.startsWith("fire-");
-    const bus = name.startsWith("event-") ? this.eventBus : this.musicBus;
+    const bus = name.startsWith("event-") || name.startsWith("encounter-") ? this.eventBus : this.musicBus;
     if (!bus) return null;
     try {
       const sound = await CreateSoundAsync(

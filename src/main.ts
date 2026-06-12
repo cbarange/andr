@@ -47,12 +47,16 @@ import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
+  attack, eatMeat, flee, debugStartEncounter, craftItem,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
+import { bestReadyWeapon } from "./sim/combat";
+import { EncounterFx } from "./render/encounter";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
   configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
+  enemyById, weaponById, craftableItems,
 } from "../data/world";
 import { createOcean } from "./render/ocean";
 
@@ -87,8 +91,14 @@ declare global {
       getWorkers?: () => Record<string, number>;
       getCabinRepaired?: () => boolean;
       getCabinTier?: () => number;
-      getSurvival?: () => { water: number; food: number; health: number; outside: boolean; deathSeq: number };
+      getSurvival?: () => { water: number; food: number; health: number; outside: boolean; deathSeq: number; winSeq: number; tier: number };
       setSurvival?: (vals: { water?: number; food?: number; health?: number }) => void;
+      getCombat?: () => { enemyId: string; enemyHp: number; seq: number } | null;
+      startEncounter?: (enemyId?: string, enemyHp?: number) => void;
+      attack?: (weapon?: string) => void;
+      eatMeat?: () => void;
+      flee?: () => void;
+      pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
       getSiteStats?: () => { placed: number; types: number; full: number; minimal: number };
@@ -319,7 +329,7 @@ async function boot(): Promise<void> {
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
-    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {} }
+    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, combat: {} }
     : createInitialState(config.rngSeed, 0);
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
@@ -361,6 +371,8 @@ async function boot(): Promise<void> {
   // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
   const siteLoot = new SiteLoot(scene);
   siteLoot.setMap(worldMap);
+  // RENCONTRES (M8) : l'ennemi du duel LOCAL est matérialisé devant le joueur (sim non-spatiale).
+  const encounterFx = new EncounterFx(scene);
   let prevBlockedNoTorch = false; // front montant -> un seul toast « il fait trop noir »
   const EMPTY_KEYS = new Set<string>(); // (réutilisé : pas d'alloc/frame quand aucun intérieur actif)
   // Switches dev (HUD debug, F3) : texture du sol + brouillard.
@@ -624,9 +636,53 @@ async function boot(): Promise<void> {
     return {
       speaker: "la constructrice",
       text: "« qu'est-ce qu'on bâtit ? »",
-      choices: [...buildChoices(), { label: "(s'éloigner)", enabled: true, onSelect: closeInteractive }],
+      choices: [
+        ...buildChoices(),
+        // M8/M10 — fabrication d'OBJETS simples (sans atelier : la torche, fidèle au room-craft ADR).
+        { label: "fabriquer un objet…", enabled: true, onSelect: () => showDialogue(craftViewBuilder) },
+        { label: "(s'éloigner)", enabled: true, onSelect: closeInteractive },
+      ],
     };
   }
+
+  // M8/M10 — vue « FABRIQUER » réutilisable : liste les `craftableItems` accessibles. `atelier` :
+  // true = station d'artisanat (E sur l'atelier construit — tous les items dont le prérequis
+  // bâtiment est satisfait) ; false = via la constructrice (items SANS bâtiment requis, ex. torche).
+  // Coûts puisés dans l'ENTREPÔT, l'objet va au SAC (guards sim CRAFT_ITEM : recette/bâtiment/place).
+  function craftView(atelier: boolean): DialogueView {
+    const items = craftableItems.filter((it) =>
+      atelier ? !it.building || (state.buildings[it.building] ?? 0) > 0 : !it.building,
+    );
+    const room = carryCapacity(state) - carriedTotal(state, self()) > 0;
+    const choices: DialogueChoice[] = items.map((it) => {
+      const missing = Object.keys(it.recipe)
+        .map((r) => ({ r, lack: it.recipe[r] - Math.floor(state.resources[r] ?? 0) }))
+        .filter((m) => m.lack > 0);
+      return {
+        label: it.name,
+        sublabel: Object.keys(it.recipe).map((r) => `${it.recipe[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
+        tooltip: !room
+          ? "sac plein"
+          : missing.length
+            ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
+            : undefined,
+        enabled: missing.length === 0 && room,
+        onSelect: () => {
+          emit(craftItem(self(), it.id));
+          audio.playSfx("deposit");
+          hud.toast(`${it.name} — dans votre sac.`);
+          refreshDialogue();
+        },
+      };
+    });
+    return {
+      speaker: atelier ? "l'atelier" : "la constructrice",
+      text: atelier ? "l'établi est prêt. qu'est-ce qu'on fabrique ?" : "« je peux te préparer quelques objets simples. »",
+      choices: [...choices, { label: "(fermer)", enabled: true, onSelect: closeInteractive }],
+    };
+  }
+  const craftViewBuilder = (): DialogueView => craftView(false);
+  const craftViewWorkshop = (): DialogueView => craftView(true);
 
   function formatStores(stores: Record<string, number>): string {
     return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
@@ -783,11 +839,41 @@ async function boot(): Promise<void> {
 
   function computeFocus(): Focus | null {
     const p = player.position;
+
+    // M8 — COMBAT : la rencontre DOMINE le contexte (E = frapper avec la meilleure arme PRÊTE ;
+    // « frapper… » pendant la recharge, calque du « coupe… » des arbres). Court-circuite tout focus.
+    const enc = state.combat[self()] ?? null;
+    if (enc) {
+      const ep = encounterFx.enemyWorldPos();
+      const w = bestReadyWeapon(state, self(), enc);
+      return {
+        world: ep ? new Vector3(ep.x, ep.y + 1.7, ep.z) : new Vector3(p.x, p.y + 1.6, p.z),
+        verb: w ? "frapper" : "frapper…",
+        act: w
+          ? () => {
+              emit(attack(self(), w.id));
+              audio.playSfx(w.id === "fists" ? "weaponUnarmed" : "weaponMelee");
+            }
+          : () => {},
+      };
+    }
+
     let best: Focus | null = null;
     let bestD = Infinity;
     const consider = (dist: number, range: number, make: () => Focus) => {
       if (dist <= range && dist < bestD) { bestD = dist; best = make(); }
     };
+
+    // M8/M10 — ATELIER construit : station d'artisanat (« fabriquer » : torche, lance d'os…).
+    if ((state.buildings["workshop"] ?? 0) > 0) {
+      for (const wp of village.getBuildingPositions("workshop")) {
+        consider(Math.hypot(wp.x - p.x, wp.z - p.z), config.cabinRange, () => ({
+          world: new Vector3(wp.x, terrainHeight(wp.x, wp.z) + 2.2, wp.z),
+          verb: "fabriquer",
+          act: () => showDialogue(craftViewWorkshop),
+        }));
+      }
+    }
 
     // Feu (centre).
     consider(Math.hypot(p.x, p.z), config.fire.interactRange, () => ({
@@ -999,7 +1085,24 @@ async function boot(): Promise<void> {
   let prevEventSig = "";
   let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
+  let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
+  let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
+  let prevOnRoad: boolean | null = null;
   let prevDialogueSig = ""; // signature de l'état dont dépendent les dialogues (resync MP, cf. plus bas)
+
+  /** Tier de DANGER local (0 = zone sûre, 1..3 = anneaux de distance ADR ×2, 4 = caverne). */
+  function dangerTier(): number {
+    if (interiors.isLocalPlayerInside()) return 4;
+    const rCells = Math.hypot(player.position.x, player.position.z) / worldgen.cellSize;
+    if (rCells <= worldgen.safeRadiusCells) return 0;
+    return rCells <= 16 ? 1 : rCells <= 38 ? 2 : 3;
+  }
+  /** Le joueur est-il sur une cellule de ROUTE ? (rencontres raréfiées — R4.) */
+  function onRoadCell(): boolean {
+    const cx = Math.round(player.position.x / worldgen.cellSize);
+    const cz = Math.round(player.position.z / worldgen.cellSize);
+    return !!state.roads[cx + "," + cz];
+  }
   function reflectState(): void {
     // Déblocages (façon ADR) : révèle les craftables atteignables, de façon collante + persistée.
     const grew = updateDiscovered();
@@ -1020,10 +1123,13 @@ async function boot(): Promise<void> {
     const sv = survivalOf(state, self());
     const SU = config.survival;
     hud.setSurvival(sv.water / SU.maxWater, sv.food / SU.maxFood, sv.health / SU.maxHealth);
+    hud.setEatHint(carriedOf(state, self(), "cured meat") > 0 && sv.health < SU.maxHealth); // F : manger (M8)
     if (sv.deathSeq !== prevDeathSeq) {
       prevDeathSeq = sv.deathSeq;
+      encounterFx.clear("death"); // si on est tombé au combat, l'ennemi disparaît
+      audio.playSfx("death");
       player.teleport(cabin.center.x + 1, cabin.center.z + 0.5); // réveil au camp (à côté de la cabane)
-      hud.toast("vous vous effondrez, à bout de forces — réveil au camp, le sac vidé.");
+      hud.toast("vous vous effondrez — réveil au camp, le sac vidé.");
     }
 
     hud.setFire(FIRE_LABELS[state.fire]);
@@ -1034,14 +1140,20 @@ async function boot(): Promise<void> {
     // HUD contextuel : le Feu + le Village ne s'affichent que DANS le village (zone sûre) ;
     // en exploration on ne garde que le Sac. Bascule au franchissement du périmètre.
     const inVillage = Math.hypot(player.position.x, player.position.z) <= VILLAGE_RADIUS;
-    if (inVillage !== prevInVillage) {
-      hud.setCampInfoVisible(inVillage);
-      hud.setZone(!inVillage);
-      // M6/M7 : la position est LOCALE -> on signale à la sim le franchissement de la frontière
-      // (edge). L'hôte vide/recharge la survie. Émis aussi à la 1ère frame (prevInVillage===null)
-      // pour initialiser l'enregistrement côté autorité. Idempotent côté reducer.
-      emit(setOutside(self(), !inVillage));
+    const tier = dangerTier();
+    const onRoad = onRoadCell();
+    if (inVillage !== prevInVillage || tier !== prevDangerTier || onRoad !== prevOnRoad) {
+      if (inVillage !== prevInVillage) {
+        hud.setCampInfoVisible(inVillage);
+        hud.setZone(!inVillage);
+      }
+      // M6/M7/M8 : la position est LOCALE -> on signale à la sim l'état spatial ABSTRAIT (dehors +
+      // tier de danger + route) au CHANGEMENT seulement (edge ; 1ère frame incluse). Le reducer ne
+      // ré-arme les drains QUE si `outside` a basculé (H1) ; un combat est rompu au retour au camp.
+      emit(setOutside(self(), !inVillage, tier, onRoad));
       prevInVillage = inVillage;
+      prevDangerTier = tier;
+      prevOnRoad = onRoad;
     }
 
     world.setFireLevel(state.fire);
@@ -1172,6 +1284,42 @@ async function boot(): Promise<void> {
       const sig = JSON.stringify(state.resources);
       if (sig !== prevEventSig) { refreshDialogue(); prevEventSig = sig; }
     }
+
+    // M8 — RENCONTRE : reflète le duel LOCAL (ennemi 3D + panneau + musique). Placé APRÈS le bloc
+    // d'événement M5 : la musique de combat (overlay, idempotente) garde la priorité sur celle d'un
+    // événement non-modal survenu dehors. La victoire est observée par diff de `winSeq` (robuste à
+    // la coalescence de snapshots), AVANT le sync (l'effondrement remplace la fuite par défaut).
+    const enc = state.combat[self()] ?? null;
+    if (sv.winSeq !== prevWinSeq) {
+      prevWinSeq = sv.winSeq;
+      encounterFx.clear("win");
+      hud.toast("l'ennemi s'effondre — son butin est dans votre sac.");
+      audio.playSfx("checkTraps"); // ramassage du butin
+    }
+    const camYaw = cameraYaw(camera);
+    encounterFx.sync(enc, player.position, { x: Math.sin(camYaw), z: Math.cos(camYaw) });
+    if (enc) {
+      const def = enemyById[enc.enemyId];
+      const w = bestReadyWeapon(state, self(), enc);
+      hud.setCombat({
+        name: def?.name ?? enc.enemyId,
+        hpFrac: def ? enc.enemyHp / def.hp : 1,
+        weaponLabel: w ? w.name : "recharge…",
+        ready: !!w,
+      });
+      // Musique de rencontre par tier (les cavernes — tier 4 — jouent le tier 1). Idempotent.
+      const ti = Math.min(3, Math.max(1, sv.tier === 4 ? 1 : sv.tier || 1));
+      audio.playEventMusic(audioManifest.music.encounter[ti - 1]);
+    } else {
+      hud.setCombat(null);
+      // Ne coupe QUE notre musique de combat (jamais celle d'un événement M5 en cours).
+      const cur = audio.currentEventMusic;
+      if (cur && cur.startsWith("encounter-")) {
+        const track = state.activeEvent ? EVENT_MUSIC[state.activeEvent.id] : undefined;
+        if (track) audio.playEventMusic(track);
+        else audio.stopEventMusic();
+      }
+    }
   }
 
   // ---- BOUCLE À PAS FIXE (§3.6) + rendu interpolé ----
@@ -1183,6 +1331,7 @@ async function boot(): Promise<void> {
   const STEP_SECONDS = 0.4; // cadence des pas (footsteps) quand on marche
   let stepAcc = STEP_SECONDS; // démarré « plein » -> 1er pas immédiat au départ
   let simAcc = 0;
+  let encountersPaused = false; // DEBUG (e2e) : gèle les tirages de rencontre (cf. boucle à pas fixe)
   let transformAcc = 0;
   let snapshotAcc = 0;
   let saveAcc = 0;
@@ -1222,6 +1371,16 @@ async function boot(): Promise<void> {
         state = reduce(state, tick());
         simAcc -= tickMs;
         steps++;
+      }
+      // DEBUG (e2e) : rencontres en PAUSE -> on repousse les tirages (réappliqué car SET_OUTSIDE ré-arme).
+      if (encountersPaused && steps > 0) {
+        let needs = false;
+        for (const k of Object.keys(state.survival)) if (state.survival[k].encounterRollAt !== Number.MAX_SAFE_INTEGER) { needs = true; break; }
+        if (needs) {
+          const surv = { ...state.survival };
+          for (const k of Object.keys(surv)) surv[k] = { ...surv[k], encounterRollAt: Number.MAX_SAFE_INTEGER };
+          state = { ...state, survival: surv };
+        }
       }
       if (net.connected) {
         snapshotAcc += dtMs;
@@ -1265,6 +1424,14 @@ async function boot(): Promise<void> {
       // on coupe l'arbre sauvage le plus proche (sans tooltip).
       if (currentFocus) currentFocus.act();
       else chopWildTree();
+    }
+    // M8 — F : MANGER une viande séchée (+PV). Guard local lisible (la sim re-vérifie tout).
+    if (!uiOpen && input.consumeEat()) {
+      const svNow = survivalOf(state, self());
+      if (carriedOf(state, self(), "cured meat") > 0 && svNow.health < config.survival.maxHealth && state.tick >= svNow.eatReadyAt) {
+        emit(eatMeat(self()));
+        audio.playSfx("eatMeat");
+      }
     }
 
     // 3) Caméra : suit le joueur + spring-arm (collision murs) + bascule 3ᵉ↔1ʳᵉ personne lissée.
@@ -1361,6 +1528,7 @@ async function boot(): Promise<void> {
     interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
+    encounterFx.update(dtSec, player.position); // M8 : l'ennemi rôde / fente / retraits animés
     const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
     sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
     player.setTorch(hasTorch, interiors.isLocalPlayerInside());
@@ -1453,8 +1621,14 @@ async function boot(): Promise<void> {
     getWorkers: () => ({ ...state.workers }),
     getCabinRepaired: () => state.cabinRepaired,
     getCabinTier: () => state.cabinTier,
-    getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq }; },
+    getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq, winSeq: s.winSeq, tier: s.tier }; },
     setSurvival: (vals: { water?: number; food?: number; health?: number }) => emit(debugSetSurvival(self(), vals)),
+    getCombat: () => { const c = state.combat[self()]; return c ? { enemyId: c.enemyId, enemyHp: c.enemyHp, seq: c.seq } : null; },
+    startEncounter: (enemyId?: string, enemyHp?: number) => emit(debugStartEncounter(self(), enemyId, enemyHp)),
+    attack: (weapon = "fists") => emit(attack(self(), weapon)),
+    eatMeat: () => emit(eatMeat(self())),
+    flee: () => emit(flee(self())),
+    pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)
     getSiteStats: () => sites.stats, // P5 : sites posés + paliers LOD (détail/silhouette)

@@ -475,6 +475,7 @@ test("M6/M7 — la survie se vide dehors et la mort renvoie au camp en vidant le
   await page.goto("/");
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
   await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.evaluate(() => window.__game?.pauseEncounters?.()); // M8 : un ennemi fausserait la mort-par-soif
   await page.waitForTimeout(600);
 
   // Au camp : zone sûre (indicateur), survie pleine.
@@ -502,6 +503,68 @@ test("M6/M7 — la survie se vide dehors et la mort renvoie au camp en vidant le
   await expect
     .poll(() => page.evaluate(() => { const p = window.__game?.getPlayer?.(); return p ? Math.hypot(p.x, p.z) : 999; }), { timeout: 10_000 })
     .toBeLessThan(36); // de retour DANS la zone sûre (VILLAGE_RADIUS)
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});
+
+// M8 — COMBAT (victoire) : rencontre forcée (ennemi à 1 PV), E/attack jusqu'à la victoire ->
+// butin au sac (table ADR : fourrure garantie), rencontre fermée, winSeq incrémenté.
+test("M8 — combat : la victoire ferme la rencontre et met le butin au sac", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(600);
+
+  await page.evaluate(() => window.__game?.teleport?.(120, 0)); // dehors (tier 1)
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+
+  await page.evaluate(() => window.__game?.startEncounter?.("snarling beast", 1)); // 1 PV -> tombe vite
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.()?.enemyId ?? null)).toBe("snarling beast");
+  await expect(page.locator("#combatPanel")).toBeVisible(); // panneau de rencontre affiché
+
+  // Frapper jusqu'à la victoire (hit 0.8 -> quelques coups ; cooldown 2 s entre chaque).
+  for (let i = 0; i < 10; i++) {
+    const done = await page.evaluate(() => window.__game?.getCombat?.() === null);
+    if (done) break;
+    await page.evaluate(() => window.__game?.attack?.());
+    await page.waitForTimeout(2200);
+  }
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull();
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.winSeq ?? 0)).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => carried(page, "fur")).toBeGreaterThanOrEqual(1); // butin (chance 1.0)
+  await expect(page.locator("#combatPanel")).toBeHidden();
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});
+
+// M8 — COMBAT (mort) : un soldat (8 dégâts) face à 1 PV -> mort = chemin unifié M7 (sac vidé,
+// réveil au camp) + rencontre fermée.
+test("M8 — combat : mourir face à l'ennemi renvoie au camp en vidant le sac", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(600);
+
+  await page.evaluate(() => window.__game?.teleport?.(300, 300)); // loin (tier 3)
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+
+  await page.evaluate(() => window.__game?.forceGather?.()); // du bois dans le sac (à perdre)
+  await expect.poll(() => carried(page, "wood")).toBeGreaterThan(0);
+  await page.evaluate(() => window.__game?.setSurvival?.({ health: 1 }));
+  await page.evaluate(() => window.__game?.startEncounter?.("soldier")); // 8 dégâts -> mort à la 1ʳᵉ touche
+
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.deathSeq ?? 0), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull(); // rencontre fermée
+  await expect.poll(() => carried(page, "wood")).toBe(0); // sac perdu
+  await expect
+    .poll(() => page.evaluate(() => { const p = window.__game?.getPlayer?.(); return p ? Math.hypot(p.x, p.z) : 999; }), { timeout: 10_000 })
+    .toBeLessThan(36); // réveil au camp
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });

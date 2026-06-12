@@ -71,6 +71,17 @@
       #zoneIndicator.safe { color: var(--good); background: rgba(143, 211, 160, 0.14); }
       #zoneIndicator.out { color: var(--accent); background: rgba(240, 160, 80, 0.18); }
 
+      /* ---- Combat (M8) : panneau de rencontre (nom + PV ennemi + arme + manger) ---- */
+      #combatPanel { top: 16px; left: 50%; transform: translateX(-50%); min-width: 230px; display: none; text-align: center; border-color: rgba(224, 106, 90, 0.45); }
+      #combatPanel .cname { font-size: 15px; font-weight: 700; color: #e06a5a; text-transform: capitalize; }
+      #combatPanel .ctrack { margin-top: 6px; height: 8px; border-radius: 4px; background: rgba(224, 106, 90, 0.16); overflow: hidden; }
+      #combatPanel .cfill { display: block; height: 100%; width: 100%; border-radius: 4px; background: #e06a5a; transition: width 0.18s ease; }
+      #combatPanel .chint { margin-top: 7px; font-size: 11px; color: var(--muted); }
+      #combatPanel .chint kbd { background: rgba(170, 200, 210, 0.12); border-radius: 4px; padding: 0 5px; }
+      #combatPanel .cweapon { color: var(--text); font-weight: 600; }
+      #combatPanel .cready { color: var(--good); }
+      #combatPanel .crecharge { color: var(--accent); }
+
       /* Étiquette d'interaction ancrée au niveau de l'objet (diégétique). */
       #interactPrompt {
         position: absolute; display: none; pointer-events: none;
@@ -225,6 +236,7 @@
           <div class="survRow"><span class="survName">Eau</span><span class="survTrack"><span class="survFill" id="waterBar"></span></span></div>
           <div class="survRow"><span class="survName">Vivres</span><span class="survTrack"><span class="survFill" id="foodBar"></span></span></div>
           <div class="survRow"><span class="survName">Vie</span><span class="survTrack"><span class="survFill" id="healthBar"></span></span></div>
+          <div class="temp" id="eatHint" style="display: none;">F : manger (+8 vie)</div>
         </div>
         <!-- Feu + Village : visibles seulement DANS le village (masqués en exploration). -->
         <div id="campInfo">
@@ -285,6 +297,13 @@
       <div id="lockHint">cliquez pour orienter la caméra à la souris</div>
 
       <div id="interactPrompt"><span class="key">E</span><span id="promptVerb"></span></div>
+
+      <!-- Combat (M8) : rencontre en cours — nom + PV de l'ennemi, arme courante, soin. -->
+      <div id="combatPanel" class="panel">
+        <div class="cname" id="combatName"></div>
+        <div class="ctrack"><span class="cfill" id="combatHp"></span></div>
+        <div class="chint"><kbd>E</kbd> frapper (<span id="combatWeapon" class="cweapon"></span>) · <kbd>F</kbd> manger</div>
+      </div>
 
       <div id="dialogue">
         <div id="dlgSpeaker"></div>

@@ -29,6 +29,7 @@ export class InputManager {
   private readonly down = new Set<string>();
   private jumpQueued = false;
   private interactQueued = false;
+  private eatQueued = false; // M8 : touche F (manger)
   private readonly lastRising: Record<string, number> = {}; // horodatage du dernier VRAI appui par touche
   private doubleTap: DoubleTaps = { forward: false, back: false, jump: false };
 
@@ -46,6 +47,7 @@ export class InputManager {
       e.preventDefault();
     }
     if (k === "e") this.interactQueued = true;
+    if (k === "f") this.eatQueued = true; // M8 : manger (viande séchée) — voisine de E, AZERTY=QWERTY
     if (k.startsWith("arrow") || k === " ") e.preventDefault();
   };
 
@@ -97,6 +99,13 @@ export class InputManager {
   consumeInteract(): boolean {
     const v = this.interactQueued;
     this.interactQueued = false;
+    return v;
+  }
+
+  /** Vrai une seule fois par appui sur F (manger — M8). */
+  consumeEat(): boolean {
+    const v = this.eatQueued;
+    this.eatQueued = false;
     return v;
   }
 

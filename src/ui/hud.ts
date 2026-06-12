@@ -54,6 +54,12 @@ export class Hud {
   private readonly foodBar: HTMLElement;
   private readonly healthBar: HTMLElement;
   private readonly zoneEl: HTMLElement; // indicateur « zone sûre » / « dehors »
+  private readonly eatHintEl: HTMLElement; // « F : manger » (visible si viande séchée au sac)
+  private readonly combatPanelEl: HTMLElement; // M8 : panneau de rencontre
+  private readonly combatNameEl: HTMLElement;
+  private readonly combatHpEl: HTMLElement;
+  private readonly combatWeaponEl: HTMLElement;
+  private combatVisible = false;
   private readonly statusEl: HTMLElement;
   private readonly statusTextEl: HTMLElement;
   private readonly roomInput: HTMLInputElement;
@@ -126,6 +132,11 @@ export class Hud {
     this.foodBar = this.byId("foodBar");
     this.healthBar = this.byId("healthBar");
     this.zoneEl = this.byId("zoneIndicator");
+    this.eatHintEl = this.byId("eatHint");
+    this.combatPanelEl = this.byId("combatPanel");
+    this.combatNameEl = this.byId("combatName");
+    this.combatHpEl = this.byId("combatHp");
+    this.combatWeaponEl = this.byId("combatWeapon");
     this.statusEl = this.byId("netStatus");
     this.statusTextEl = this.byId("netStatusText");
     this.roomInput = this.byId("roomInput") as HTMLInputElement;
@@ -257,6 +268,25 @@ export class Hud {
   setZone(outside: boolean): void {
     this.zoneEl.textContent = outside ? "dehors" : "zone sûre";
     this.zoneEl.className = outside ? "zone out" : "zone safe";
+  }
+
+  /** Hint « F : manger » sur le panneau survie (visible si viande séchée au sac & vie entamée). */
+  setEatHint(visible: boolean): void {
+    this.eatHintEl.style.display = visible ? "" : "none";
+  }
+
+  /** Panneau de RENCONTRE (M8) : nom + PV de l'ennemi + arme courante. `null` = pas de combat. */
+  setCombat(view: { name: string; hpFrac: number; weaponLabel: string; ready: boolean } | null): void {
+    const want = view !== null;
+    if (want !== this.combatVisible) {
+      this.combatPanelEl.style.display = want ? "block" : "none";
+      this.combatVisible = want;
+    }
+    if (!view) return;
+    this.combatNameEl.textContent = view.name;
+    this.combatHpEl.style.width = `${Math.max(0, Math.min(1, view.hpFrac)) * 100}%`;
+    this.combatWeaponEl.textContent = view.weaponLabel;
+    this.combatWeaponEl.className = view.ready ? "cweapon cready" : "cweapon crecharge";
   }
 
   setRenderer(label: string): void {
