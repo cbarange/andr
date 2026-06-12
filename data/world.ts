@@ -115,7 +115,89 @@ export const config = {
     respawnCooldownSeconds: 20, // après la mort : grâce avant que la survie ne reprenne dehors
     deathStoragePenalty: 0, // fraction d'entrepôt perdue à la mort (0 = perte du SAC seul ; knob pour durcir)
   },
+
+  // --- M8 : COMBAT temps réel, FIDÈLE A DARK ROOM (script/events.js + encounters.js).
+  //     Rencontre = duel 1v1 NON-SPATIAL par joueur (l'ennemi est rendu localement) ; armes à
+  //     COOLDOWN propre ; soin en MANGEANT (viande séchée) ; FUIR sans pénalité. Tout en SECONDES
+  //     (converti en tics par la sim) ; tout l'aléa via le RNG à graine de l'hôte. ---
+  combat: {
+    fightChance: 0.2, // la constante FIGHT_CHANCE d'ADR (ici : par tirage périodique, pas par case)
+    caveFightChance: 0.3, // sous terre : plus dense (matérialise les setpieces de cavernes)
+    rollSeconds: 20, // période des tirages de rencontre dehors -> ~1 rencontre / ~100 s d'exposition
+    roadChanceFactor: 0.4, // R4 « route sécurisée » : chance réduite sur les cellules de route
+    postVictorySeconds: 45, // répit après une victoire (cf. FIGHT_DELAY d'ADR, min entre combats)
+    postFleeSeconds: 20, // répit (plus court) après une fuite
+    playerHitChance: 0.8, // chance de toucher du joueur (défaut ADR ; les perks M10 la moduleront)
+    eatCooldownSeconds: 5, // délai entre deux viandes mangées (EAT_COOLDOWN d'ADR)
+    eatMeatHeal: 8, // PV rendus par viande séchée (meatHeal de base d'ADR)
+  },
 } as const;
+
+// --- M8 : ARMES (stats ADR exactes). `fists` est TOUJOURS disponible (pas un objet) ; les autres
+//     sont possédées si présentes dans le SAC (pattern torche). M10 ajoutera épées/fusil ici. ---
+export interface WeaponDef {
+  id: string;
+  name: string;
+  damage: number;
+  cooldownSeconds: number;
+}
+export const weapons: WeaponDef[] = [
+  { id: "fists", name: "poings", damage: 1, cooldownSeconds: 2 },
+  { id: "bone spear", name: "lance d'os", damage: 2, cooldownSeconds: 2 },
+];
+export const weaponById: Record<string, WeaponDef> = Object.fromEntries(weapons.map((w) => [w.id, w]));
+
+// --- M8 : ENNEMIS — tables du CODE SOURCE d'A Dark Room (script/events/encounters.js), NON
+//     adoucies (décision porteur) : les tiers 2/3 sont MORTELS sans armure (M10) — c'est le design
+//     ADR, FUIR est la réponse. `tier` : 1..3 = anneaux de distance ; 4 = cavernes (M9).
+//     `loot` : [ressource, chance, min, max] (tirages indépendants, comme ADR). ---
+export interface EnemyDef {
+  id: string;
+  name: string;
+  hp: number;
+  damage: number;
+  hit: number; // chance de toucher de L'ENNEMI (par ennemi, comme ADR)
+  strikeSeconds: number; // délai entre deux attaques ennemies (attackDelay d'ADR)
+  tier: number;
+  weight: number; // poids de tirage dans son tier
+  model: "beast" | "lizard" | "bird" | "humanoid"; // silhouette low-poly (rendu)
+  loot: Array<[string, number, number, number]>; // [ressource, chance, min, max]
+}
+export const enemies: EnemyDef[] = [
+  // --- Tier 1 (proche, ≤ 16 cellules) ---
+  { id: "snarling beast", name: "bête grondante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 3, tier: 1, weight: 1, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["meat", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
+  { id: "gaunt man", name: "homme décharné", hp: 6, damage: 2, hit: 0.8, strikeSeconds: 3.5, tier: 1, weight: 1, model: "humanoid",
+    loot: [["cloth", 0.8, 1, 2], ["teeth", 0.5, 1, 2], ["leather", 0.5, 1, 2]] },
+  { id: "strange bird", name: "oiseau étrange", hp: 4, damage: 3, hit: 0.8, strikeSeconds: 4, tier: 1, weight: 1, model: "bird",
+    loot: [["scales", 0.8, 1, 2], ["teeth", 0.5, 1, 2], ["meat", 0.8, 1, 3]] },
+  // --- Tier 2 (moyen, ≤ 38 cellules) ---
+  { id: "shivering man", name: "homme grelottant", hp: 20, damage: 5, hit: 0.5, strikeSeconds: 3, tier: 2, weight: 1, model: "humanoid",
+    loot: [["medicine", 0.9, 1, 2]] },
+  { id: "man-eater", name: "mangeur d'hommes", hp: 25, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 2, weight: 1, model: "beast",
+    loot: [["fur", 1.0, 5, 10], ["meat", 1.0, 5, 10], ["teeth", 0.8, 5, 10]] },
+  { id: "scavenger", name: "charognard", hp: 30, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 2, weight: 1, model: "humanoid",
+    loot: [["cloth", 0.8, 5, 10], ["leather", 0.8, 5, 10], ["iron", 0.5, 1, 5]] },
+  { id: "huge lizard", name: "grand lézard", hp: 20, damage: 5, hit: 0.8, strikeSeconds: 2.5, tier: 2, weight: 1, model: "lizard",
+    loot: [["scales", 0.8, 5, 10], ["teeth", 0.5, 5, 10], ["meat", 0.8, 5, 10]] },
+  // --- Tier 3 (loin, > 38 cellules) ---
+  { id: "feral terror", name: "terreur sauvage", hp: 45, damage: 6, hit: 0.8, strikeSeconds: 2, tier: 3, weight: 1, model: "beast",
+    loot: [["fur", 1.0, 5, 10], ["meat", 1.0, 5, 10], ["teeth", 0.8, 5, 10]] },
+  { id: "soldier", name: "soldat", hp: 50, damage: 8, hit: 0.8, strikeSeconds: 3, tier: 3, weight: 1, model: "humanoid",
+    loot: [["cured meat", 0.8, 5, 10], ["bullets", 0.5, 1, 5]] },
+  { id: "sniper", name: "sniper", hp: 30, damage: 15, hit: 0.8, strikeSeconds: 4, tier: 3, weight: 1, model: "humanoid",
+    loot: [["bullets", 0.5, 1, 5]] },
+  // --- Tier 4 : CAVERNES (M9) — valeurs documentées (mines-grottes/roadmap) ---
+  { id: "cave lizard", name: "lézard des cavernes", hp: 6, damage: 3, hit: 0.8, strikeSeconds: 3.5, tier: 4, weight: 1, model: "lizard",
+    loot: [["scales", 0.8, 1, 2], ["teeth", 0.5, 1, 2]] },
+  { id: "snarling beast cave", name: "bête grognante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 3, tier: 4, weight: 1, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["meat", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
+];
+export const enemyById: Record<string, EnemyDef> = Object.fromEntries(enemies.map((e) => [e.id, e]));
+/** Ennemis éligibles d'un tier (1..4). */
+export function enemiesForTier(tier: number): EnemyDef[] {
+  return enemies.filter((e) => e.tier === tier);
+}
 
 export const resources = {
   wood: { id: "wood", label: "Bois", initial: 0 },
@@ -135,6 +217,7 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   leather: "rare", coal: "rare", iron: "rare", scales: "rare", teeth: "rare",
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
   "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
+  medicine: "rare", // butin de l'homme grelottant (M8) ; consommée par USE_MEDS (M10)
 };
 
 /** Plafond de base (palier ×1) par rareté. */
@@ -521,6 +604,8 @@ export interface CraftableItem {
 export const craftableItems: CraftableItem[] = [
   // ADR : torche = bois + étoffe ; requise pour entrer dans le noir (cf. mines-grottes-*).
   { id: "torch", name: "torche", type: "tool", building: null, recipe: { wood: 1, cloth: 1 } },
+  // M8 — ADR exact : lance d'os = 100 bois + 5 dents, type weapon => ATELIER requis (needsWorkshop).
+  { id: "bone spear", name: "lance d'os", type: "weapon", building: "workshop", recipe: { wood: 100, teeth: 5 } },
 ];
 
 export const craftableItemById: Record<string, CraftableItem> = Object.fromEntries(craftableItems.map((i) => [i.id, i]));
@@ -557,6 +642,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   leather: "cuir", scales: "écailles", teeth: "dents", cloth: "étoffe", charm: "charme",
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
   "alien alloy": "alliage", "energy cell": "cellule", torch: "torche",
+  medicine: "médecine", "bone spear": "lance d'os",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG

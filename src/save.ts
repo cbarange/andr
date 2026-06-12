@@ -15,10 +15,10 @@ const DISC_KEY = "darkroom3d.discovered";
 
 export function saveGame(state: GameState): void {
   try {
-    // On NE sérialise PAS `carried` (le sac de chaque pair) ni `survival` (eau/vivres/PV par pair) :
+    // On NE sérialise PAS `carried` (sac), `survival` (eau/vivres/PV) ni `combat` (rencontre) :
     // indexés par `selfId` qui change à chaque session -> re-vidés/réinitialisés au chargement
     // (survie PLEINE à la 1ʳᵉ sortie). Inutile de gonfler le blob avec l'état volatil de tous les pairs.
-    const slim: GameState = { ...state, carried: {}, survival: {} };
+    const slim: GameState = { ...state, carried: {}, survival: {}, combat: {} };
     localStorage.setItem(KEY, JSON.stringify({ version: VERSION, state: slim }));
   } catch {
     /* quota / mode privé : on ignore */

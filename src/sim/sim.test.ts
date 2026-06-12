@@ -15,7 +15,10 @@ import {
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
+  attack, eatMeat, flee, debugStartEncounter,
 } from "./actions";
+import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, bestReadyWeapon } from "./combat";
+import { enemyById } from "../../data/world";
 import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -1033,6 +1036,194 @@ describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
     const out = reduce(s, useOutpost("p1", 3, 4));
     expect(out).toBe(s);
     expect(s.sites[siteKey(3, 4)].used).toBeUndefined(); // pas consommé
+  });
+});
+
+describe("combat (M8) — helpers purs", () => {
+  it("shouldTriggerEncounter : tier 0 = jamais ; la ROUTE raréfie (jamais plus, parfois moins)", () => {
+    expect(shouldTriggerEncounter(createRng(1), 0, false)).toBe(false);
+    let roadOnly = 0, offOnly = 0;
+    for (let seed = 0; seed < 300; seed++) {
+      const off = shouldTriggerEncounter(createRng(seed), 4, false);
+      const on = shouldTriggerEncounter(createRng(seed), 4, true);
+      if (on && !off) roadOnly++; // la route ne doit JAMAIS déclencher là où la nature ne déclenche pas
+      if (off && !on) offOnly++;
+    }
+    expect(roadOnly).toBe(0);
+    expect(offOnly).toBeGreaterThan(0); // la réduction est effective (R4)
+  });
+
+  it("pickEnemy : déterministe et confiné à son tier", () => {
+    const a = pickEnemy(createRng(7), 4);
+    const b = pickEnemy(createRng(7), 4);
+    expect(a).toEqual(b);
+    expect(a?.tier).toBe(4);
+    expect(pickEnemy(createRng(7), 0)).toBeNull(); // pas de table tier 0
+  });
+
+  it("rollEnemyLoot : déterministe, ressources de la table, bornes respectées", () => {
+    const beast = enemyById["snarling beast"];
+    const l1 = rollEnemyLoot(createRng(42), beast);
+    expect(l1).toEqual(rollEnemyLoot(createRng(42), beast));
+    expect(l1.fur).toBeGreaterThanOrEqual(1); // chance 1.0
+    expect(l1.fur).toBeLessThanOrEqual(3);
+    for (const r of Object.keys(l1)) expect(["fur", "meat", "teeth"]).toContain(r);
+  });
+});
+
+describe("combat (M8) — rencontres, armes, mort & soin", () => {
+  const CB = config.combat;
+  const FISTS_CD = 2 * HZ; // poings : cooldown 2 s (ADR)
+
+  /** État avec une rencontre forcée (bête grondante 5/1 par défaut). */
+  function inFight(enemyId = "snarling beast", hp?: number, extra: Partial<GameState> = {}): GameState {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), ...extra };
+    s = reduce(s, debugStartEncounter("p1", enemyId, hp));
+    return s;
+  }
+
+  it("DEBUG_START_ENCOUNTER crée la rencontre (hp forcé, seq monotone)", () => {
+    const s = inFight("cave lizard", 1);
+    expect(s.combat["p1"]?.enemyId).toBe("cave lizard");
+    expect(s.combat["p1"]?.enemyHp).toBe(1);
+    expect(s.combat["p1"]?.seq).toBe(1);
+    expect(survivalOf(s, "p1").encounterSeq).toBe(1);
+  });
+
+  it("ATTACK respecte le COOLDOWN de l'arme (2ᵉ coup immédiat = no-op)", () => {
+    const s1 = reduce(inFight("soldier"), attack("p1", "fists"));
+    expect(reduce(s1, attack("p1", "fists"))).toBe(s1); // l'arme recharge
+    const after = advanceTicks(s1, FISTS_CD);
+    expect(reduce(after, attack("p1", "fists"))).not.toBe(after); // re-frappe possible
+  });
+
+  it("ATTACK exige de POSSÉDER l'arme (lance d'os = au sac, pattern torche)", () => {
+    const s = inFight();
+    expect(reduce(s, attack("p1", "bone spear"))).toBe(s); // pas au sac
+    const armed: GameState = { ...s, carried: { p1: { "bone spear": 1 } } };
+    expect(reduce(armed, attack("p1", "bone spear"))).not.toBe(armed);
+    expect(reduce(s, attack("p1", "inconnue"))).toBe(s); // arme inconnue
+  });
+
+  it("VICTOIRE : butin (table ADR) au SAC, rencontre fermée, winSeq++, répit armé", () => {
+    let s = inFight("snarling beast", 1); // 1 PV -> tombe au 1ᵉʳ coup qui touche
+    for (let i = 0; i < 12 && s.combat["p1"]; i++) {
+      s = reduce(s, attack("p1", "fists"));
+      if (s.combat["p1"]) s = advanceTicks(s, FISTS_CD);
+    }
+    expect(s.combat["p1"]).toBeUndefined(); // vaincu
+    const sv = survivalOf(s, "p1");
+    expect(sv.winSeq).toBe(1);
+    expect(sv.encounterRollAt).toBeGreaterThan(s.tick); // répit post-victoire
+    expect(carriedOf(s, "p1", "fur")).toBeGreaterThanOrEqual(1); // chance 1.0 dans la table
+  });
+
+  it("l'ennemi FRAPPE à échéance (la santé baisse)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = reduce(s, debugStartEncounter("p1", "snarling beast")); // 1 dégât / 3 s (pas de mort ici)
+    s = advanceTicks(s, Math.round(enemyById["snarling beast"].strikeSeconds * HZ) * 5 + 5);
+    const sv = survivalOf(s, "p1");
+    expect(sv.deathSeq).toBe(0); // pas mort (1 dégât par frappe)
+    expect(sv.health).toBeLessThan(config.survival.maxHealth);
+  });
+
+  it("MORT en combat = chemin UNIFIÉ : sac vidé, deathSeq++, rencontre fermée, winSeq préservé", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { wood: 5 } } };
+    s = reduce(s, setOutside("p1", true, 3));
+    s = reduce(s, debugSetSurvival("p1", { health: 1 }));
+    s = reduce(s, debugStartEncounter("p1", "soldier")); // 8 dég -> mort à la 1ʳᵉ frappe qui touche
+    s = advanceTicks(s, Math.round(enemyById["soldier"].strikeSeconds * HZ) * 6 + 5);
+    const sv = survivalOf(s, "p1");
+    expect(sv.deathSeq).toBe(1);
+    expect(sv.health).toBe(config.survival.maxHealth); // ressuscité plein
+    expect(s.combat["p1"]).toBeUndefined(); // rencontre fermée
+    expect(carriedTotal(s, "p1")).toBe(0); // sac perdu
+  });
+
+  it("EAT_MEAT : +8 PV cap, consomme du SAC, cooldown anti-spam, no-op sans viande/plein", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { "cured meat": 2 } } };
+    s = reduce(s, debugSetSurvival("p1", { health: 1 }));
+    s = reduce(s, eatMeat("p1"));
+    expect(survivalOf(s, "p1").health).toBe(1 + CB.eatMeatHeal);
+    expect(carriedOf(s, "p1", "cured meat")).toBe(1);
+    expect(reduce(s, eatMeat("p1"))).toBe(s); // cooldown (5 s)
+    s = advanceTicks(s, CB.eatCooldownSeconds * HZ);
+    s = reduce(s, eatMeat("p1"));
+    expect(survivalOf(s, "p1").health).toBe(config.survival.maxHealth); // cap 10
+    const full = advanceTicks(s, CB.eatCooldownSeconds * HZ);
+    expect(reduce(full, eatMeat("p1"))).toBe(full); // déjà plein -> no-op
+    const broke = createInitialState(config.rngSeed, 0);
+    expect(reduce(broke, eatMeat("p1"))).toBe(broke); // pas de viande -> no-op
+  });
+
+  it("FLEE ferme la rencontre (sans pénalité) et arme un répit court", () => {
+    const s0 = inFight();
+    const s = reduce(s0, flee("p1"));
+    expect(s.combat["p1"]).toBeUndefined();
+    expect(survivalOf(s, "p1").encounterRollAt).toBe(s.tick + CB.postFleeSeconds * HZ);
+    expect(reduce(s, flee("p1"))).toBe(s); // pas de rencontre -> no-op
+  });
+
+  it("rentrer au camp ROMPT le combat (fuite automatique)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 2));
+    s = reduce(s, debugStartEncounter("p1"));
+    expect(s.combat["p1"]).toBeTruthy();
+    s = reduce(s, setOutside("p1", false, 0));
+    expect(s.combat["p1"]).toBeUndefined();
+  });
+
+  it("RÉGRESSION H1 : un changement de tier/route seul ne ré-arme PAS les drains", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    const waterAt0 = survivalOf(s, "p1").waterAt;
+    s = advanceTicks(s, Math.floor(config.survival.waterDrainSeconds * HZ * 0.5)); // mi-drain
+    s = reduce(s, setOutside("p1", true, 2, true)); // tier + route changent, dehors INCHANGÉ
+    expect(survivalOf(s, "p1").tier).toBe(2);
+    expect(survivalOf(s, "p1").onRoad).toBe(true);
+    expect(survivalOf(s, "p1").waterAt).toBe(waterAt0); // l'horloge de soif n'a PAS bougé
+  });
+
+  it("DÉCLENCHEMENT déterministe : une rencontre finit par survenir dehors, replay identique", () => {
+    const run = (): GameState => {
+      let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 4)); // caverne (0.3)
+      let guard = 0;
+      while (Object.keys(s.combat).length === 0 && guard++ < 300) {
+        s = advanceTicks(s, 100);
+        s = reduce(s, debugSetSurvival("p1", { water: 10, food: 10, health: 10 })); // évite la mort de soif
+      }
+      return s;
+    };
+    const a = run();
+    expect(Object.keys(a.combat).length).toBe(1); // la rencontre est survenue
+    expect(a).toEqual(run()); // replay-equality (même tick de rencontre, même ennemi)
+  });
+
+  it("bestReadyWeapon : poings par défaut, lance si possédée, null si tout recharge", () => {
+    const s = inFight();
+    expect(bestReadyWeapon(s, "p1", s.combat["p1"])?.id).toBe("fists");
+    const armed: GameState = { ...s, carried: { p1: { "bone spear": 1 } } };
+    expect(bestReadyWeapon(armed, "p1", armed.combat["p1"])?.id).toBe("bone spear");
+    const afterBoth = reduce(reduce(armed, attack("p1", "bone spear")), attack("p1", "fists"));
+    if (afterBoth.combat["p1"]) {
+      expect(bestReadyWeapon(afterBoth, "p1", afterBoth.combat["p1"])).toBeNull(); // tout recharge
+    }
+  });
+
+  it("réseau-safe : ATTACK usurpé refusé ; DEBUG_START_ENCOUNTER refusé du réseau", () => {
+    expect(isNetworkSafeAction(attack("p1", "fists"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(attack("p1", "fists"), "p2")).toBe(false);
+    expect(isNetworkSafeAction(debugStartEncounter("p1"), "p1")).toBe(false);
+  });
+
+  it("REPLAY complet : 2 joueurs en combat simultané (exerce le tri déterministe)", () => {
+    const acts: GameAction[] = [
+      setOutside("a", true, 2), setOutside("b", true, 3),
+      debugStartEncounter("a", "man-eater"), debugStartEncounter("b", "soldier"),
+      ...Array.from({ length: 300 }, () => tick()),
+      attack("a", "fists"), attack("b", "fists"),
+      ...Array.from({ length: 300 }, () => tick()),
+    ];
+    const s0 = createInitialState(config.rngSeed, 0);
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
 });
 

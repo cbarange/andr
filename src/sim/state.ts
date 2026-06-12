@@ -117,6 +117,25 @@ export interface GameState {
   //     volatile) : défaut PLEIN à la 1ʳᵉ sortie. La sim ne connaît pas les positions : chaque client
   //     émet `SET_OUTSIDE` au franchissement (edge), l'hôte vide/recharge sur échéances par joueur. ---
   survival: Record<string, PlayerSurvival>;
+
+  // --- M8 : COMBAT par joueur — rencontre NON-SPATIALE (duel abstrait 1v1, fidèle ADR : l'ennemi
+  //     est rendu LOCALEMENT devant le joueur, aucune position dans la sim). Indexé par `playerId`.
+  //     Champ ADDITIF (backfill `{}`, strippé à la save comme `carried`/`survival`). Autoritaire :
+  //     déclenchement + frappes ennemies dans TICK (hôte), dégâts/butin via le RNG à graine. ---
+  combat: Record<string, Encounter>;
+}
+
+/**
+ * Une RENCONTRE en cours pour un joueur (duel 1v1). Échéances en tics. `weaponReadyAt` = cooldown
+ * par ARME (réinitialisé entre deux combats, comme l'écran de combat d'ADR). `seq` = numéro de la
+ * rencontre (copié du compteur du joueur) -> le rendu observe l'apparition par diff.
+ */
+export interface Encounter {
+  enemyId: string;
+  enemyHp: number;
+  enemyNextAt: number; // tic de la prochaine frappe ennemie (attackDelay d'ADR)
+  weaponReadyAt: Record<string, number>; // arme -> tic à partir duquel elle peut refrapper
+  seq: number;
 }
 
 /**
@@ -135,6 +154,13 @@ export interface PlayerSurvival {
   healthAt: number; // tic du prochain -1 PV (eau ET vivres = 0)
   respawnReadyAt: number; // tic à partir duquel la survie reprend après une mort (grâce)
   deathSeq: number; // nombre de morts (signal pour le rendu : téléport au camp + sac vidé)
+  // --- M8 : combat (mêmes principes : déclaré par le client au changement, échéances en tics) ---
+  tier: number; // tier de DANGER (0 = zone sûre, 1..3 = anneaux de distance, 4 = caverne)
+  onRoad: boolean; // sur une cellule de ROUTE -> rencontres raréfiées (R4 « route sécurisée »)
+  encounterRollAt: number; // tic du prochain TIRAGE de rencontre (dehors, hors combat)
+  eatReadyAt: number; // tic à partir duquel on peut re-MANGER (anti-spam, EAT_COOLDOWN d'ADR)
+  winSeq: number; // nombre de VICTOIRES (signal rendu : effondrement de l'ennemi + toast butin)
+  encounterSeq: number; // nombre de RENCONTRES créées (monotone ; copié dans Encounter.seq -> diff rendu)
 }
 
 /** Progression d'exploration d'UN site (mine/grotte). Tous les champs sont optionnels/diffus. */
@@ -200,6 +226,12 @@ export function baseSurvival(): PlayerSurvival {
     healthAt: 0,
     respawnReadyAt: 0,
     deathSeq: 0,
+    tier: 0,
+    onRoad: false,
+    encounterRollAt: 0,
+    eatReadyAt: 0,
+    winSeq: 0,
+    encounterSeq: 0,
   };
 }
 
@@ -266,5 +298,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     sites: {},
     roads: {},
     survival: {},
+    combat: {},
   };
 }

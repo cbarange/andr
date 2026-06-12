@@ -145,14 +145,38 @@ export type CraftItemAction = {
 };
 
 /**
- * M6/M7 : le joueur a FRANCHI la frontière de la zone sûre (dedans <-> dehors). Émise par le client
- * au CHANGEMENT de bord seulement (la position est locale, hors sim) ; l'hôte bascule la survie de
- * ce joueur. Réseau-safe (porte `playerId`, pas `DEBUG_*`).
+ * M6/M7/M8 : l'état SPATIAL ABSTRAIT du joueur a changé (dedans <-> dehors, tier de danger,
+ * sur route). Émise par le client au CHANGEMENT seulement (la position est locale, hors sim) ;
+ * l'hôte met à jour la survie/le danger de ce joueur. Réseau-safe (porte `playerId`).
+ * `tier` : 0 = zone sûre, 1..3 = anneaux de distance, 4 = caverne. `onRoad` : cellule de route (R4).
  */
 export type SetOutsideAction = {
   type: "SET_OUTSIDE";
   playerId: string;
   outside: boolean;
+  tier?: number;
+  onRoad?: boolean;
+};
+
+// ---- M8 : combat temps réel (rencontres non-spatiales par joueur, fidèle ADR) ----
+
+/** Frappe l'ennemi de SA rencontre avec une arme (cooldown PAR arme ; poings toujours dispo). */
+export type AttackAction = {
+  type: "ATTACK";
+  playerId: string;
+  weapon: string;
+};
+
+/** Mange une viande séchée du SAC : +PV (cap), cooldown anti-spam. Utilisable en/hors combat. */
+export type EatMeatAction = {
+  type: "EAT_MEAT";
+  playerId: string;
+};
+
+/** Fuit la rencontre en cours (la ferme, sans butin ni pénalité — fidèle ADR). */
+export type FleeAction = {
+  type: "FLEE";
+  playerId: string;
 };
 
 /** Avance d'un pas fixe de simulation (§3.6). Émise par la boucle, pas par le joueur. */
@@ -224,6 +248,14 @@ export type DebugSetSurvivalAction = {
   health?: number;
 };
 
+/** Force une rencontre (ennemi/PV optionnels). Console dev / e2e — refusée du réseau (préfixe). */
+export type DebugStartEncounterAction = {
+  type: "DEBUG_START_ENCOUNTER";
+  playerId: string;
+  enemyId?: string;
+  enemyHp?: number;
+};
+
 export type GameAction =
   | GatherWoodAction
   | LightFireAction
@@ -244,6 +276,9 @@ export type GameAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | AttackAction
+  | EatMeatAction
+  | FleeAction
   | TickAction
   | DebugTriggerEventAction
   | DebugGrantAction
@@ -256,7 +291,8 @@ export type GameAction =
   | DebugUnlockAllAction
   | DebugSetSeedAction
   | DebugSetCabinTierAction
-  | DebugSetSurvivalAction;
+  | DebugSetSurvivalAction
+  | DebugStartEncounterAction;
 
 /** Actions émises par un joueur (vs TICK, émise par la boucle) — ce qui circule sur le réseau.
  *  (Les `DEBUG_*` y figurent pour passer par `emit` -> hôte-autoritaire ; console dev uniquement.) */
@@ -280,6 +316,9 @@ export type PlayerAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | AttackAction
+  | EatMeatAction
+  | FleeAction
   | DebugGrantAction
   | DebugSetAction
   | DebugClearAction
@@ -290,7 +329,8 @@ export type PlayerAction =
   | DebugUnlockAllAction
   | DebugSetSeedAction
   | DebugSetCabinTierAction
-  | DebugSetSurvivalAction;
+  | DebugSetSurvivalAction
+  | DebugStartEncounterAction;
 
 /**
  * Une action REÇUE DU RÉSEAU est-elle acceptable par l'hôte ? (anti-triche / anti-usurpation)
@@ -372,8 +412,17 @@ export function useOutpost(playerId: string, cx: number, cz: number): UseOutpost
 export function craftItem(playerId: string, itemId: string): CraftItemAction {
   return { type: "CRAFT_ITEM", playerId, itemId };
 }
-export function setOutside(playerId: string, outside: boolean): SetOutsideAction {
-  return { type: "SET_OUTSIDE", playerId, outside };
+export function setOutside(playerId: string, outside: boolean, tier?: number, onRoad?: boolean): SetOutsideAction {
+  return { type: "SET_OUTSIDE", playerId, outside, ...(tier !== undefined ? { tier } : {}), ...(onRoad !== undefined ? { onRoad } : {}) };
+}
+export function attack(playerId: string, weapon: string): AttackAction {
+  return { type: "ATTACK", playerId, weapon };
+}
+export function eatMeat(playerId: string): EatMeatAction {
+  return { type: "EAT_MEAT", playerId };
+}
+export function flee(playerId: string): FleeAction {
+  return { type: "FLEE", playerId };
 }
 
 export function tick(): TickAction {
@@ -417,4 +466,7 @@ export function debugSetSurvival(
   vals: { water?: number; food?: number; health?: number },
 ): DebugSetSurvivalAction {
   return { type: "DEBUG_SET_SURVIVAL", playerId, ...vals };
+}
+export function debugStartEncounter(playerId: string, enemyId?: string, enemyHp?: number): DebugStartEncounterAction {
+  return { type: "DEBUG_START_ENCOUNTER", playerId, ...(enemyId ? { enemyId } : {}), ...(enemyHp !== undefined ? { enemyHp } : {}) };
 }

@@ -22,6 +22,9 @@ export const audioManifest = {
     // Paliers de population (seuils décidés côté présentation) — réservé lot A6.
     village: ["lonely-hut", "tiny-village", "modest-village", "large-village", "raucous-village"],
     exploration: "world", // hors retranchement (M7) — réservé lot A6.
+    // M8 : musique de RENCONTRE (indexée par tier-1 ; les tiers 4 (cavernes) jouent le 1).
+    // Jouée en OVERLAY (bus event + ducking, pattern A5) le temps du combat.
+    encounter: ["encounter-tier-1", "encounter-tier-2", "encounter-tier-3"],
   },
 
   // Sons d'événements M5 (overlay + ducking) — réservé lot A5. Clés indicatives,
@@ -49,6 +52,11 @@ export const audioManifest = {
     deposit: "craft",
     checkTraps: "check-traps",
     footsteps: ["footsteps-1", "footsteps-2", "footsteps-3", "footsteps-4", "footsteps-5", "footsteps-6"],
+    // M8 — combat (assets ADR déjà dans public/audio/) :
+    weaponUnarmed: ["weapon-unarmed-1", "weapon-unarmed-2", "weapon-unarmed-3"], // poings
+    weaponMelee: ["weapon-melee-1", "weapon-melee-2", "weapon-melee-3"], // lance d'os, épées (M10)
+    death: "death",
+    eatMeat: "eat-meat",
   },
 } as const;
 

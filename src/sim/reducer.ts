@@ -10,16 +10,18 @@
 // ============================================================================
 
 import {
-  GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival,
+  GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
+  PlayerSurvival, baseSurvival, Encounter,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
 import { lootForNode, lootNodeIds } from "./dungeon";
 import { drawRoad } from "./roads";
+import { shouldTriggerEncounter, pickEnemy, rollEnemyLoot, ownsWeapon } from "./combat";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
+  weaponById, enemyById,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -55,6 +57,13 @@ const MAX_WATER = config.survival.maxWater;
 const MAX_FOOD = config.survival.maxFood;
 const MAX_HEALTH = config.survival.maxHealth;
 const DEATH_STORAGE_PENALTY = config.survival.deathStoragePenalty;
+// --- M8 : combat (échéances en tics, dérivées des secondes des données) ---
+const ENCOUNTER_ROLL_TICKS = config.combat.rollSeconds * HZ;
+const POST_VICTORY_TICKS = config.combat.postVictorySeconds * HZ;
+const POST_FLEE_TICKS = config.combat.postFleeSeconds * HZ;
+const PLAYER_HIT_CHANCE = config.combat.playerHitChance;
+const EAT_COOLDOWN_TICKS = config.combat.eatCooldownSeconds * HZ;
+const EAT_MEAT_HEAL = config.combat.eatMeatHeal;
 
 /** Durée d'un chantier en TICS (>= 1) — la constructrice bâtit ce bâtiment en autant de tics. */
 function buildTicks(id: string): number {
@@ -480,24 +489,137 @@ export function reduce(state: GameState, action: GameAction): GameState {
     }
 
     case "SET_OUTSIDE": {
-      // M6/M7 : le client signale qu'il a franchi la frontière de la zone sûre. Lazy-init de la survie
-      // à la 1ʳᵉ référence (plein). NO-OP si le bord n'a pas changé (idempotent ; calque DISCOVER_SITE).
+      // M6/M7/M8 : l'état SPATIAL ABSTRAIT du joueur a changé (dehors, tier de danger, route).
+      // Lazy-init de la survie à la 1ʳᵉ référence (plein). NO-OP si RIEN n'a changé (idempotent).
+      // ⚠️ Les échéances de DRAIN ne sont (ré)armées QUE si `outside` a réellement basculé — un
+      // changement de tier/route seul ne doit PAS réinitialiser les horloges de soif/faim (H1).
       const pid = action.playerId;
       const cur = state.survival[pid] ?? baseSurvival();
-      if (state.survival[pid] && cur.outside === action.outside) return state;
-      const rec: PlayerSurvival = { ...cur, outside: action.outside };
-      if (action.outside) {
-        // Sort dehors : (ré)arme les échéances de drain à partir de maintenant.
-        rec.waterAt = state.tick + WATER_DRAIN_TICKS;
-        rec.foodAt = state.tick + FOOD_DRAIN_TICKS;
-        rec.healthAt = state.tick + HEALTH_DRAIN_TICKS;
-      } else {
-        // Rentre au camp : arme la recharge (la régénération se fera dans TICK).
-        rec.waterAt = state.tick + RECHARGE_TICKS;
-        rec.foodAt = state.tick + RECHARGE_TICKS;
-        rec.healthAt = state.tick + RECHARGE_TICKS;
+      const tier = action.tier ?? cur.tier;
+      const onRoad = action.onRoad ?? cur.onRoad;
+      if (state.survival[pid] && cur.outside === action.outside && cur.tier === tier && cur.onRoad === onRoad) return state;
+      const rec: PlayerSurvival = { ...cur, outside: action.outside, tier, onRoad };
+      let combat = state.combat;
+      if (cur.outside !== action.outside || !state.survival[pid]) {
+        if (action.outside) {
+          // Sort dehors : (ré)arme les échéances de drain + le 1ᵉʳ tirage de rencontre (jamais instantané).
+          rec.waterAt = state.tick + WATER_DRAIN_TICKS;
+          rec.foodAt = state.tick + FOOD_DRAIN_TICKS;
+          rec.healthAt = state.tick + HEALTH_DRAIN_TICKS;
+          rec.encounterRollAt = state.tick + ENCOUNTER_ROLL_TICKS;
+        } else {
+          // Rentre au camp : arme la recharge ; un combat en cours est ROMPU (fuite automatique).
+          rec.waterAt = state.tick + RECHARGE_TICKS;
+          rec.foodAt = state.tick + RECHARGE_TICKS;
+          rec.healthAt = state.tick + RECHARGE_TICKS;
+          if (combat[pid]) {
+            const { [pid]: _gone, ...rest } = combat;
+            combat = rest;
+            rec.encounterRollAt = state.tick + POST_FLEE_TICKS;
+          }
+        }
       }
-      return { ...state, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
+      return { ...state, survival: { ...state.survival, [pid]: rec }, combat, rng: cloneRng(state.rng) };
+    }
+
+    case "ATTACK": {
+      // M8 : frappe l'ennemi de SA rencontre. Guards : rencontre active, arme connue & possédée
+      // (poings toujours), cooldown de L'ARME écoulé. Chance de toucher (défaut ADR 0.8) via le
+      // RNG à graine. À 0 PV ennemi : VICTOIRE — butin (tirages ADR) au SAC borné, `winSeq`++.
+      const pid = action.playerId;
+      const enc = state.combat[pid];
+      if (!enc) return state;
+      const weapon = weaponById[action.weapon];
+      if (!weapon) return state;
+      if (!ownsWeapon(state, pid, weapon.id)) return state;
+      if (state.tick < (enc.weaponReadyAt[weapon.id] ?? 0)) return state; // l'arme recharge
+      const rng = cloneRng(state.rng);
+      const hit = nextFloat(rng) < PLAYER_HIT_CHANCE;
+      const enemyHp = hit ? enc.enemyHp - weapon.damage : enc.enemyHp;
+      if (enemyHp > 0) {
+        const nextEnc: Encounter = {
+          ...enc,
+          enemyHp,
+          weaponReadyAt: { ...enc.weaponReadyAt, [weapon.id]: state.tick + Math.round(weapon.cooldownSeconds * HZ) },
+        };
+        return { ...state, combat: { ...state.combat, [pid]: nextEnc }, rng };
+      }
+      // VICTOIRE : butin de l'ennemi -> SAC (borné, boucle clamp de TAKE_LOOT) ; rencontre fermée.
+      const enemy = enemyById[enc.enemyId];
+      const loot = enemy ? rollEnemyLoot(rng, enemy) : {};
+      let room = carryCapacity(state) - carriedTotal(state, pid);
+      const bag = { ...(state.carried[pid] ?? {}) };
+      for (const r of Object.keys(loot)) {
+        if (room <= 0) break;
+        const add = Math.min(loot[r], room);
+        bag[r] = (bag[r] ?? 0) + add;
+        room -= add;
+      }
+      const { [pid]: _won, ...restCombat } = state.combat;
+      const sv = state.survival[pid] ?? baseSurvival();
+      const rec: PlayerSurvival = { ...sv, winSeq: sv.winSeq + 1, encounterRollAt: state.tick + POST_VICTORY_TICKS };
+      return {
+        ...state,
+        carried: { ...state.carried, [pid]: bag },
+        combat: restCombat,
+        survival: { ...state.survival, [pid]: rec },
+        rng,
+      };
+    }
+
+    case "EAT_MEAT": {
+      // M8 : mange une viande séchée du SAC -> +PV (cap), cooldown anti-spam (EAT_COOLDOWN d'ADR).
+      const pid = action.playerId;
+      if (carriedOf(state, pid, "cured meat") < 1) return state;
+      const sv = state.survival[pid] ?? baseSurvival();
+      if (sv.health >= MAX_HEALTH) return state; // déjà plein -> on ne gaspille pas
+      if (state.tick < sv.eatReadyAt) return state; // trop tôt
+      const bag = { ...(state.carried[pid] ?? {}) };
+      bag["cured meat"] -= 1;
+      if (bag["cured meat"] <= 0) delete bag["cured meat"];
+      const rec: PlayerSurvival = {
+        ...sv,
+        health: Math.min(MAX_HEALTH, sv.health + EAT_MEAT_HEAL),
+        eatReadyAt: state.tick + EAT_COOLDOWN_TICKS,
+      };
+      return {
+        ...state,
+        carried: { ...state.carried, [pid]: bag },
+        survival: { ...state.survival, [pid]: rec },
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "FLEE": {
+      // M8 : fuit la rencontre (la ferme, sans butin ni pénalité — fidèle ADR) ; répit court.
+      const pid = action.playerId;
+      if (!state.combat[pid]) return state;
+      const { [pid]: _fled, ...rest } = state.combat;
+      const sv = state.survival[pid] ?? baseSurvival();
+      const rec: PlayerSurvival = { ...sv, encounterRollAt: state.tick + POST_FLEE_TICKS };
+      return { ...state, combat: rest, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
+    }
+
+    case "DEBUG_START_ENCOUNTER": {
+      // Force une rencontre (test/e2e) — `enemyHp` optionnel (raccourci « ennemi à 1 PV »).
+      const pid = action.playerId;
+      const enemy = enemyById[action.enemyId ?? "snarling beast"];
+      if (!enemy || state.combat[pid]) return state;
+      const sv = state.survival[pid] ?? baseSurvival();
+      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
+      const enc: Encounter = {
+        enemyId: enemy.id,
+        enemyHp: action.enemyHp ?? enemy.hp,
+        enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
+        weaponReadyAt: {},
+        seq: rec.encounterSeq,
+      };
+      return {
+        ...state,
+        combat: { ...state.combat, [pid]: enc },
+        survival: { ...state.survival, [pid]: rec },
+        rng: cloneRng(state.rng),
+      };
     }
 
     case "RESOLVE_EVENT_CHOICE": {
@@ -846,12 +968,12 @@ export function reduce(state: GameState, action: GameAction): GameState {
       }
 
       // 7) SURVIE (M6/M7) : par joueur, PAR TEMPS passé DEHORS (pas par case). DEHORS : l'eau puis les
-      //    vivres se vident ; à sec des DEUX, la santé baisse ; à 0 PV -> MORT (retour au camp signalé
-      //    par `deathSeq`, perte du SAC, knob `deathStoragePenalty` pour l'entrepôt). DEDANS : recharge
-      //    vers le max. Aucune consommation de RNG -> l'ordre d'itération n'affecte pas le déterminisme
-      //    (tri défensif au cas où on y ajouterait un tirage plus tard).
+      //    vivres se vident ; à sec des DEUX, la santé baisse (plancher 0 — la MORT est tranchée par
+      //    le balayage UNIFIÉ 8c, commun soif/combat). DEDANS : recharge vers le max. Cette phase ne
+      //    consomme AUCUN RNG ; le tri reste défensif ici (il devient PORTEUR en 8a/8b).
       let survival = state.survival;
       let carried = state.carried;
+      let combat = state.combat;
       const survIds = Object.keys(state.survival).sort();
       if (survIds.length > 0) {
         const nextSurv: Record<string, PlayerSurvival> = { ...state.survival };
@@ -859,26 +981,14 @@ export function reduce(state: GameState, action: GameAction): GameState {
         for (const pid of survIds) {
           const s0 = state.survival[pid];
           let { water, food, health, waterAt, foodAt, healthAt } = s0;
-          const { outside, respawnReadyAt, deathSeq } = s0;
+          const { outside, respawnReadyAt } = s0;
           let dirty = false;
 
           if (outside && tick >= respawnReadyAt) {
             if (water > 0 && tick >= waterAt) { water -= 1; waterAt = tick + WATER_DRAIN_TICKS; dirty = true; }
             if (food > 0 && tick >= foodAt) { food -= 1; foodAt = tick + FOOD_DRAIN_TICKS; dirty = true; }
-            // À sec d'eau ET de vivres : la santé décline.
-            if (water === 0 && food === 0 && tick >= healthAt) { health -= 1; healthAt = tick + HEALTH_DRAIN_TICKS; dirty = true; }
-            if (health <= 0) {
-              // MORT : on REMPLACE l'enregistrement par un neuf (plein, dedans) + signal `deathSeq`.
-              nextSurv[pid] = { ...baseSurvival(), deathSeq: deathSeq + 1, respawnReadyAt: tick + RESPAWN_COOLDOWN_TICKS };
-              survMutated = true;
-              if (carried[pid] && Object.keys(carried[pid]).length > 0) carried = { ...carried, [pid]: {} }; // perte du sac
-              if (DEATH_STORAGE_PENALTY > 0) {
-                const res = { ...resources };
-                for (const r of Object.keys(res)) res[r] = Math.max(0, Math.floor(res[r] * (1 - DEATH_STORAGE_PENALTY)));
-                resources = res;
-              }
-              continue; // enregistrement déjà posé
-            }
+            // À sec d'eau ET de vivres : la santé décline (plancher 0 ; mort en 8c).
+            if (water === 0 && food === 0 && health > 0 && tick >= healthAt) { health -= 1; healthAt = tick + HEALTH_DRAIN_TICKS; dirty = true; }
           } else if (!outside && tick >= waterAt && (water < MAX_WATER || food < MAX_FOOD || health < MAX_HEALTH)) {
             // DEDANS : recharge cadencée (waterAt sert d'horloge de recharge unique).
             if (water < MAX_WATER) water += 1;
@@ -893,11 +1003,107 @@ export function reduce(state: GameState, action: GameAction): GameState {
         if (survMutated) survival = nextSurv;
       }
 
+      // 8a) COMBAT — DÉCLENCHEMENT (M8, hôte) : par joueur DEHORS, hors grâce et hors combat, à
+      //     l'échéance de tirage : chance FIGHT_CHANCE(tier) × facteur route (R4). ⚠️ Cette phase
+      //     CONSOMME du RNG -> le tri de l'itération est PORTEUR de déterminisme (pas défensif).
+      {
+        const ids = Object.keys(survival).sort();
+        let nextSurv: Record<string, PlayerSurvival> | null = null;
+        let nextCombat: Record<string, Encounter> | null = null;
+        for (const pid of ids) {
+          const sv = (nextSurv ?? survival)[pid];
+          if (!sv.outside || tick < sv.respawnReadyAt || combat[pid] || sv.tier <= 0) continue;
+          if (sv.encounterRollAt === 0) {
+            // Save/record d'avant M8 : amorce l'horloge de tirage sans déclencher.
+            nextSurv = nextSurv ?? { ...survival };
+            nextSurv[pid] = { ...sv, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
+            continue;
+          }
+          if (tick < sv.encounterRollAt) continue;
+          rng = rng === state.rng ? cloneRng(state.rng) : rng;
+          nextSurv = nextSurv ?? { ...survival };
+          if (shouldTriggerEncounter(rng, sv.tier, sv.onRoad)) {
+            const enemy = pickEnemy(rng, sv.tier);
+            if (enemy) {
+              nextCombat = nextCombat ?? { ...combat };
+              const rec = { ...sv, encounterSeq: sv.encounterSeq + 1, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
+              nextSurv[pid] = rec;
+              nextCombat[pid] = {
+                enemyId: enemy.id,
+                enemyHp: enemy.hp,
+                enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ),
+                weaponReadyAt: {},
+                seq: rec.encounterSeq,
+              };
+              continue;
+            }
+          }
+          nextSurv[pid] = { ...sv, encounterRollAt: tick + ENCOUNTER_ROLL_TICKS };
+        }
+        if (nextSurv) survival = nextSurv;
+        if (nextCombat) combat = nextCombat;
+      }
+
+      // 8b) COMBAT — FRAPPES ENNEMIES : à l'échéance `enemyNextAt`, tirage de toucher (par ennemi,
+      //     comme ADR) -> dégâts sur la santé (plancher 0 ; mort en 8c). Tri PORTEUR (RNG).
+      {
+        const ids = Object.keys(combat).sort();
+        let nextSurv: Record<string, PlayerSurvival> | null = null;
+        let nextCombat: Record<string, Encounter> | null = null;
+        for (const pid of ids) {
+          const enc = (nextCombat ?? combat)[pid];
+          const sv = (nextSurv ?? survival)[pid];
+          if (!sv || tick < enc.enemyNextAt) continue;
+          const enemy = enemyById[enc.enemyId];
+          if (!enemy) continue;
+          rng = rng === state.rng ? cloneRng(state.rng) : rng;
+          nextCombat = nextCombat ?? { ...combat };
+          nextCombat[pid] = { ...enc, enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ) };
+          if (nextFloat(rng) < enemy.hit) {
+            nextSurv = nextSurv ?? { ...survival };
+            nextSurv[pid] = { ...sv, health: Math.max(0, sv.health - enemy.damage) };
+          }
+        }
+        if (nextSurv) survival = nextSurv;
+        if (nextCombat) combat = nextCombat;
+      }
+
+      // 8c) MORT — balayage UNIFIÉ (soif ET combat) : dehors, hors grâce, 0 PV -> record neuf
+      //     (compteurs monotones préservés), sac perdu, knob d'entrepôt, rencontre fermée.
+      {
+        const ids = Object.keys(survival).sort();
+        let nextSurv: Record<string, PlayerSurvival> | null = null;
+        for (const pid of ids) {
+          const sv = (nextSurv ?? survival)[pid];
+          if (!(sv.outside && tick >= sv.respawnReadyAt && sv.health <= 0)) continue;
+          nextSurv = nextSurv ?? { ...survival };
+          nextSurv[pid] = {
+            ...baseSurvival(),
+            deathSeq: sv.deathSeq + 1,
+            winSeq: sv.winSeq,
+            encounterSeq: sv.encounterSeq,
+            respawnReadyAt: tick + RESPAWN_COOLDOWN_TICKS,
+          };
+          if (carried[pid] && Object.keys(carried[pid]).length > 0) carried = { ...carried, [pid]: {} }; // perte du sac
+          if (DEATH_STORAGE_PENALTY > 0) {
+            const res = { ...resources };
+            for (const r of Object.keys(res)) res[r] = Math.max(0, Math.floor(res[r] * (1 - DEATH_STORAGE_PENALTY)));
+            resources = res;
+          }
+          if (combat[pid]) {
+            const { [pid]: _dead, ...rest } = combat;
+            combat = rest;
+          }
+        }
+        if (nextSurv) survival = nextSurv;
+      }
+
       return {
         ...state,
         tick,
         carried,
         survival,
+        combat,
         fire,
         fireCoolAt,
         temperature,
