@@ -22,13 +22,13 @@
 | **M0–M5** (Acte I : feu→village→métiers→événements) | ✅ |
 | **M9** sites/donjons/mines | 🟢 cœur fait (grotte+mines explorables, avant-poste, **chaîne acier→balles ressuscitée**) |
 | **Chantier C** (refonte monde & campement : A·B·C·D·E·F) | ✅ **TERMINÉ** |
-| **Routes & sites** : R1 variété (~57 sites) · R2 réseau de routes | ✅ ✅ · R3/R4 ⏳ |
+| **Routes & sites** : R1 variété (~57 sites) · R2 routes · **R3a fouille forages/champs de bataille (→ alliage !)** | ✅ ✅ ✅ · reste R3b (donjons ville/cité) · R4 ⏳ |
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **Contenu manquant** : combat (M8) · commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
 
-> Vérif à chaque pas : **typecheck · ~186 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~190 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -104,8 +104,8 @@ l'avancement :
 - **Objets/artisanat** : torche, outres, sacs (rucksack/wagon/convoy), armures, armes — **0**.
 - **Perks** & événements qui en dépendent : Éclaireur, Maître, Homme malade, Maladie/Peste, Raid militaire.
 - **Fin de partie** : épave → alliage → réparation du vaisseau → décollage → esquive d'astéroïdes → fin.
-  **Aucune condition de victoire.** `alien alloy` / `energy cell` **existent désormais comme ressources**
-  (table de rareté) mais **n'ont encore aucune source** (sites borehole/cité/épave restant à brancher → M11).
+  **Aucune condition de victoire.** `alien alloy` / `energy cell` **ont désormais une SOURCE** (R3a :
+  fouille des forages/champs de bataille) ; restent les sources cité/épave + l'usage (vaisseau) → M11.
 - **Prestige** (cache, report de partie).
 
 > **Verdict** : `andr` est une **excellente fondation** — l'Acte I jouable, déterministe, P2P, et toute
@@ -138,7 +138,7 @@ l'avancement :
 | Perks (éclaireur, gastronome, évasion…) + leurs événements | ❌ ABSENT | **M10** |
 | Boussole (débloque la carte dans ADR) | ❌ ABSENT | **M10** (rôle à redéfinir, monde unifié) |
 | Cité, borehole, champ de bataille, cache, avant-poste (types de sites) | ❌ ABSENT (worldgen) | **M9/M11** (étendre `sites[]`) |
-| Alliage extraterrestre (source : borehole/cité/épave) | ❌ ABSENT | **M11** |
+| Alliage extraterrestre | ✅ **source ACTIVE** (R3a : forages ; appoint champs de bataille) | sources cité/épave + usage = **M11** |
 | Vaisseau (coque/propulseurs) + décollage + espace + fin | ❌ ABSENT | **M11** |
 | Prestige / cache | ❌ ABSENT | **M11** |
 | Audio combat/sites/fin (A7) | ❌ (assets présents) | par jalon M8/M9/M11 |
@@ -449,7 +449,7 @@ Rend **non-inertes** les deux bâtiments morts (atelier, poste de traite) et com
   au moins un perk actif ; tests des coûts/effets.
 
 ### 🚀 M11 — Fin de partie : épave → vaisseau → espace → fin → prestige — **M/L**
-L'arc final. **`alien alloy` n'a aujourd'hui aucune source** : il faut d'abord les sites qui en donnent.
+L'arc final. **`alien alloy` a désormais sa source principale** (R3a : fouille des forages) ; reste à brancher cité/épave et surtout l'USAGE (réparer le vaisseau).
 
 - **Worldgen — combler (critique)** : ajouter **`borehole`** (×~10, source principale d'alliage) et
   **`battlefield`** (armes lourdes) ; **`cache`** (×1, report de prestige). *(Sans eux, la fin est

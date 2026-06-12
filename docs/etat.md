@@ -21,7 +21,7 @@ eau/vivres/PV, mort = perte du sac). Manquent surtout : **combat, commerce, fin 
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 186 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 190 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 12 tests Playwright (boucle, P2P, save, perf, sites, survie…) + capture
 npm run typecheck
 ```
@@ -48,6 +48,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   **mine sécurisée ⇒ métier mineur** ⇒ **ressuscite la chaîne acier→balles** (n'est plus 🔴 morte).
 - **RÉSEAU DE ROUTES** : nettoyer/sécuriser un site **trace une route** (terre damée) qui **fusionne** au
   réseau le plus proche (algo `drawRoad` fidèle ADR). Déterministe, P2P, persistée.
+- **FOUILLE DE SURFACE (R3a)** : les **forages** se fouillent (E) et donnent l'**ALLIAGE extraterrestre**
+  (+ cellules) — la matière de la fin de partie a enfin une **source** ; les **champs de bataille** rendent
+  munitions/acier/cellules. Butin 3D premier-servi (`render/siteLoot.ts`, nœuds dérivés de la graine).
 
 ### Vie & confort du village (Chantier C — refonte, TERMINÉ) — ✅
 - **Placement MATHÉMATIQUE** des bâtiments (phyllotaxie de Vogel + nombre d'or + quartiers + relaxation) —
@@ -129,8 +132,8 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **R3 (butin des forages/cités → alliage)** : **débloque la matière première de la fin de partie (M11)**.
-2. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
+1. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
+2. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire M10) + butin lourd.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
 
 ## Limitations connues / quirks (à savoir avant de coder)
