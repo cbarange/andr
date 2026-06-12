@@ -50,6 +50,10 @@ export class Hud {
   private readonly tempEl: HTMLElement;
   private readonly popEl: HTMLElement;
   private readonly campInfoEl: HTMLElement; // bloc Feu + Village (masqué hors du village)
+  private readonly waterBar: HTMLElement; // M6/M7 : jauges de survie (visibles dans les DEUX zones)
+  private readonly foodBar: HTMLElement;
+  private readonly healthBar: HTMLElement;
+  private readonly zoneEl: HTMLElement; // indicateur « zone sûre » / « dehors »
   private readonly statusEl: HTMLElement;
   private readonly statusTextEl: HTMLElement;
   private readonly roomInput: HTMLInputElement;
@@ -118,6 +122,10 @@ export class Hud {
     this.tempEl = this.byId("tempValue");
     this.popEl = this.byId("popValue");
     this.campInfoEl = this.byId("campInfo");
+    this.waterBar = this.byId("waterBar");
+    this.foodBar = this.byId("foodBar");
+    this.healthBar = this.byId("healthBar");
+    this.zoneEl = this.byId("zoneIndicator");
     this.statusEl = this.byId("netStatus");
     this.statusTextEl = this.byId("netStatusText");
     this.roomInput = this.byId("roomInput") as HTMLInputElement;
@@ -235,6 +243,20 @@ export class Hud {
   /** Affiche/masque le bloc Feu + Village (visible seulement DANS le village). */
   setCampInfoVisible(visible: boolean): void {
     this.campInfoEl.style.display = visible ? "" : "none";
+  }
+
+  /** Jauges de survie (eau/vivres/PV), en FRACTIONS 0..1. Visibles dans les deux zones (M6/M7). */
+  setSurvival(water: number, food: number, health: number): void {
+    const pct = (v: number): string => `${Math.max(0, Math.min(1, v)) * 100}%`;
+    this.waterBar.style.width = pct(water);
+    this.foodBar.style.width = pct(food);
+    this.healthBar.style.width = pct(health);
+  }
+
+  /** Indicateur de zone : « zone sûre » (dedans) ou « dehors » (la survie se vide). */
+  setZone(outside: boolean): void {
+    this.zoneEl.textContent = outside ? "dehors" : "zone sûre";
+    this.zoneEl.className = outside ? "zone out" : "zone safe";
   }
 
   setRenderer(label: string): void {

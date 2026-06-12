@@ -464,3 +464,44 @@ test("le levier de résolution s'applique et la perf auto tourne sans casse (P6)
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
+
+// M6/M7 — SURVIE : franchir la frontière (téléport au loin) signale « dehors » à la sim
+// (pont position->action, edge), l'eau se vide par temps ; à sec (forcé), la mort renvoie au
+// camp et VIDE le sac. Valide le chemin complet position->sim->rendu en navigateur réel.
+test("M6/M7 — la survie se vide dehors et la mort renvoie au camp en vidant le sac", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(600);
+
+  // Au camp : zone sûre (indicateur), survie pleine.
+  await expect(page.locator("#zoneIndicator")).toHaveText("zone sûre");
+
+  // 1) Sortir LOIN -> la boucle de rendu détecte le franchissement et signale « dehors » à la sim.
+  await page.evaluate(() => window.__game?.teleport?.(300, 300));
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await expect(page.locator("#zoneIndicator")).toHaveText("dehors");
+
+  // 2) Dehors, le temps vide l'eau (fast-forward de la sim, hôte-autoritaire en solo).
+  const water0 = await page.evaluate(() => window.__game?.getSurvival?.()?.water ?? 0);
+  await page.evaluate(() => window.__game?.fastForward?.(40)); // > plusieurs échéances d'eau
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.water ?? 99)).toBeLessThan(water0);
+
+  // 3) Remplir le sac puis forcer la quasi-mort -> à 0 PV, la mort vide le sac et renvoie au camp.
+  await page.evaluate(() => window.__game?.forceGather?.()); // du bois dans le sac
+  await expect.poll(() => carried(page, "wood")).toBeGreaterThan(0);
+  await page.evaluate(() => window.__game?.setSurvival?.({ water: 0, food: 0, health: 1 }));
+  await page.evaluate(() => window.__game?.fastForward?.(10)); // PV 1 -> 0 -> mort
+
+  // La mort (deathSeq++) est observée par le rendu -> téléport au camp + sac vidé.
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.deathSeq ?? 0), { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => carried(page, "wood")).toBe(0); // SAC perdu
+  await expect
+    .poll(() => page.evaluate(() => { const p = window.__game?.getPlayer?.(); return p ? Math.hypot(p.x, p.z) : 999; }), { timeout: 10_000 })
+    .toBeLessThan(36); // de retour DANS la zone sûre (VILLAGE_RADIUS)
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});

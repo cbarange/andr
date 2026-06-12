@@ -18,6 +18,7 @@ import { CampDecor } from "./render/campDecor";
 import { CampLights } from "./render/campLights";
 import { CampRuins } from "./render/campRuins";
 import { CampPaths } from "./render/campPaths";
+import { Rampart } from "./render/rampart";
 import { Sites } from "./render/sites";
 import { Forest } from "./render/forest";
 import { Cabin } from "./render/cabin";
@@ -37,14 +38,14 @@ import { NetRoom } from "./net/room";
 import type { StateSyncMsg } from "./net/messages";
 
 import {
-  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, type GameState,
+  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, type GameState,
 } from "./sim/state";
 import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
 import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
-  takeLoot, secureMine,
+  takeLoot, secureMine, setOutside, debugSetSurvival,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import {
@@ -84,6 +85,8 @@ declare global {
       getWorkers?: () => Record<string, number>;
       getCabinRepaired?: () => boolean;
       getCabinTier?: () => number;
+      getSurvival?: () => { water: number; food: number; health: number; outside: boolean; deathSeq: number };
+      setSurvival?: (vals: { water?: number; food?: number; health?: number }) => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
       getSiteStats?: () => { placed: number; types: number; full: number; minimal: number };
@@ -236,6 +239,9 @@ async function boot(): Promise<void> {
   const campLights = new CampLights(scene);
   // Ruines : gravats sur ~1/3 des emplacements à venir (remplacés à la construction) + permanentes.
   const campRuins = new CampRuins(scene);
+  // Rempart & porte (M6 — « le seuil ») : palissade autour de la zone sûre + porte au sud + puits.
+  // Purement visuel/local ; la frontière logique reste `VILLAGE_RADIUS` (cf. reflectState).
+  new Rampart(scene);
   // Chemins du camp : texture fine plaquée au sol, RE-cuite quand le réseau s'étoffe (cf. boucle).
   const campPaths = new CampPaths(scene);
   const forest = new Forest(scene, treeMeshes);
@@ -311,7 +317,7 @@ async function boot(): Promise<void> {
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
-    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {} }
+    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {} }
     : createInitialState(config.rngSeed, 0);
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
@@ -952,6 +958,7 @@ async function boot(): Promise<void> {
   let prevEventKey: string | null = null; // null au boot -> rouvre un événement restauré d'une sauvegarde
   let prevEventSig = "";
   let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
+  let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevDialogueSig = ""; // signature de l'état dont dépendent les dialogues (resync MP, cf. plus bas)
   function reflectState(): void {
     // Déblocages (façon ADR) : révèle les craftables atteignables, de façon collante + persistée.
@@ -969,6 +976,16 @@ async function boot(): Promise<void> {
     }
     hud.setBag(Math.floor(carriedTotal(state, self())), carryCapacity(state), entries);
 
+    // Survie (M6/M7) : jauges eau/vivres/PV (fractions) + observation de la MORT (téléport au camp).
+    const sv = survivalOf(state, self());
+    const SU = config.survival;
+    hud.setSurvival(sv.water / SU.maxWater, sv.food / SU.maxFood, sv.health / SU.maxHealth);
+    if (sv.deathSeq !== prevDeathSeq) {
+      prevDeathSeq = sv.deathSeq;
+      player.teleport(cabin.center.x + 1, cabin.center.z + 0.5); // réveil au camp (à côté de la cabane)
+      hud.toast("vous vous effondrez, à bout de forces — réveil au camp, le sac vidé.");
+    }
+
     hud.setFire(FIRE_LABELS[state.fire]);
     hud.setTemp(TEMP_LABELS[state.temperature]);
     const maxPop = (state.buildings["hut"] ?? 0) * config.population.hutRoom;
@@ -979,6 +996,11 @@ async function boot(): Promise<void> {
     const inVillage = Math.hypot(player.position.x, player.position.z) <= VILLAGE_RADIUS;
     if (inVillage !== prevInVillage) {
       hud.setCampInfoVisible(inVillage);
+      hud.setZone(!inVillage);
+      // M6/M7 : la position est LOCALE -> on signale à la sim le franchissement de la frontière
+      // (edge). L'hôte vide/recharge la survie. Émis aussi à la 1ère frame (prevInVillage===null)
+      // pour initialiser l'enregistrement côté autorité. Idempotent côté reducer.
+      emit(setOutside(self(), !inVillage));
       prevInVillage = inVillage;
     }
 
@@ -1389,6 +1411,8 @@ async function boot(): Promise<void> {
     getWorkers: () => ({ ...state.workers }),
     getCabinRepaired: () => state.cabinRepaired,
     getCabinTier: () => state.cabinTier,
+    getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq }; },
+    setSurvival: (vals: { water?: number; food?: number; health?: number }) => emit(debugSetSurvival(self(), vals)),
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)
     getSiteStats: () => sites.stats, // P5 : sites posés + paliers LOD (détail/silhouette)

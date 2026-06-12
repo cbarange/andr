@@ -59,6 +59,18 @@
       }
       @media (prefers-reduced-motion: reduce) { #bagList .rval.gain { animation: none; } }
 
+      /* ---- Survie (M6/M7) : jauges eau / vivres / vie + indicateur de zone ---- */
+      #survivalInfo .survRow { display: flex; align-items: center; gap: 8px; font-size: 11px; line-height: 1.7; }
+      #survivalInfo .survName { color: var(--muted); width: 44px; flex: 0 0 auto; }
+      #survivalInfo .survTrack { flex: 1; height: 7px; border-radius: 4px; background: rgba(170, 200, 210, 0.14); overflow: hidden; }
+      #survivalInfo .survFill { display: block; height: 100%; width: 100%; border-radius: 4px; transition: width 0.25s ease; }
+      #waterBar { background: #5fb0d8; }
+      #foodBar { background: var(--good); }
+      #healthBar { background: #e06a5a; }
+      #zoneIndicator { font-size: 10px; padding: 1px 6px; border-radius: 6px; letter-spacing: 0.06em; font-weight: 600; }
+      #zoneIndicator.safe { color: var(--good); background: rgba(143, 211, 160, 0.14); }
+      #zoneIndicator.out { color: var(--accent); background: rgba(240, 160, 80, 0.18); }
+
       /* Étiquette d'interaction ancrée au niveau de l'objet (diégétique). */
       #interactPrompt {
         position: absolute; display: none; pointer-events: none;
@@ -207,6 +219,13 @@
       <div id="resourcePanel" class="panel">
         <div class="label">Sac <span id="bagCap">0/0</span></div>
         <div id="bagList"></div>
+        <!-- Survie (M6/M7) : visible DANS les DEUX zones (la pression compte surtout dehors). -->
+        <div id="survivalInfo">
+          <div class="label" style="margin-top: 10px">Survie <span id="zoneIndicator" class="zone safe">zone sûre</span></div>
+          <div class="survRow"><span class="survName">Eau</span><span class="survTrack"><span class="survFill" id="waterBar"></span></span></div>
+          <div class="survRow"><span class="survName">Vivres</span><span class="survTrack"><span class="survFill" id="foodBar"></span></span></div>
+          <div class="survRow"><span class="survName">Vie</span><span class="survTrack"><span class="survFill" id="healthBar"></span></span></div>
+        </div>
         <!-- Feu + Village : visibles seulement DANS le village (masqués en exploration). -->
         <div id="campInfo">
           <div class="label" style="margin-top: 10px">Feu</div>
