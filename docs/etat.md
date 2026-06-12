@@ -21,7 +21,7 @@ eau/vivres/PV, mort = perte du sac). Manquent surtout : **combat, commerce, fin 
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 182 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 186 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 12 tests Playwright (boucle, P2P, save, perf, sites, survie…) + capture
 npm run typecheck
 ```
@@ -88,6 +88,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   déterministe ; champ **additif** (pas de bump de save ; strippé comme `carried` à la sauvegarde).
 - **HUD** : jauges eau/vivres/vie (visibles partout) + chip « zone sûre / dehors » ; la mort est observée
   par diff de `deathSeq` ⇒ téléport au camp (calque `builderTendingUntil`).
+- **Avant-postes ACTIFS** (`USE_OUTPOST`) : une grotte nettoyée se ravitaille **UNE fois** (usage unique
+  fidèle ADR, partagé entre joueurs — premier-servi) ; remplit **eau + vivres** (PV = manger, M8) ; no-op si
+  tout est plein ; verbe « se ravitailler » qui disparaît une fois l'avant-poste épuisé (`SiteProgress.used`).
 
 ### Transverse — ✅
 - **Multijoueur P2P** host-autoritaire (Trystero/WebRTC) : « Ouvrir ma partie » (lien à partager) ; **failover
@@ -99,8 +102,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 
 ### Jalons (détail : [`roadmap-v2.md`](roadmap-v2.md))
 - **M0–M5** ✅ (fondation, feu/étranger, construction, population/métiers, chaînes, événements).
-- **M6 (seuil) ✅ · M7 (survie) 🟢** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
-  du sac, recharge camp). Reste : **recharge aux avant-postes** (`OUTPOST_REFILL`), fog of war (différé).
+- **M6 (seuil) ✅ · M7 (survie) ✅** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
+  du sac, recharge camp) + **ravitaillement aux avant-postes** (`USE_OUTPOST`, usage unique fidèle ADR).
+  Reste : fog of war (différé), équilibrage (M12).
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -126,15 +130,13 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 
 ## Prochaine étape recommandée
 1. **R3 (butin des forages/cités → alliage)** : **débloque la matière première de la fin de partie (M11)**.
-2. **Reste M7 — effet des avant-postes** (`OUTPOST_REFILL`) : recharge de survie HORS camp (zone sûre
-   secondaire autour des grottes nettoyées) — petite extension de la phase TICK 7.
-3. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
-4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
+2. **M8 (combat temps réel, décision actée)** — active la route « sécurisée » et les ennemis de cavernes.
+3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
 
 ## Limitations connues / quirks (à savoir avant de coder)
 - **Combat/commerce/fin = absents** : la **survie existe** (M6/M7 : pression eau/vivres dehors, mort = perte
-  du sac, recharge au camp) mais les **avant-postes ne rechargent pas encore** (`OUTPOST_REFILL` à venir) ;
-  ni combat, ni poste de traite/atelier fonctionnels, ni fin.
+  du sac, recharge au camp, **ravitaillement aux avant-postes** à usage unique) ; ni combat, ni poste de
+  traite/atelier fonctionnels, ni fin.
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;
   entrepôt/village/sites persistent.
 - **Poste de traite & atelier = bâtissables mais sans effet** (commerce/objets = M10).

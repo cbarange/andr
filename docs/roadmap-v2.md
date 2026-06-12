@@ -25,10 +25,10 @@
 | **Routes & sites** : R1 variété (~57 sites) · R2 réseau de routes | ✅ ✅ · R3/R4 ⏳ |
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
-| **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) | ✅ · 🟢 (reste : recharge aux avant-postes ; fog of war ⏸️ différé) |
+| **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **Contenu manquant** : combat (M8) · commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
 
-> Vérif à chaque pas : **typecheck · ~182 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~186 tests unit · 12 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -132,7 +132,7 @@ l'avancement :
 | Sidérurgie acier→balles | ✅ **ressuscité** (M9) | équilibrage M12 |
 | Sites/donjons : **grotte + 3 mines** explorables | ✅ **FAIT** (M9) | — |
 | Sites/donjons : **maison / ville / cité** | 🟡 INERTE (silhouettes) | M9 (reste) |
-| Avant-poste (grotte vidée ⇒ avant-poste) | ✅ rendu (M9) | **recharge de survie (`OUTPOST_REFILL`) = reste M7** |
+| Avant-poste (grotte vidée ⇒ avant-poste, ravitaillement usage unique) | ✅ **FAIT** (M9 rendu + M7 `USE_OUTPOST`) | — |
 | Atelier → objets (torche/outres/sacs/armures/armes) | 🔴/❌ | **M10** |
 | Poste de traite → commerce (fourrure = monnaie) | 🔴/❌ | **M10** |
 | Perks (éclaireur, gastronome, évasion…) + leurs événements | ❌ ABSENT | **M10** |
@@ -320,7 +320,7 @@ manque). Objectif : matérialiser le retranchement et le franchissement, et pose
 - **Acceptation** : franchir la porte fait passer « dehors » ; revenir **gèle/recharge** la survie ;
   tests sim de `inSafeZone` + recharge ; capture.
 
-### 🌲 M7 — Survie en terres sauvages *(le RENDU est fait ; ici = la SIM)* — **M/L** — 🟢 **CŒUR FAIT (juin 2026)**
+### 🌲 M7 — Survie en terres sauvages *(le RENDU est fait ; ici = la SIM)* — **M/L** — ✅ **FAIT (juin 2026)**
 > **Livré** : `GameState.survival` PAR JOUEUR (eau/vivres/PV, échéances en tics façon `trapReadyAt`,
 > compteur `deathSeq`), action **`SET_OUTSIDE`** (le client signale le franchissement — edge-triggered,
 > validé par `isNetworkSafeAction`), **phase TICK 7 « survie »** : drain par TEMPS dehors ; eau+vivres à
@@ -329,9 +329,12 @@ manque). Objectif : matérialiser le retranchement et le franchissement, et pose
 > (pas de bump de save ; strippé comme `carried`). Rendu : 3 jauges HUD + chip de zone, mort observée par
 > diff `deathSeq` → téléport au camp. Tests : **+14 unit** (drain/mort/recharge/idempotence/replay/back-fill)
 > + **1 e2e** (sortie → drain → mort → sac vidé → retour zone sûre).
-> **Reste** : **`OUTPOST_REFILL`** (recharge aux avant-postes — petite extension de la phase 7),
-> **fog of war** (⏸️ différé, décision actée — seam : `visited` additif + `VISIT_CELL` calqué sur
-> `DISCOVER_SITE`), équilibrage des cadences (M12).
+> **Avant-postes ACTIFS** (`USE_OUTPOST`) : une grotte nettoyée se ravitaille **UNE fois** (fidèle ADR :
+> usage unique, partagé entre joueurs — premier-servi, l'hôte arbitre) ; remplit **eau + vivres** (les PV
+> se soignent en mangeant = M8) ; no-op si tout est plein (on ne gaspille pas l'usage) ; champ
+> `SiteProgress.used` additif ; verbe diégétique « se ravitailler » (disparaît une fois épuisé). +4 tests.
+> **Reste** : **fog of war** (⏸️ différé, décision actée — seam : `visited` additif + `VISIT_CELL` calqué
+> sur `DISCOVER_SITE`), équilibrage des cadences (M12).
 
 **Correction majeure** : ne PAS refaire le monde (il existe). Brancher la **logique** qui manque.
 
