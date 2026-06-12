@@ -28,10 +28,10 @@
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
-| **M8.5 fidélité combat & lieux** (audit source ADR : [`analyse-combat-adr.md`](analyse-combat-adr.md)) | 🔴 **à faire** — E1 déclenchement par pas · E2 setpieces scriptés · E3 tables exactes… |
+| **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | 🟢 **F1+F2+F3.1 FAITS** (par pas · tables/biomes exacts · mines gardées) — reste F3.2-5 (grottes/maisons/villes scriptées), F4 (butin/avant-postes/mort), F5 (perks d'usage) |
 | **Contenu manquant** : fin de partie (M11) | ❌ |
 
-> Vérif à chaque pas : **typecheck · ~218 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~222 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 

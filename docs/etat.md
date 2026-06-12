@@ -24,7 +24,7 @@ de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 218 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 222 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -174,10 +174,14 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **M8.5 — FIDÉLITÉ combat & lieux** (retour de test du porteur : « trop éloigné de l'original ») :
-   audit du code source ADR fait → **[`analyse-combat-adr.md`](analyse-combat-adr.md)** (écarts E1–E9
-   priorisés + plan F1–F5). Les plus gros : déclenchement par PAS (pas par temps), combats SCRIPTÉS
-   aux lieux (mines gardées, grottes, maisons), tables exactes par biome, pas de bouton fuir.
+1. **M8.5 — FIDÉLITÉ combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) :
+   **F1 ✅ F2 ✅ F3.1 ✅** — les rencontres se déclenchent désormais **PAR PAS de déplacement**
+   (20 %/pas, min 3 pas, immobile = RIEN, routes = ZÉRO — fidèle `checkFight`), tables d'ennemis
+   **exactes et gatées par BIOME** (annexe A en oracle de tests, créature à deux têtes, ranged,
+   fusil 20 %), et **mines GARDÉES** (matriarche / hommes + chef / soldats + vétéran à vaincre
+   avant `SECURE_MINE`, dernier gardien sans fuite). **Reste** : F3.2-5 (grottes scriptées,
+   maisons 25/25/50, marais→gastronome, villes/cités = R3b), F4 (écran de butin, avant-postes par
+   expédition, cooldown de mort 120 s, viande qui soigne en marchant), F5 (perks d'usage).
 2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
 3. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin

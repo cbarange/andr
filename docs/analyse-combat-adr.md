@@ -106,7 +106,12 @@ torches et butins précis (annexe B). En bref :
 
 ---
 
-## 4. Plan de remise en conformité proposé — « M8.5 : fidélité combat & lieux »
+## 4. Plan de remise en conformité — « M8.5 : fidélité combat & lieux »
+
+> **État (juin 2026)** : **F1 ✅ · F2 ✅ · F3.1 ✅ LIVRÉS** (déclencheur par pas + tables exactes
+> par biome + mines gardées). Restent : F3.2-3.5 (grottes scriptées, maisons, marais/champ de
+> bataille, villes/cités = R3b), F4 (écran de butin, avant-postes par expédition, cooldown de mort,
+> viande qui soigne en marchant), F5 (perks d'usage).
 
 > Principe : on garde le **monde 3D continu** (acté) — l'unité « pas » d'ADR devient la **distance
 > parcourue** (1 pas ≡ 1 cellule de 12 u), mesurée localement et signalée à la sim comme
