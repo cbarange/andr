@@ -1035,3 +1035,47 @@ describe("avant-poste — ravitaillement à usage unique (reste M7)", () => {
     expect(s.sites[siteKey(3, 4)].used).toBeUndefined(); // pas consommé
   });
 });
+
+describe("fouille de surface — forages & champs de bataille (R3)", () => {
+  const SEED = 1337;
+
+  it("un forage a des points de fouille et donne de l'ALLIAGE", () => {
+    const d = dungeonFor("borehole", 10, -7, SEED);
+    const spots = d.nodes.filter((n) => n.kind === "chamber");
+    expect(spots.length).toBeGreaterThanOrEqual(2);
+    expect(spots.every((n) => (n.loot["alien alloy"] ?? 0) >= 1)).toBe(true); // source principale d'alliage
+    expect(spots.every((n) => n.depth === 0)).toBe(true); // en SURFACE (pas de tunnel)
+  });
+
+  it("un champ de bataille rend les restes des combats (balles/acier/cellules)", () => {
+    const d = dungeonFor("battlefield", -20, 14, SEED);
+    const spots = d.nodes.filter((n) => n.kind === "chamber");
+    expect(spots.length).toBeGreaterThanOrEqual(2);
+    const allowed = new Set(["bullets", "steel", "energy cell", "alien alloy"]);
+    for (const n of spots) {
+      expect(Object.keys(n.loot).length).toBeGreaterThan(0);
+      for (const r of Object.keys(n.loot)) expect(allowed.has(r)).toBe(true);
+    }
+  });
+
+  it("déterministe : même graine -> même butin ; autre graine -> donjon régénéré", () => {
+    expect(dungeonFor("borehole", 10, -7, SEED)).toEqual(dungeonFor("borehole", 10, -7, SEED));
+    expect(lootNodeIds("battlefield", -20, 14, SEED)).toEqual(lootNodeIds("battlefield", -20, 14, SEED));
+  });
+
+  it("TAKE_LOOT sur un forage : l'alliage va au SAC, premier-servi", () => {
+    const ids = lootNodeIds("borehole", 10, -7, worldgenSeedOf());
+    expect(ids.length).toBeGreaterThan(0);
+    const s0 = createInitialState(config.rngSeed, 0);
+    const s1 = reduce(s0, takeLoot("p1", 10, -7, "borehole", ids[0]));
+    expect(carriedOf(s1, "p1", "alien alloy")).toBeGreaterThanOrEqual(1);
+    // PREMIER-SERVI : un second joueur sur le même point ne ramasse rien.
+    const s2 = reduce(s1, takeLoot("p2", 10, -7, "borehole", ids[0]));
+    expect(s2).toBe(s1);
+  });
+
+  /** Graine du monde de l'état initial (les nœuds sim sont dérivés de worldSeed). */
+  function worldgenSeedOf(): number {
+    return createInitialState(config.rngSeed, 0).worldSeed;
+  }
+});

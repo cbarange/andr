@@ -23,6 +23,7 @@ import { Sites } from "./render/sites";
 import { Forest } from "./render/forest";
 import { Cabin } from "./render/cabin";
 import { Interiors } from "./render/interior";
+import { SiteLoot } from "./render/siteLoot";
 import { Player } from "./render/player";
 import { createCamera, cameraYaw } from "./render/camera";
 import { RemotePlayers } from "./render/remotePlayer";
@@ -69,6 +70,7 @@ import { SpawnEditor } from "./dev/spawnEditor";
 const BAG_ORDER = [
   "wood", "fur", "meat", "cured meat", "leather", "scales", "teeth", "cloth",
   "charm", "bait", "iron", "coal", "sulphur", "steel", "bullets",
+  "alien alloy", "energy cell", "torch", // butin R3 + outil M9 (sinon invisibles dans le sac)
 ];
 
 declare global {
@@ -356,6 +358,9 @@ async function boot(): Promise<void> {
   // quand on s'en approche (mesh + colliders localisés), + obscurité locale sous plafond. Aucune transition.
   const interiors = new Interiors(scene);
   interiors.setMap(worldMap);
+  // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
+  const siteLoot = new SiteLoot(scene);
+  siteLoot.setMap(worldMap);
   let prevBlockedNoTorch = false; // front montant -> un seul toast « il fait trop noir »
   const EMPTY_KEYS = new Set<string>(); // (réutilisé : pas d'alloc/frame quand aucun intérieur actif)
   // Switches dev (HUD debug, F3) : texture du sol + brouillard.
@@ -417,6 +422,7 @@ async function boot(): Promise<void> {
       terrain.regenerate(worldMap, player.position);
       sites.placeAll(worldMap, entities);
       interiors.setMap(worldMap);
+      siteLoot.setMap(worldMap);
     }
   }
 
@@ -848,6 +854,20 @@ async function boot(): Promise<void> {
           emit(takeLoot(self(), lt.cx, lt.cz, lt.siteType, lt.nodeId));
           if (isFilon) { emit(secureMine(self(), lt.cx, lt.cz, lt.siteType)); hud.toast("filon sécurisé — un mineur peut être assigné au village."); }
           else hud.toast("butin ramassé.");
+          audio.playSfx("checkTraps");
+        },
+      }));
+    }
+
+    // R3 — FOUILLE DE SURFACE (forages/champs de bataille) : butin 3D autour du site, premier-servi.
+    for (const lt of siteLoot.activeLoot()) {
+      if (state.sites?.[lt.cx + "," + lt.cz]?.taken?.[lt.nodeId]) continue; // déjà fouillé
+      consider(Math.hypot(lt.x - p.x, lt.z - p.z), 3.6, () => ({
+        world: new Vector3(lt.x, lt.y + 0.6, lt.z),
+        verb: "fouiller",
+        act: () => {
+          emit(takeLoot(self(), lt.cx, lt.cz, lt.siteType, lt.nodeId));
+          hud.toast("butin récupéré.");
           audio.playSfx("checkTraps");
         },
       }));
@@ -1339,6 +1359,8 @@ async function boot(): Promise<void> {
     const hasTorch = carriedOf(state, self(), "torch") > 0;
     interiors.update(player.position, dtSec, hasTorch);
     interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
+    siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
+    siteLoot.applyProgress(state.sites ?? {});
     const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
     sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
     player.setTorch(hasTorch, interiors.isLocalPlayerInside());
@@ -1537,6 +1559,7 @@ async function boot(): Promise<void> {
         terrain.regenerate(worldMap, player.position);
         sites.placeAll(worldMap, entities);
         interiors.setMap(worldMap);
+        siteLoot.setMap(worldMap);
       },
     };
     devConsole = new DevConsole(

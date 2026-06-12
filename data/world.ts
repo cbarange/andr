@@ -556,7 +556,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   wood: "bois", fur: "fourrure", meat: "viande", "cured meat": "viande séchée",
   leather: "cuir", scales: "écailles", teeth: "dents", cloth: "étoffe", charm: "charme",
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
-  "alien alloy": "alliage", "energy cell": "cellule",
+  "alien alloy": "alliage", "energy cell": "cellule", torch: "torche",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG

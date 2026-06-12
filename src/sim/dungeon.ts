@@ -85,6 +85,31 @@ export function dungeonFor(type: string, cx: number, cz: number, worldSeed: numb
   const entry: DungeonNode = { id: "entry", kind: "entry", depth: 0, pos: { x: 0, z: 0 }, loot: {} };
   nodes.push(entry);
 
+  if (type === "borehole" || type === "battlefield") {
+    // --- SITE DE SURFACE (R3) : pas de tunnel — des points de FOUILLE autour du centre. ---
+    // Le forage est la source PRINCIPALE d'alliage extraterrestre (fidèle ADR) ; le champ de
+    // bataille rend les restes des combats (munitions, métal — les ARMES elles-mêmes = M10).
+    const spots = 2 + nextInt(rng, 2); // 2..3 points de fouille
+    for (let i = 0; i < spots; i++) {
+      const ang = nextFloat(rng) * Math.PI * 2;
+      const r = 4 + nextFloat(rng) * 5; // 4..9 u du centre du site
+      const loot: Record<string, number> = {};
+      if (type === "borehole") {
+        loot["alien alloy"] = 1 + nextInt(rng, 3); // 1..3
+        if (nextFloat(rng) < 0.35) loot["energy cell"] = 1 + nextInt(rng, 2);
+      } else {
+        const roll = nextFloat(rng);
+        if (roll < 0.5) loot["bullets"] = 2 + nextInt(rng, 5);
+        else if (roll < 0.85) loot["steel"] = 1 + nextInt(rng, 3);
+        else loot["energy cell"] = 1 + nextInt(rng, 2);
+        if (nextFloat(rng) < 0.12) loot["alien alloy"] = 1; // éclat rare
+      }
+      nodes.push({ id: "s" + i, kind: "chamber", depth: 0, pos: { x: Math.cos(ang) * r, z: Math.sin(ang) * r }, loot });
+      segments.push({ from: "entry", to: "s" + i });
+    }
+    return { type, nodes, segments };
+  }
+
   const ore = MINE_ORE[type];
   if (ore) {
     // --- MINE : descente courte, orientée vers UN filon. ---
