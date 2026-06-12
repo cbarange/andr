@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createInitialState, Fire, Temp, BUILDER_ABSENT, carriedTotal, carriedOf, carryCapacity, freeWorkers, siteKey, GameState,
+  survivalOf,
 } from "./state";
 import { reduce, reduceAll, advanceTicks } from "./reducer";
 import {
@@ -13,7 +14,7 @@ import {
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, GameAction,
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
-  isNetworkSafeAction,
+  isNetworkSafeAction, setOutside, debugSetSurvival,
 } from "./actions";
 import { dungeonFor, lootNodeIds } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
@@ -882,5 +883,107 @@ describe("M9 — torche craftable (CRAFT_ITEM)", () => {
   it("refuse un objet inconnu (no-op)", () => {
     const s0 = repaired({ resources: { wood: 5, cloth: 5 } });
     expect(reduce(s0, craftItem("a", "inconnu"))).toBe(s0);
+  });
+});
+
+describe("survie (M6/M7)", () => {
+  const SV = config.survival;
+  const WATER_T = SV.waterDrainSeconds * HZ;
+  const FOOD_T = SV.foodDrainSeconds * HZ;
+  const HEALTH_T = SV.healthDrainSeconds * HZ;
+  const RECHARGE_T = SV.rechargeSeconds * HZ;
+
+  it("1ᵉʳ SET_OUTSIDE : lazy-init PLEIN + dehors", () => {
+    const s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    const sv = survivalOf(s, "p1");
+    expect(sv.outside).toBe(true);
+    expect(sv.water).toBe(SV.baseWater);
+    expect(sv.food).toBe(SV.baseFood);
+    expect(sv.health).toBe(SV.maxHealth);
+  });
+
+  it("SET_OUTSIDE est idempotent (même bord -> no-op)", () => {
+    const s1 = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    expect(reduce(s1, setOutside("p1", true))).toBe(s1);
+  });
+
+  it("DEHORS : l'eau se vide par temps", () => {
+    const s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    expect(survivalOf(advanceTicks(s, WATER_T - 1), "p1").water).toBe(SV.baseWater); // pas encore
+    expect(survivalOf(advanceTicks(s, WATER_T), "p1").water).toBe(SV.baseWater - 1); // -1 à l'échéance
+  });
+
+  it("DEDANS (zone sûre) : la survie ne se vide pas", () => {
+    // jamais sorti -> pas d'enregistrement -> aucune conso, même après longtemps
+    const s = advanceTicks(createInitialState(config.rngSeed, 0), WATER_T * 3);
+    expect(Object.keys(s.survival).length).toBe(0);
+    expect(survivalOf(s, "p1").water).toBe(SV.baseWater);
+  });
+
+  it("eau ET vivres à sec -> la santé baisse", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 0, food: 0 }));
+    const before = survivalOf(s, "p1").health;
+    expect(survivalOf(advanceTicks(s, HEALTH_T), "p1").health).toBe(before - 1);
+  });
+
+  it("eau OU vivres encore là -> la santé NE baisse pas", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 0 })); // vivres encore pleins
+    expect(survivalOf(advanceTicks(s, HEALTH_T * 2), "p1").health).toBe(SV.maxHealth);
+  });
+
+  it("0 PV -> MORT : sac vidé, record reset (plein), deathSeq++, grâce posée", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { iron: 5, wood: 3 } } };
+    s = reduce(s, setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 0, food: 0, health: 1 }));
+    s = advanceTicks(s, HEALTH_T); // 1 PV -> 0 -> mort
+    const sv = survivalOf(s, "p1");
+    expect(sv.deathSeq).toBe(1);
+    expect(sv.health).toBe(SV.maxHealth); // ressuscité plein
+    expect(sv.outside).toBe(false); // de retour au camp
+    expect(sv.respawnReadyAt).toBeGreaterThan(s.tick); // grâce active
+    expect(carriedTotal(s, "p1")).toBe(0); // SAC perdu
+  });
+
+  it("mort : perte du SAC SEUL (entrepôt intact, deathStoragePenalty=0)", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), resources: { wood: 50, iron: 10 } };
+    s = reduce(s, setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 0, food: 0, health: 1 }));
+    s = advanceTicks(s, HEALTH_T);
+    expect(s.resources.wood).toBe(50);
+    expect(s.resources.iron).toBe(10);
+  });
+
+  it("RENTRER au camp recharge la survie vers le max", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 2, food: 2, health: 2 }));
+    s = reduce(s, setOutside("p1", false)); // rentre
+    const sv = survivalOf(advanceTicks(s, RECHARGE_T), "p1");
+    expect(sv.water).toBe(3);
+    expect(sv.food).toBe(3);
+    expect(sv.health).toBe(3);
+  });
+
+  it("grâce après la mort : pas de drain tant que respawnReadyAt n'est pas atteint", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0) };
+    s = reduce(s, setOutside("p1", true));
+    s = reduce(s, debugSetSurvival("p1", { water: 0, food: 0, health: 1 }));
+    s = advanceTicks(s, HEALTH_T); // mort -> grâce
+    s = reduce(s, setOutside("p1", true)); // repart dehors immédiatement
+    // pendant la grâce, l'eau ne baisse pas
+    expect(survivalOf(advanceTicks(s, WATER_T), "p1").water).toBe(SV.baseWater);
+    expect(survivalOf(s, "p1").respawnReadyAt).toBeGreaterThan(0);
+  });
+
+  it("DÉTERMINISME : la survie est rejouable (même séquence -> même état)", () => {
+    const s0 = createInitialState(config.rngSeed, 0);
+    const acts: GameAction[] = [setOutside("p1", true), ...Array.from({ length: WATER_T + 5 }, () => tick())];
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
+  });
+
+  it("SET_OUTSIDE est une action réseau-safe (porte playerId)", () => {
+    expect(isNetworkSafeAction(setOutside("p1", true), "p1")).toBe(true);
+    expect(isNetworkSafeAction(setOutside("p1", true), "p2")).toBe(false); // usurpation refusée
   });
 });

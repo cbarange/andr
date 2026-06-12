@@ -11,6 +11,7 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carryCapacity, plannedCount, siteKey,
+  PlayerSurvival, baseSurvival,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
@@ -44,6 +45,16 @@ const INCOME_TICKS = config.population.incomeSeconds * HZ;
 const EV_MIN_S = config.events.minSeconds;
 const EV_MAX_S = config.events.maxSeconds;
 const EV_EMPTY_SCALE = config.events.emptyRescheduleScale;
+// --- M6/M7 : survie (échéances en tics, dérivées des secondes des données) ---
+const WATER_DRAIN_TICKS = config.survival.waterDrainSeconds * HZ;
+const FOOD_DRAIN_TICKS = config.survival.foodDrainSeconds * HZ;
+const HEALTH_DRAIN_TICKS = config.survival.healthDrainSeconds * HZ;
+const RECHARGE_TICKS = config.survival.rechargeSeconds * HZ;
+const RESPAWN_COOLDOWN_TICKS = config.survival.respawnCooldownSeconds * HZ;
+const MAX_WATER = config.survival.maxWater;
+const MAX_FOOD = config.survival.maxFood;
+const MAX_HEALTH = config.survival.maxHealth;
+const DEATH_STORAGE_PENALTY = config.survival.deathStoragePenalty;
 
 /** Durée d'un chantier en TICS (>= 1) — la constructrice bâtit ce bâtiment en autant de tics. */
 function buildTicks(id: string): number {
@@ -441,6 +452,27 @@ export function reduce(state: GameState, action: GameAction): GameState {
       return { ...state, resources, carried: { ...state.carried, [pid]: bag }, rng: cloneRng(state.rng) };
     }
 
+    case "SET_OUTSIDE": {
+      // M6/M7 : le client signale qu'il a franchi la frontière de la zone sûre. Lazy-init de la survie
+      // à la 1ʳᵉ référence (plein). NO-OP si le bord n'a pas changé (idempotent ; calque DISCOVER_SITE).
+      const pid = action.playerId;
+      const cur = state.survival[pid] ?? baseSurvival();
+      if (state.survival[pid] && cur.outside === action.outside) return state;
+      const rec: PlayerSurvival = { ...cur, outside: action.outside };
+      if (action.outside) {
+        // Sort dehors : (ré)arme les échéances de drain à partir de maintenant.
+        rec.waterAt = state.tick + WATER_DRAIN_TICKS;
+        rec.foodAt = state.tick + FOOD_DRAIN_TICKS;
+        rec.healthAt = state.tick + HEALTH_DRAIN_TICKS;
+      } else {
+        // Rentre au camp : arme la recharge (la régénération se fera dans TICK).
+        rec.waterAt = state.tick + RECHARGE_TICKS;
+        rec.foodAt = state.tick + RECHARGE_TICKS;
+        rec.healthAt = state.tick + RECHARGE_TICKS;
+      }
+      return { ...state, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
+    }
+
     case "RESOLVE_EVENT_CHOICE": {
       if (!state.activeEvent) return state;
       const ev = eventById[state.activeEvent.id];
@@ -593,6 +625,19 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // Fixe le palier (0/1/5/10) ; `cabinRepaired` est dérivé (>= 1). Console dev.
       const tier = action.tier;
       return { ...state, cabinTier: tier, cabinRepaired: tier >= 1, rng: cloneRng(state.rng) };
+    }
+
+    case "DEBUG_SET_SURVIVAL": {
+      // Fixe les jauges de survie d'un joueur (test de la mort sans attendre). Console dev / e2e.
+      const pid = action.playerId;
+      const cur = state.survival[pid] ?? baseSurvival();
+      const rec: PlayerSurvival = {
+        ...cur,
+        water: action.water ?? cur.water,
+        food: action.food ?? cur.food,
+        health: action.health ?? cur.health,
+      };
+      return { ...state, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
     }
 
     case "TICK": {
@@ -773,9 +818,59 @@ export function reduce(state: GameState, action: GameAction): GameState {
         pendingEffects = draft.pendingEffects;
       }
 
+      // 7) SURVIE (M6/M7) : par joueur, PAR TEMPS passé DEHORS (pas par case). DEHORS : l'eau puis les
+      //    vivres se vident ; à sec des DEUX, la santé baisse ; à 0 PV -> MORT (retour au camp signalé
+      //    par `deathSeq`, perte du SAC, knob `deathStoragePenalty` pour l'entrepôt). DEDANS : recharge
+      //    vers le max. Aucune consommation de RNG -> l'ordre d'itération n'affecte pas le déterminisme
+      //    (tri défensif au cas où on y ajouterait un tirage plus tard).
+      let survival = state.survival;
+      let carried = state.carried;
+      const survIds = Object.keys(state.survival).sort();
+      if (survIds.length > 0) {
+        const nextSurv: Record<string, PlayerSurvival> = { ...state.survival };
+        let survMutated = false;
+        for (const pid of survIds) {
+          const s0 = state.survival[pid];
+          let { water, food, health, waterAt, foodAt, healthAt } = s0;
+          const { outside, respawnReadyAt, deathSeq } = s0;
+          let dirty = false;
+
+          if (outside && tick >= respawnReadyAt) {
+            if (water > 0 && tick >= waterAt) { water -= 1; waterAt = tick + WATER_DRAIN_TICKS; dirty = true; }
+            if (food > 0 && tick >= foodAt) { food -= 1; foodAt = tick + FOOD_DRAIN_TICKS; dirty = true; }
+            // À sec d'eau ET de vivres : la santé décline.
+            if (water === 0 && food === 0 && tick >= healthAt) { health -= 1; healthAt = tick + HEALTH_DRAIN_TICKS; dirty = true; }
+            if (health <= 0) {
+              // MORT : on REMPLACE l'enregistrement par un neuf (plein, dedans) + signal `deathSeq`.
+              nextSurv[pid] = { ...baseSurvival(), deathSeq: deathSeq + 1, respawnReadyAt: tick + RESPAWN_COOLDOWN_TICKS };
+              survMutated = true;
+              if (carried[pid] && Object.keys(carried[pid]).length > 0) carried = { ...carried, [pid]: {} }; // perte du sac
+              if (DEATH_STORAGE_PENALTY > 0) {
+                const res = { ...resources };
+                for (const r of Object.keys(res)) res[r] = Math.max(0, Math.floor(res[r] * (1 - DEATH_STORAGE_PENALTY)));
+                resources = res;
+              }
+              continue; // enregistrement déjà posé
+            }
+          } else if (!outside && tick >= waterAt && (water < MAX_WATER || food < MAX_FOOD || health < MAX_HEALTH)) {
+            // DEDANS : recharge cadencée (waterAt sert d'horloge de recharge unique).
+            if (water < MAX_WATER) water += 1;
+            if (food < MAX_FOOD) food += 1;
+            if (health < MAX_HEALTH) health += 1;
+            waterAt = tick + RECHARGE_TICKS; foodAt = tick + RECHARGE_TICKS; healthAt = tick + RECHARGE_TICKS;
+            dirty = true;
+          }
+
+          if (dirty) { nextSurv[pid] = { ...s0, water, food, health, waterAt, foodAt, healthAt }; survMutated = true; }
+        }
+        if (survMutated) survival = nextSurv;
+      }
+
       return {
         ...state,
         tick,
+        carried,
+        survival,
         fire,
         fireCoolAt,
         temperature,

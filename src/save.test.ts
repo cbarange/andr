@@ -18,4 +18,14 @@ describe("migrateSave — politique de version de sauvegarde", () => {
   it("version PLUS RÉCENTE que le code (3) : refuse (on n'écrase pas à l'aveugle)", () => {
     expect(migrateSave(state, 3)).toBeNull();
   });
+
+  // M6/M7 : `survival` est ADDITIF -> une save d'avant la survie (sans le champ) doit être
+  // back-fillée à `{}` par le spread du boot (`{...createInitialState(), ...saved}`), sans crash
+  // ni bump de VERSION. On reproduit ce merge ici.
+  it("back-fill M7 : une save pré-survie reçoit survival:{}", () => {
+    const { survival, ...preM7 } = createInitialState(123, 0); // ancienne save : pas de `survival`
+    void survival;
+    const booted = { ...createInitialState(123, 0), ...preM7 };
+    expect(booted.survival).toEqual({});
+  });
 });

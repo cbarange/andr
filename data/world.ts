@@ -95,6 +95,25 @@ export const config = {
   //     on NE compresse PAS). `emptyRescheduleScale` : si aucun événement n'est éligible,
   //     on re-tente plus tôt (× ce facteur), comme l'original. ---
   events: { minSeconds: 180, maxSeconds: 360, emptyRescheduleScale: 0.5 },
+
+  // --- M6/M7 : SURVIE (eau / nourriture / santé), PAR JOUEUR. Pression SPATIALE : la survie ne
+  //     se vide que DEHORS (hors zone sûre = au-delà de VILLAGE_RADIUS), par TEMPS (pas par case,
+  //     cf. monde unifié). À sec d'eau ET de vivres -> la santé baisse ; à 0 PV -> mort : retour au
+  //     camp + perte du SAC (pas de l'entrepôt par défaut). Au camp/avant-poste : recharge. Tout
+  //     est en SECONDES (converti en tics par la sim) -> éditable sans toucher au moteur. ---
+  survival: {
+    baseWater: 10, // outre de départ (sert aussi de capacité d'« outfit » M6 ; baril/citerne = M10)
+    maxWater: 10,
+    baseFood: 10, // vivres de départ
+    maxFood: 10,
+    maxHealth: 10,
+    waterDrainSeconds: 12, // -1 eau toutes les 12 s dehors  -> ~2 min avant la soif totale
+    foodDrainSeconds: 18, // -1 vivre toutes les 18 s dehors -> la faim suit la soif
+    healthDrainSeconds: 6, // quand eau ET vivres = 0 : -1 PV toutes les 6 s -> ~1 min de sursis
+    rechargeSeconds: 2, // au camp / avant-poste : +1 (eau/vivres/PV) toutes les 2 s vers le max
+    respawnCooldownSeconds: 20, // après la mort : grâce avant que la survie ne reprenne dehors
+    deathStoragePenalty: 0, // fraction d'entrepôt perdue à la mort (0 = perte du SAC seul ; knob pour durcir)
+  },
 } as const;
 
 export const resources = {

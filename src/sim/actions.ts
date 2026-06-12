@@ -133,6 +133,17 @@ export type CraftItemAction = {
   itemId: string;
 };
 
+/**
+ * M6/M7 : le joueur a FRANCHI la frontière de la zone sûre (dedans <-> dehors). Émise par le client
+ * au CHANGEMENT de bord seulement (la position est locale, hors sim) ; l'hôte bascule la survie de
+ * ce joueur. Réseau-safe (porte `playerId`, pas `DEBUG_*`).
+ */
+export type SetOutsideAction = {
+  type: "SET_OUTSIDE";
+  playerId: string;
+  outside: boolean;
+};
+
 /** Avance d'un pas fixe de simulation (§3.6). Émise par la boucle, pas par le joueur. */
 export type TickAction = {
   type: "TICK";
@@ -193,6 +204,15 @@ export type DebugSetSeedAction = { type: "DEBUG_SET_SEED"; seed: number };
 /** Fixe le palier de la cabane (0/1/5/10) — réparée dérivée (>= 1). Console dev. */
 export type DebugSetCabinTierAction = { type: "DEBUG_SET_CABIN_TIER"; tier: number };
 
+/** Fixe les jauges de survie d'un joueur (eau/vivres/PV ; valeur omise = inchangée). Console dev / e2e. */
+export type DebugSetSurvivalAction = {
+  type: "DEBUG_SET_SURVIVAL";
+  playerId: string;
+  water?: number;
+  food?: number;
+  health?: number;
+};
+
 export type GameAction =
   | GatherWoodAction
   | LightFireAction
@@ -211,6 +231,7 @@ export type GameAction =
   | SecureMineAction
   | ClearCaveAction
   | CraftItemAction
+  | SetOutsideAction
   | TickAction
   | DebugTriggerEventAction
   | DebugGrantAction
@@ -222,7 +243,8 @@ export type GameAction =
   | DebugBuildAction
   | DebugUnlockAllAction
   | DebugSetSeedAction
-  | DebugSetCabinTierAction;
+  | DebugSetCabinTierAction
+  | DebugSetSurvivalAction;
 
 /** Actions émises par un joueur (vs TICK, émise par la boucle) — ce qui circule sur le réseau.
  *  (Les `DEBUG_*` y figurent pour passer par `emit` -> hôte-autoritaire ; console dev uniquement.) */
@@ -244,6 +266,7 @@ export type PlayerAction =
   | SecureMineAction
   | ClearCaveAction
   | CraftItemAction
+  | SetOutsideAction
   | DebugGrantAction
   | DebugSetAction
   | DebugClearAction
@@ -253,7 +276,8 @@ export type PlayerAction =
   | DebugBuildAction
   | DebugUnlockAllAction
   | DebugSetSeedAction
-  | DebugSetCabinTierAction;
+  | DebugSetCabinTierAction
+  | DebugSetSurvivalAction;
 
 /**
  * Une action REÇUE DU RÉSEAU est-elle acceptable par l'hôte ? (anti-triche / anti-usurpation)
@@ -332,6 +356,9 @@ export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAc
 export function craftItem(playerId: string, itemId: string): CraftItemAction {
   return { type: "CRAFT_ITEM", playerId, itemId };
 }
+export function setOutside(playerId: string, outside: boolean): SetOutsideAction {
+  return { type: "SET_OUTSIDE", playerId, outside };
+}
 
 export function tick(): TickAction {
   return { type: "TICK" };
@@ -368,4 +395,10 @@ export function debugSetSeed(seed: number): DebugSetSeedAction {
 }
 export function debugSetCabinTier(tier: number): DebugSetCabinTierAction {
   return { type: "DEBUG_SET_CABIN_TIER", tier };
+}
+export function debugSetSurvival(
+  playerId: string,
+  vals: { water?: number; food?: number; health?: number },
+): DebugSetSurvivalAction {
+  return { type: "DEBUG_SET_SURVIVAL", playerId, ...vals };
 }

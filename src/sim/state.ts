@@ -108,6 +108,33 @@ export interface GameState {
   //     NETTOIE un site / SÉCURISE une mine. Réseau qui FUSIONNE (route vers le point connectif le
   //     plus proche). Clé = `siteKey(cx,cz)`. Déterministe (géométrique) -> P2P via snapshot. Additif. ---
   roads: Record<string, true>;
+
+  // --- M6/M7 : SURVIE par joueur (eau/nourriture/santé), indexée par `playerId` (comme `carried`).
+  //     La roadmap parlait d'un `inSafeZone` GLOBAL ; en multijoueur c'est forcément PAR JOUEUR (chacun
+  //     est à une position différente) -> on porte `outside` dans l'enregistrement (un drapeau unique ne
+  //     marcherait pas). Champ ADDITIF (back-fillé `{}` au boot -> pas de bump de save VERSION). Voyage
+  //     dans le snapshot (structuredClone intégral). Comme `carried`, pas persisté utilement (selfId
+  //     volatile) : défaut PLEIN à la 1ʳᵉ sortie. La sim ne connaît pas les positions : chaque client
+  //     émet `SET_OUTSIDE` au franchissement (edge), l'hôte vide/recharge sur échéances par joueur. ---
+  survival: Record<string, PlayerSurvival>;
+}
+
+/**
+ * État de SURVIE d'UN joueur. Échéances en n° de tic (comme `trapReadyAt`) -> avancement
+ * déterministe & pur, propre à chaque joueur. `deathSeq` est un compteur MONOTONE incrémenté à
+ * chaque mort : le rendu compare au sien et téléporte au camp (robuste à la coalescence de snapshots).
+ */
+export interface PlayerSurvival {
+  water: number;
+  food: number;
+  health: number;
+  /** Le joueur est-il DEHORS (hors zone sûre) ? Posé par `SET_OUTSIDE` (calculé localement, position). */
+  outside: boolean;
+  waterAt: number; // tic du prochain -1 eau (dehors)
+  foodAt: number; // tic du prochain -1 vivre (dehors)
+  healthAt: number; // tic du prochain -1 PV (eau ET vivres = 0)
+  respawnReadyAt: number; // tic à partir duquel la survie reprend après une mort (grâce)
+  deathSeq: number; // nombre de morts (signal pour le rendu : téléport au camp + sac vidé)
 }
 
 /** Progression d'exploration d'UN site (mine/grotte). Tous les champs sont optionnels/diffus. */
@@ -156,6 +183,27 @@ export function freeWorkers(state: GameState): number {
 /** Quantité d'une ressource dans le sac d'un joueur. */
 export function carriedOf(state: GameState, playerId: string, resource: string): number {
   return state.carried[playerId]?.[resource] ?? 0;
+}
+
+/** Enregistrement de survie NEUF (plein, dedans, échéances à 0). Utilisé au lazy-init et à la mort. */
+export function baseSurvival(): PlayerSurvival {
+  const s = config.survival;
+  return {
+    water: s.baseWater,
+    food: s.baseFood,
+    health: s.maxHealth,
+    outside: false,
+    waterAt: 0,
+    foodAt: 0,
+    healthAt: 0,
+    respawnReadyAt: 0,
+    deathSeq: 0,
+  };
+}
+
+/** Lecture DÉFENSIVE de la survie d'un joueur (plein par défaut si pas encore d'enregistrement). */
+export function survivalOf(state: GameState, playerId: string): PlayerSurvival {
+  return state.survival[playerId] ?? baseSurvival();
 }
 
 /** Total porté par un joueur (toutes ressources confondues). */
@@ -215,5 +263,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     worldSeed: worldgen.seed,
     sites: {},
     roads: {},
+    survival: {},
   };
 }
