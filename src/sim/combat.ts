@@ -15,8 +15,7 @@ import { GameState, carriedOf, type Encounter } from "./state";
  */
 export function stepFightTriggers(rng: RngState, tier: number): boolean {
   if (tier <= 0) return false;
-  const chance = tier === 4 ? config.combat.caveFightChance : config.combat.fightChance;
-  return nextFloat(rng) < chance;
+  return nextFloat(rng) < config.combat.fightChance; // sous terre : plus d'aléatoire (grottes scriptées F3.2)
 }
 
 /**

@@ -24,7 +24,7 @@ de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 227 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 229 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -180,7 +180,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    squatteur), **marais → gastronome**, champ de bataille = **armes lourdes ADR**, forage =
    **alliage garanti**, **viande soigne en voyage**, **mort = 120 s de repos**, **avant-postes par
    expédition**, **désengagement physique** (poursuite bornée), avertissements de danger.
-   **Reste** : F3.2 (grottes scriptées), F3.5 (villes/cités = R3b), écran de butin, F5 (perks d'usage).
+   **Et F3.2 ✅ : GROTTES SCRIPTÉES** — le graphe ADR (30/30/40, combats a1/b3/b4/c1/c2, « la
+   torche s'éteint » consommant 1 torche, butins camp/cadavre/fins 1-3 exacts) tiré à la graine,
+   cache finale gatée par la séquence. **Reste** : F3.5 (villes/cités = R3b), écran de butin, F5.
 2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
 3. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin

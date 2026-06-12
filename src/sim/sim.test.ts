@@ -20,7 +20,7 @@ import {
 } from "./actions";
 import { stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
 import { enemyById, weaponById, mineGuardians } from "../../data/world";
-import { dungeonFor, lootNodeIds } from "./dungeon";
+import { dungeonFor, lootNodeIds, caveSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
 
@@ -839,9 +839,71 @@ describe("M9 — grotte nettoyée ⇒ avant-poste, et déterminisme global", () 
     let cx = 0; let ids: string[] = [];
     for (let i = 1; i < 30 && ids.length === 0; i++) { ids = lootNodeIds("cave", i, 1, seed); if (ids.length) cx = i; }
     expect(ids.length).toBeGreaterThan(0);
-    let s = repaired();
+    // M8.5/F3.2 : la cache finale est gardée par le setpiece -> on pose les étapes franchies.
+    const steps = caveSteps(cx, 1, seed);
+    let s = repaired({ sites: { [siteKey(cx, 1)]: { type: "cave", guardians: steps.length } } });
     for (const id of ids) s = reduce(s, takeLoot("a", cx, 1, "cave", id));
     expect(s.sites[siteKey(cx, 1)].cleared).toBe(true);
+  });
+
+  it("GROTTE SCRIPTÉE (F3.2) : la cache finale est gatée, le chemin se franchit étape par étape", () => {
+    const seed = createInitialState(config.rngSeed, 0).worldSeed;
+    // une grotte avec au moins un nœud (toutes en ont : end est garanti)
+    const ids = lootNodeIds("cave", 5, 5, seed);
+    expect(ids).toContain("end"); // la cache finale existe toujours
+    const steps = caveSteps(5, 5, seed);
+    expect(steps.length).toBeGreaterThanOrEqual(1); // au moins le combat C (c1/c2)
+    expect(steps.length).toBeLessThanOrEqual(3);
+    expect(steps[steps.length - 1].kind).toBe("fight"); // le chemin finit TOUJOURS par c1/c2
+    expect(caveSteps(5, 5, seed)).toEqual(steps); // déterministe
+    // end gaté tant que les étapes ne sont pas franchies
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { torch: 3, "steel sword": 1 } } };
+    expect(reduce(s, takeLoot("p1", 5, 5, "cave", "end"))).toBe(s);
+    // franchir chaque étape via ENGAGE_GUARDIAN (gate = consomme une torche ; fight = combat)
+    const FISTS = 2 * HZ;
+    for (let i = 0; i < steps.length; i++) {
+      const before = s;
+      s = reduce(s, engageGuardian("p1", 5, 5, "cave"));
+      if (steps[i].kind === "gate") {
+        expect(carriedOf(s, "p1", "torch")).toBe(carriedOf(before, "p1", "torch") - 1); // torche consommée
+        expect(s.sites[siteKey(5, 5)].guardians).toBe(i + 1);
+      } else {
+        expect(s.combat["p1"]?.enemyId).toBe((steps[i] as { enemyId: string }).enemyId);
+        for (let k = 0; k < 20 && s.combat["p1"]; k++) {
+          s = reduce(s, attack("p1", "steel sword"));
+          if (s.combat["p1"]) s = advanceTicks(s, FISTS);
+        }
+        expect(s.sites[siteKey(5, 5)].guardians).toBe(i + 1);
+      }
+    }
+    // la cache finale s'ouvre enfin
+    const out = reduce(s, takeLoot("p1", 5, 5, "cave", "end"));
+    expect(out).not.toBe(s);
+    expect(out.sites[siteKey(5, 5)].taken?.["end"]).toBe(true);
+  });
+
+  it("GATE sans torche = no-op ; combat de grotte = désengageable (pas un dernier gardien de mine)", () => {
+    const seed = createInitialState(config.rngSeed, 0).worldSeed;
+    // cherche une grotte dont la 1ʳᵉ étape est une GATE (b2) — sinon teste au moins le flee.
+    let gateCave: [number, number] | null = null;
+    let fightCave: [number, number] | null = null;
+    for (let i = 1; i < 60; i++) {
+      const st = caveSteps(i, 2, seed);
+      if (st[0]?.kind === "gate" && !gateCave) gateCave = [i, 2];
+      if (st[0]?.kind === "fight" && !fightCave) fightCave = [i, 2];
+      if (gateCave && fightCave) break;
+    }
+    if (gateCave) {
+      const s0 = createInitialState(config.rngSeed, 0); // pas de torche
+      expect(reduce(s0, engageGuardian("p1", gateCave[0], gateCave[1], "cave"))).toBe(s0);
+    }
+    if (fightCave) {
+      let s = createInitialState(config.rngSeed, 0);
+      s = reduce(s, engageGuardian("p1", fightCave[0], fightCave[1], "cave"));
+      expect(s.combat["p1"]).toBeTruthy();
+      const fled = reduce(s, flee("p1"));
+      expect(fled.combat["p1"]).toBeUndefined(); // les bêtes de grotte se distancent (pas une mine)
+    }
   });
 
   it("DISCOVER_SITE / CLEAR_HAZARD marquent l'état (idempotents)", () => {

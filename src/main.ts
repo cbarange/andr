@@ -52,6 +52,7 @@ import {
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon } from "./sim/combat";
+import { caveSteps } from "./sim/dungeon";
 import { EncounterFx } from "./render/encounter";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
@@ -1008,16 +1009,26 @@ async function boot(): Promise<void> {
       if (state.sites?.[lt.cx + "," + lt.cz]?.taken?.[lt.nodeId]) continue;
       const d = Math.hypot(lt.x - p.x, lt.z - p.z);
       const isFilon = lt.kind === "deep" && lt.siteType.endsWith("mine");
-      // M8.5/F3.1 : le filon est GARDÉ — vaincre la séquence scriptée (matriarche / hommes + chef /
-      // soldats + vétéran) AVANT de pouvoir l'exploiter (fidèle aux setpieces d'ADR).
-      const guardiansLeft = isFilon
-        ? (mineGuardians[lt.siteType]?.length ?? 0) - (state.sites?.[lt.cx + "," + lt.cz]?.guardians ?? 0)
-        : 0;
-      if (isFilon && guardiansLeft > 0) {
-        consider(d, 5.0, () => ({
+      // M8.5/F3.1-F3.2 : filon de MINE gardé / CACHE FINALE de grotte au bout du setpiece —
+      // la séquence scriptée (combats, torche qui s'éteint) doit être franchie d'abord.
+      const isCaveEnd = lt.siteType === "cave" && lt.nodeId === "end";
+      const stepsTotal = isFilon
+        ? (mineGuardians[lt.siteType]?.length ?? 0)
+        : isCaveEnd
+          ? caveSteps(lt.cx, lt.cz, state.worldSeed).length
+          : 0;
+      const stepsDone = state.sites?.[lt.cx + "," + lt.cz]?.guardians ?? 0;
+      if ((isFilon || isCaveEnd) && stepsDone < stepsTotal) {
+        const next = isCaveEnd ? caveSteps(lt.cx, lt.cz, state.worldSeed)[stepsDone] : null;
+        const isGate = next?.kind === "gate";
+        consider(d, isCaveEnd ? 14.0 : 5.0, () => ({
           world: new Vector3(lt.x, lt.y + 0.6, lt.z),
-          verb: "affronter le gardien",
-          act: () => emit(engageGuardian(self(), lt.cx, lt.cz, lt.siteType)),
+          verb: isGate ? "rallumer une torche (1 torche)" : isCaveEnd ? "avancer dans le noir" : "affronter le gardien",
+          act: () => {
+            if (isGate && carriedOf(state, self(), "torch") < 1) { hud.toast("la torche s'éteint — il en faut une autre pour continuer."); return; }
+            emit(engageGuardian(self(), lt.cx, lt.cz, lt.siteType));
+            if (isGate) hud.toast("vous rallumez une torche — l'obscurité recule.");
+          },
         }));
         continue;
       }
@@ -1440,9 +1451,15 @@ async function boot(): Promise<void> {
       encounterFx.clear("win");
       // M8.5/F3.1 : message dédié pour la séquence des gardiens de mine.
       if (lastEncSeen?.guardianIdx !== undefined && lastEncSeen.siteType) {
-        const total = mineGuardians[lastEncSeen.siteType]?.length ?? 0;
-        if (lastEncSeen.guardianIdx >= total - 1) hud.toast("la mine est sûre — le filon peut être exploité.");
-        else hud.toast("le gardien tombe — d'autres défendent encore les lieux.");
+        const isCave = lastEncSeen.siteType === "cave";
+        const total = isCave && lastEncSeen.siteKey
+          ? caveSteps(Number(lastEncSeen.siteKey.split(",")[0]), Number(lastEncSeen.siteKey.split(",")[1]), state.worldSeed).length
+          : mineGuardians[lastEncSeen.siteType]?.length ?? 0;
+        if (lastEncSeen.guardianIdx >= total - 1) {
+          hud.toast(isCave ? "la grotte est silencieuse — la cache du fond est à vous." : "la mine est sûre — le filon peut être exploité.");
+        } else {
+          hud.toast(isCave ? "la bête tombe — quelque chose remue encore plus loin." : "le gardien tombe — d'autres défendent encore les lieux.");
+        }
       } else {
         hud.toast("l'ennemi s'effondre — son butin est dans votre sac.");
       }

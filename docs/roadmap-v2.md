@@ -28,10 +28,10 @@
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
-| **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | 🟢 **F1·F2·F3.1·F3.3·F3.4·F4 FAITS** (par pas · tables/biomes · mines gardées · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste F3.2 (grottes scriptées), F3.5 (=R3b), écran de butin, F5 |
+| **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 FAITS** (par pas · tables/biomes · mines gardées · GROTTES SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste F3.5 (=R3b), écran de butin, F5 (perks d'usage) |
 | **Contenu manquant** : fin de partie (M11) | ❌ |
 
-> Vérif à chaque pas : **typecheck · ~227 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~229 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 

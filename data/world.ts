@@ -122,7 +122,6 @@ export const config = {
   //     (converti en tics par la sim) ; tout l'aléa via le RNG à graine de l'hôte. ---
   combat: {
     fightChance: 0.2, // FIGHT_CHANCE d'ADR : tirage PAR PAS de déplacement (M8.5/F1 — plus de minuterie)
-    caveFightChance: 0.3, // sous terre : un peu plus dense (INTÉRIM avant les grottes scriptées F3.2)
     fightDelaySteps: 3, // FIGHT_DELAY d'ADR : jamais de combat avant le 4ᵉ pas après le précédent
     stepUnits: 12, // 1 « pas » ADR = 1 cellule = 12 unités-monde parcourues (podomètre client)
     maxStepsPerAction: 10, // borne anti-abus d'une action STEPS (réseau)
@@ -249,11 +248,17 @@ export const enemies: EnemyDef[] = [
     loot: [["cloth", 0.8, 5, 10], ["bullets", 0.5, 1, 5], ["rifle", 0.2, 1, 1], ["medicine", 0.1, 1, 2]] },
   { id: "sniper", name: "sniper", hp: 30, damage: 15, hit: 0.8, strikeSeconds: 4, tier: 3, terrain: "field", ranged: true, model: "humanoid",
     loot: [["cloth", 0.8, 5, 10], ["bullets", 0.5, 1, 5], ["rifle", 0.2, 1, 1], ["medicine", 0.1, 1, 2]] },
-  // --- Tier 4 : CAVERNES (INTÉRIM avant F3.2 — stats des bêtes de grotte de setpieces.js) ---
-  { id: "cave lizard", name: "lézard des cavernes", hp: 6, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 4, terrain: "cave", ranged: false, model: "lizard",
-    loot: [["scales", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] },
-  { id: "snarling beast cave", name: "bête grognante", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 4, terrain: "cave", ranged: false, model: "beast",
-    loot: [["fur", 1.0, 1, 3], ["teeth", 0.8, 1, 5]] },
+  // --- SETPIECE grotte (M8.5/F3.2 — setpieces.js EXACT ; jamais tirés au hasard) ---
+  { id: "cave beast", name: "bête des cavernes", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 0, terrain: "none", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 1, 10], ["teeth", 0.8, 1, 5]] }, // scène a1
+  { id: "cave beast lesser", name: "bête des cavernes", hp: 5, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 0, terrain: "none", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] }, // scène b3
+  { id: "cave lizard", name: "lézard des cavernes", hp: 6, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "lizard",
+    loot: [["scales", 1.0, 1, 3], ["teeth", 0.8, 1, 2]] }, // scène b4
+  { id: "large beast", name: "grosse bête", hp: 10, damage: 3, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "beast",
+    loot: [["fur", 1.0, 1, 3], ["teeth", 1.0, 1, 3]] }, // scène c1
+  { id: "giant lizard", name: "lézard géant", hp: 10, damage: 4, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "lizard",
+    loot: [["scales", 1.0, 1, 3], ["teeth", 1.0, 1, 3]] }, // scène c2
   // --- Tier 0 : GARDIENS DE MINES (setpieces.js EXACT — jamais tirés au hasard) ---
   { id: "beastly matriarch", name: "matriarche bestiale", hp: 10, damage: 4, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "beast",
     loot: [["teeth", 1.0, 5, 10], ["scales", 0.8, 5, 10], ["cloth", 0.5, 5, 10]] },
@@ -300,7 +305,7 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
   "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
   medicine: "rare", // butin de l'homme grelottant (M8) ; consommée par USE_MEDS (M10)
-  grenade: "rare", bayonet: "rare", "laser rifle": "rare", // armes de troc / butin (M10/M8.5)
+  grenade: "rare", bayonet: "rare", "laser rifle": "rare", bolas: "rare", // armes de troc / butin
   // Upgrades d'atelier (M10) : possessions de l'ENTREPÔT (max 1 — la rareté importe peu).
   waterskin: "rare", cask: "rare", "water tank": "rare", rucksack: "rare", wagon: "rare", convoy: "rare",
   "l armour": "rare", "i armour": "rare", "s armour": "rare",
@@ -754,7 +759,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   rucksack: "sac de cuir", wagon: "chariot", convoy: "convoi",
   "l armour": "armure de cuir", "i armour": "armure de fer", "s armour": "armure d'acier",
   "iron sword": "épée de fer", "steel sword": "épée d'acier", rifle: "fusil",
-  grenade: "grenade", bayonet: "baïonnette", "laser rifle": "fusil laser",
+  grenade: "grenade", bayonet: "baïonnette", "laser rifle": "fusil laser", bolas: "bolas",
 };
 
 // Table de butin des pièges, portée d'A Dark Room (seuils cumulés). Tirage via le RNG

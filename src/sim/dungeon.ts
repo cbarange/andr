@@ -7,7 +7,7 @@
 //  Voir docs/mines-grottes-implementation.md (étape S1) & mines-grottes-souterrains.md.
 // ============================================================================
 
-import { createRng, nextFloat, nextInt } from "./rng";
+import { createRng, nextFloat, nextInt, type RngState } from "./rng";
 
 /** Nature d'un nœud du graphe de donjon (matérialise les « recoins » d'ADR). */
 export type NodeKind = "entry" | "junction" | "chamber" | "deadend" | "deep";
@@ -60,16 +60,6 @@ function dungeonSeed(type: string, cx: number, cz: number, worldSeed: number): n
   h ^= h >>> 16;
   return h >>> 0;
 }
-
-/** Table de butin d'une grotte : [ressource, min, max] (tirage borné, déterministe). */
-const CAVE_LOOT: Array<[string, number, number]> = [
-  ["fur", 2, 5],
-  ["meat", 1, 4],
-  ["leather", 1, 3],
-  ["teeth", 1, 3],
-  ["scales", 1, 2],
-  ["cloth", 1, 2],
-];
 
 /**
  * Génère le donjon d'un site, PUR & déterministe.
@@ -135,27 +125,81 @@ export function dungeonFor(type: string, cx: number, cz: number, worldSeed: numb
     return { type, nodes, segments };
   }
 
-  // --- GROTTE : carrefour + plusieurs branches (le choix gauche/droite d'ADR). ---
+  // --- GROTTE (M8.5/F3.2) : le SETPIECE d'ADR (setpieces.js `cave`, poids et butins EXACTS),
+  //     adapté à l'exploration physique. Le CHEMIN (a -> b -> c -> end) est tiré à la graine :
+  //     les COMBATS/GATES deviennent la séquence `caveSteps` (progression type « gardiens »),
+  //     les scènes de BUTIN deviennent des nœuds 3D ramassables ; la FIN (end1/2/3) est un nœud
+  //     gaté par la séquence. Tout l'aléa est consommé dans un ORDRE FIXE -> déterministe. ---
+  const path = rollCavePath(rng);
   nodes.push({ id: "j0", kind: "junction", depth: 1, pos: { x: 0, z: -8 }, loot: {} });
   segments.push({ from: "entry", to: "j0" });
-  const branches = 2 + nextInt(rng, 2); // 2..3 branches
-  for (let b = 0; b < branches; b++) {
-    const ang = (b / Math.max(1, branches - 1)) * Math.PI - Math.PI / 2; // éventail
-    const x = Math.cos(ang) * 10;
-    const z = -12 - Math.abs(Math.sin(ang)) * 6;
-    const isChamber = nextFloat(rng) < 0.7; // 70 % chambre à butin, sinon cul-de-sac
-    const loot: Record<string, number> = {};
-    if (isChamber) {
-      const picks = 1 + nextInt(rng, 2); // 1..2 ressources
-      for (let p = 0; p < picks; p++) {
-        const [res, lo, hi] = CAVE_LOOT[nextInt(rng, CAVE_LOOT.length)];
-        loot[res] = (loot[res] ?? 0) + lo + nextInt(rng, hi - lo + 1);
-      }
-    }
-    nodes.push({ id: "b" + b, kind: isChamber ? "chamber" : "deadend", depth: 2, pos: { x, z }, loot });
-    segments.push({ from: "j0", to: "b" + b });
+  let prev = "j0";
+  if (path.campLoot) {
+    nodes.push({ id: "camp", kind: "chamber", depth: 1, pos: { x: 3 + nextFloat(rng) * 2, z: -11 }, loot: path.campLoot });
+    segments.push({ from: prev, to: "camp" });
   }
+  if (path.wandererLoot) {
+    nodes.push({ id: "wanderer", kind: "chamber", depth: 2, pos: { x: -3 - nextFloat(rng) * 2, z: -17 }, loot: path.wandererLoot });
+    segments.push({ from: prev, to: "wanderer" });
+    prev = "wanderer";
+  }
+  nodes.push({ id: "end", kind: "chamber", depth: 3, pos: { x: (nextFloat(rng) - 0.5) * 4, z: -26 }, loot: path.endLoot });
+  segments.push({ from: prev, to: "end" });
   return { type, nodes, segments };
+}
+
+/** Une étape de PROGRESSION d'une grotte : un combat scripté, ou la torche qui s'éteint (gate). */
+export type CaveStep = { kind: "fight"; enemyId: string } | { kind: "gate" };
+
+/** Tire le CHEMIN du setpiece grotte (poids ADR exacts) + ses butins. Consomme le RNG en ordre fixe. */
+function rollCavePath(rng: RngState): {
+  steps: CaveStep[];
+  campLoot: Record<string, number> | null;
+  wandererLoot: Record<string, number> | null;
+  endLoot: Record<string, number>;
+} {
+  const roll = (table: Array<[string, number, number, number]>): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const [res, chance, min, max] of table) {
+      if (nextFloat(rng) >= chance) continue;
+      out[res] = (out[res] ?? 0) + min + nextInt(rng, Math.max(1, max - min));
+    }
+    return out;
+  };
+  const steps: CaveStep[] = [];
+  let campLoot: Record<string, number> | null = null;
+  let wandererLoot: Record<string, number> | null = null;
+  // A : 30 % combat (a1) / 30 % boyau (a2) / 40 % vieux camp (a3).
+  const rA = nextFloat(rng);
+  const A = rA < 0.3 ? "a1" : rA < 0.6 ? "a2" : "a3";
+  if (A === "a1") steps.push({ kind: "fight", enemyId: "cave beast" });
+  if (A === "a3") campLoot = roll([["cured meat", 1.0, 1, 5], ["torch", 0.5, 1, 5], ["leather", 0.3, 1, 5]]);
+  // B (selon A) : b1 cadavre de wanderer / b2 « la torche s'éteint » / b3 combat bête / b4 combat lézard.
+  const rB = nextFloat(rng);
+  const B = A === "a1" ? (rB < 0.5 ? "b1" : "b2") : A === "a2" ? (rB < 0.5 ? "b2" : "b3") : rB < 0.5 ? "b3" : "b4";
+  if (B === "b1") wandererLoot = roll([["iron sword", 1.0, 1, 1], ["cured meat", 0.8, 1, 5], ["torch", 0.5, 1, 3], ["medicine", 0.1, 1, 2]]);
+  if (B === "b2") steps.push({ kind: "gate" });
+  if (B === "b3") steps.push({ kind: "fight", enemyId: "cave beast lesser" });
+  if (B === "b4") steps.push({ kind: "fight", enemyId: "cave lizard" });
+  // C : b1/b2 -> grosse bête (c1) ; b3/b4 -> lézard géant (c2).
+  const C = B === "b1" || B === "b2" ? "c1" : "c2";
+  steps.push({ kind: "fight", enemyId: C === "c1" ? "large beast" : "giant lizard" });
+  // FIN : c1 -> 50 % end1/end2 ; c2 -> 70 % end2 / 30 % end3.
+  const rE = nextFloat(rng);
+  const END = C === "c1" ? (rE < 0.5 ? "end1" : "end2") : rE < 0.7 ? "end2" : "end3";
+  const endLoot =
+    END === "end1"
+      ? roll([["meat", 1.0, 5, 10], ["fur", 1.0, 5, 10], ["scales", 1.0, 5, 10], ["teeth", 1.0, 5, 10], ["cloth", 0.5, 5, 10]])
+      : END === "end2"
+        ? roll([["cloth", 1.0, 5, 10], ["leather", 1.0, 5, 10], ["iron", 1.0, 5, 10], ["cured meat", 1.0, 5, 10], ["steel", 0.5, 5, 10], ["bolas", 0.3, 1, 3], ["medicine", 0.15, 1, 4]])
+        : roll([["steel sword", 1.0, 1, 1], ["bolas", 0.5, 1, 3], ["medicine", 0.3, 1, 3]]);
+  return { steps, campLoot, wandererLoot, endLoot };
+}
+
+/** Étapes de PROGRESSION d'une grotte (combats scriptés + gates) — PUR, dérivé de la graine. */
+export function caveSteps(cx: number, cz: number, worldSeed: number): CaveStep[] {
+  const rng = createRng(dungeonSeed("cave", cx, cz, worldSeed));
+  return rollCavePath(rng).steps;
 }
 
 /** Butin d'un nœud précis (lecture pure du donjon généré). {} si inconnu / sans butin. */

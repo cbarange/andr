@@ -185,7 +185,9 @@ export class Interiors {
     const act = this.activeKey ? this.built.get(this.activeKey) : null;
     const distAct = act ? Math.hypot(act.center.x - playerPos.x, act.center.z - playerPos.z) : Infinity;
     if (act) {
-      const wantOn = !hasTorch; // sans torche -> on bloque l'entrée
+      // Sans torche -> on bloque l'ENTRÉE seulement : jamais piégé DEDANS (depuis F3.2, la gate
+      // « la torche s'éteint » peut consommer la dernière torche — la sortie reste libre).
+      const wantOn = !hasTorch && !this.inside;
       if (wantOn !== act.barrierOn) {
         if (wantOn) new PhysicsAggregate(act.barrier, PhysicsShapeType.BOX, { mass: 0 }, this.scene);
         else act.barrier.physicsBody?.dispose();
