@@ -47,7 +47,7 @@ import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter, craftItem, buy, useMeds, withdraw,
+  attack, eatMeat, flee, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon } from "./sim/combat";
@@ -56,7 +56,7 @@ import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
   configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
-  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods,
+  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods, mineGuardians, Biome,
 } from "../data/world";
 import { createOcean } from "./render/ocean";
 
@@ -1007,6 +1007,19 @@ async function boot(): Promise<void> {
       if (state.sites?.[lt.cx + "," + lt.cz]?.taken?.[lt.nodeId]) continue;
       const d = Math.hypot(lt.x - p.x, lt.z - p.z);
       const isFilon = lt.kind === "deep" && lt.siteType.endsWith("mine");
+      // M8.5/F3.1 : le filon est GARDÉ — vaincre la séquence scriptée (matriarche / hommes + chef /
+      // soldats + vétéran) AVANT de pouvoir l'exploiter (fidèle aux setpieces d'ADR).
+      const guardiansLeft = isFilon
+        ? (mineGuardians[lt.siteType]?.length ?? 0) - (state.sites?.[lt.cx + "," + lt.cz]?.guardians ?? 0)
+        : 0;
+      if (isFilon && guardiansLeft > 0) {
+        consider(d, 5.0, () => ({
+          world: new Vector3(lt.x, lt.y + 0.6, lt.z),
+          verb: "affronter le gardien",
+          act: () => emit(engageGuardian(self(), lt.cx, lt.cz, lt.siteType)),
+        }));
+        continue;
+      }
       consider(d, 3.6, () => ({
         world: new Vector3(lt.x, lt.y + 0.6, lt.z),
         verb: isFilon ? "exploiter le filon" : "ramasser",
@@ -1160,6 +1173,7 @@ async function boot(): Promise<void> {
   let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
+  let lastEncSeen: GameState["combat"][string] | null = null; // dernière rencontre vue (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
   let prevOnRoad: boolean | null = null;
   let prevDialogueSig = ""; // signature de l'état dont dépendent les dialogues (resync MP, cf. plus bas)
@@ -1171,11 +1185,20 @@ async function boot(): Promise<void> {
     if (rCells <= worldgen.safeRadiusCells) return 0;
     return rCells <= 16 ? 1 : rCells <= 38 ? 2 : 3;
   }
-  /** Le joueur est-il sur une cellule de ROUTE ? (rencontres raréfiées — R4.) */
+  /** Le joueur est-il sur une cellule de ROUTE ? (= AUCUNE rencontre, fidèle ADR — M8.5.) */
   function onRoadCell(): boolean {
     const cx = Math.round(player.position.x / worldgen.cellSize);
     const cz = Math.round(player.position.z / worldgen.cellSize);
     return !!state.roads[cx + "," + cz];
+  }
+  /** Biome du terrain courant (gating des rencontres, fidèle ADR) ; « cave » sous terre. */
+  function biomeStr(): string {
+    if (interiors.isLocalPlayerInside()) return "cave";
+    const cx = Math.round(player.position.x / worldgen.cellSize);
+    const cz = Math.round(player.position.z / worldgen.cellSize);
+    const b = worldMap.biomeAt(cx, cz);
+    return b === Biome.Forest ? "forest" : b === Biome.Field ? "field" : b === Biome.Barren ? "barrens"
+      : b === Biome.Swamp ? "swamp" : "camp";
   }
   function reflectState(): void {
     // Déblocages (façon ADR) : révèle les craftables atteignables, de façon collante + persistée.
@@ -1368,10 +1391,18 @@ async function boot(): Promise<void> {
     // événement non-modal survenu dehors. La victoire est observée par diff de `winSeq` (robuste à
     // la coalescence de snapshots), AVANT le sync (l'effondrement remplace la fuite par défaut).
     const enc = state.combat[self()] ?? null;
+    if (enc) lastEncSeen = enc; // mémo : sert au toast de victoire (gardien de mine ou non)
     if (sv.winSeq !== prevWinSeq) {
       prevWinSeq = sv.winSeq;
       encounterFx.clear("win");
-      hud.toast("l'ennemi s'effondre — son butin est dans votre sac.");
+      // M8.5/F3.1 : message dédié pour la séquence des gardiens de mine.
+      if (lastEncSeen?.guardianIdx !== undefined && lastEncSeen.siteType) {
+        const total = mineGuardians[lastEncSeen.siteType]?.length ?? 0;
+        if (lastEncSeen.guardianIdx >= total - 1) hud.toast("la mine est sûre — le filon peut être exploité.");
+        else hud.toast("le gardien tombe — d'autres défendent encore les lieux.");
+      } else {
+        hud.toast("l'ennemi s'effondre — son butin est dans votre sac.");
+      }
       audio.playSfx("checkTraps"); // ramassage du butin
     }
     const camYaw = cameraYaw(camera);
@@ -1409,7 +1440,9 @@ async function boot(): Promise<void> {
   const STEP_SECONDS = 0.4; // cadence des pas (footsteps) quand on marche
   let stepAcc = STEP_SECONDS; // démarré « plein » -> 1er pas immédiat au départ
   let simAcc = 0;
-  let encountersPaused = false; // DEBUG (e2e) : gèle les tirages de rencontre (cf. boucle à pas fixe)
+  let encountersPaused = false; // DEBUG (e2e) : bloque l'émission de STEPS (podomètre)
+  let pedoPrev: { x: number; z: number } | null = null; // podomètre (M8.5/F1)
+  let pedoAcc = 0; // distance accumulée vers le prochain « pas » (12 u)
   let transformAcc = 0;
   let snapshotAcc = 0;
   let saveAcc = 0;
@@ -1444,22 +1477,14 @@ async function boot(): Promise<void> {
     const authoritative = !net.connected || net.isHost;
     if (authoritative) {
       simAcc += dtMs;
-      let steps = 0;
-      while (simAcc >= tickMs && steps < 5) {
+      let ticksDone = 0;
+      while (simAcc >= tickMs && ticksDone < 5) {
         state = reduce(state, tick());
         simAcc -= tickMs;
-        steps++;
+        ticksDone++;
       }
-      // DEBUG (e2e) : rencontres en PAUSE -> on repousse les tirages (réappliqué car SET_OUTSIDE ré-arme).
-      if (encountersPaused && steps > 0) {
-        let needs = false;
-        for (const k of Object.keys(state.survival)) if (state.survival[k].encounterRollAt !== Number.MAX_SAFE_INTEGER) { needs = true; break; }
-        if (needs) {
-          const surv = { ...state.survival };
-          for (const k of Object.keys(surv)) surv[k] = { ...surv[k], encounterRollAt: Number.MAX_SAFE_INTEGER };
-          state = { ...state, survival: surv };
-        }
-      }
+      // DEBUG (e2e) : `encountersPaused` bloque l'émission de STEPS (cf. podomètre) — les
+      //               rencontres étant désormais déclenchées PAR PAS, il n'y a rien d'autre à geler.
       if (net.connected) {
         snapshotAcc += dtMs;
         if (snapshotAcc >= snapshotMs) { snapshotAcc = 0; net.broadcastStateSync(snapshot()); }
@@ -1611,6 +1636,26 @@ async function boot(): Promise<void> {
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
     encounterFx.update(dtSec, player.position); // M8 : l'ennemi rôde / fente / retraits animés
+    // M8.5/F1 — PODOMÈTRE : les rencontres se déclenchent PAR PAS de déplacement (1 pas = 1 cellule
+    // = 12 u), fidèle au `checkFight` d'ADR. Immobile = rien ; téléport (saut > 3 u/frame) ignoré.
+    {
+      const px = player.position.x, pz = player.position.z;
+      if (pedoPrev) {
+        const d = Math.hypot(px - pedoPrev.x, pz - pedoPrev.z);
+        const outsideNow = Math.hypot(px, pz) > VILLAGE_RADIUS;
+        if (d < 3 && outsideNow && !encountersPaused && !state.combat[self()]) {
+          pedoAcc += d;
+          if (pedoAcc >= config.combat.stepUnits) {
+            const n = Math.min(config.combat.maxStepsPerAction, Math.floor(pedoAcc / config.combat.stepUnits));
+            pedoAcc -= n * config.combat.stepUnits;
+            emit(steps(self(), n, dangerTier(), biomeStr(), onRoadCell()));
+          }
+        } else if (d >= 3) {
+          pedoAcc = 0; // téléport : on repart proprement
+        }
+      }
+      pedoPrev = { x: px, z: pz };
+    }
     const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
     sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
     player.setTorch(hasTorch, interiors.isLocalPlayerInside());
