@@ -9,22 +9,23 @@
 > *Dernière passe de maintenance : juin 2026 (après Chantier C, M9, routes & sites ; puis **construction
 > visuelle/temporisée + montée de la cabane**, **sentiers dynamiques + dégagement des emprises**, **étiquettes
 > de joueur en P2P** ; puis **M6/M7 : rempart + porte + survie eau/vivres/PV par joueur** ; puis
-> **M8 : combat temps réel fidèle ADR + R3a fouille des forages (alliage)**).*
+> **M8 : combat temps réel fidèle ADR + R3a fouille des forages (alliage)** ; puis **M10 : atelier
+> complet, poste de traite, perks & outfitting**).*
 
 ## En une phrase
 **A Dark Room réimaginé en 3D web native** (Babylon.js + Havok + Trystero), simulation **pure, déterministe,
 host-autoritaire**. L'**Acte I jouable de bout en bout** (feu → construction → population → métiers/chaînes),
 le **village vivant et harmonieux**, un **monde carré exploré** (biomes en régions, vraies bordures, sites
-variés, grottes/mines explorables, routes qui se tissent), la **survie dehors** (M6/M7) et le **combat
-temps réel fidèle ADR** (M8 : rencontres tiérées, armes à cooldown, butin, mort = perte du sac).
-Manquent surtout : **commerce/objets (M10), fin de partie (M11)**.
+variés, grottes/mines explorables, routes qui se tissent), la **survie dehors** (M6/M7), le **combat
+temps réel fidèle ADR** (M8) et l'**économie d'objets complète** (M10 : atelier, armures/armes, poste
+de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l'alliage a déjà sa source.
 
 ## Vérification (tout vert)
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 207 tests de sim/logique (rapide, sans navigateur)
-npm run e2e     # 14 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
+npm run test    # 218 tests de sim/logique (rapide, sans navigateur)
+npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
 
@@ -116,6 +117,22 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   constructrice (torche — room-craft ADR) + verbe **E « fabriquer »** sur l'atelier construit (tous
   les objets, dont la lance d'os).
 
+### Atelier, commerce & perks (M10 — récent) — ✅ FIDÈLE ADR (valeurs du code source)
+- **Objets d'atelier** (recettes Room.Craftables EXACTES) : eau (outre +10 / baril +20 / citerne +50),
+  portage (sac de cuir +10 / chariot +30 / convoi +60), **armures** (cuir 15 / fer 25 / acier 45 PV),
+  armes (épées de fer 4 / d'acier 6, **fusil 5 dég/1 s à 1 balle/tir**). **Sémantique `World.die()`
+  fidèle** : les *upgrades* sont des possessions du VILLAGE (entrepôt — jamais perdues à la mort,
+  persistées, max 1, best-of) ; les *armes* vivent au SAC (perdues à la mort, comme l'outfit d'ADR).
+- **Poste de traite ACTIF** (Room.TradeGoods exact) : fourrure/écailles/dents = monnaies — écailles,
+  dents, fer, charbon, acier, médecine, balles, cellules, **grenade** (arme 15 dég/5 s), **baïonnette**
+  (8 dég/2 s), **alliage** (1500 fourrure + 750 écailles + 300 dents). Verbe « commercer ».
+- **OUTFITTING** (le coffre d'ADR) : E sur le coffre → « tout déposer » + **s'équiper** (`WITHDRAW`,
+  entrepôt → sac : viande séchée, médecine, balles, grenades, torches, appâts).
+- **Perks du village** (événement « le Maître », coût ADR 100 viande + 100 fourrure + 1 torche du sac) :
+  précis +0,1 hit · barbare ×1,5 mêlée · insaisissable ×0,8 hit ennemi. **« L'homme malade »** :
+  1 médecine → tirage pondéré ADR (10 % alliage / 30 % cellules ×3 / 50 % écailles ×5).
+- **Soin** : F = manger (+8) puis médecine (`USE_MEDS`, **+20 PV/7 s** — MEDS_HEAL ADR), caps d'armure.
+
 ### Transverse — ✅
 - **Multijoueur P2P** host-autoritaire (Trystero/WebRTC) : « Ouvrir ma partie » (lien à partager) ; **failover
   par époque** (un hôte silencieux ne fige plus les autres ; heartbeat + Raft-lite) + **STUN** publics ;
@@ -129,8 +146,10 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **M6 (seuil) ✅ · M7 (survie) ✅** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
   du sac, recharge camp) + **ravitaillement aux avant-postes** (`USE_OUTPOST`, usage unique fidèle ADR).
   Reste : fog of war (différé), équilibrage (M12).
-- **M8 (combat) ✅ cœur** — temps réel fidèle ADR (cf. section dédiée). Reste : armes/armures M10
-  (épées, fusil, PV d'armure), perks, audio fin (variations), rendu de l'ennemi d'un pair distant.
+- **M8 (combat) ✅ cœur** — temps réel fidèle ADR. Reste : rendu de l'ennemi d'un pair distant.
+- **M10 (atelier/commerce/perks) ✅** — les 2 derniers bâtiments inertes (atelier, poste de traite)
+  sont VIVANTS ; tiers 2/3 jouables avec armures ; outfitting au coffre. Reste : bolas (stun),
+  boussole (décision ouverte), laser/plasma (butin de cité, M11).
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -155,16 +174,18 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **M10 (atelier complet + commerce + perks)** : armes/armures (rend les tiers 2/3 jouables), poste
-   de traite, perks — la vue « fabriquer » et la station atelier existent déjà (M8).
-2. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire M10) + butin lourd.
-3. **M11 (fin de partie)** : l'alliage a sa source (R3a) — épave → vaisseau → décollage → fin.
-4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact.
+1. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
+   décollage → fin → prestige. Le DERNIER acte manquant.
+2. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin
+   lourd (laser, alliage) — alimente M11.
+3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
+   A6 (refactor main.ts — de plus en plus gros).
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Commerce/fin = absents** ; le **combat existe** (M8) mais : l'ennemi d'un joueur DISTANT n'est pas
-  rendu (sim non-spatiale, v1) ; tier/onRoad déclarés par le client (même confiance que SET_OUTSIDE) ;
-  **tiers 2/3 mortels sans armure** (volontaire, fidèle ADR — M10 les rendra jouables).
+- **Fin de partie = absente** (M11 : seul acte manquant). Combat : l'ennemi d'un joueur DISTANT n'est
+  pas rendu (sim non-spatiale, v1) ; tier/onRoad déclarés par le client (même confiance que SET_OUTSIDE).
+- **Équipement & perks = au VILLAGE** (entrepôt partagé/perks communs — divergence coop assumée,
+  fidèle aux *stores* d'ADR qui est solo) ; bolas/boussole différés.
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;
   entrepôt/village/sites persistent.
 - **Poste de traite & atelier = bâtissables mais sans effet** (commerce/objets = M10).

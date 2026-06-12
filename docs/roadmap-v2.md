@@ -27,9 +27,10 @@
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
-| **Contenu manquant** : commerce/objets (M10) · fin (M11) | ❌ → prochaines priorités |
+| **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
+| **Contenu manquant** : fin de partie (M11) | ❌ → prochaine priorité |
 
-> Vérif à chaque pas : **typecheck · ~207 tests unit · 14 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~218 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -134,9 +135,9 @@ l'avancement :
 | Sites/donjons : **grotte + 3 mines** explorables | ✅ **FAIT** (M9) | — |
 | Sites/donjons : **maison / ville / cité** | 🟡 INERTE (silhouettes) | M9 (reste) |
 | Avant-poste (grotte vidée ⇒ avant-poste, ravitaillement usage unique) | ✅ **FAIT** (M9 rendu + M7 `USE_OUTPOST`) | — |
-| Atelier → objets (torche/outres/sacs/armures/armes) | 🔴/❌ | **M10** |
-| Poste de traite → commerce (fourrure = monnaie) | 🔴/❌ | **M10** |
-| Perks (éclaireur, gastronome, évasion…) + leurs événements | ❌ ABSENT | **M10** |
+| Atelier → objets (torche/outres/sacs/armures/armes) | ✅ **FAIT** (M10, recettes ADR exactes) | — |
+| Poste de traite → commerce (fourrure = monnaie) | ✅ **FAIT** (M10, TradeGoods exact) | — |
+| Perks (précis/barbare/insaisissable via le Maître) + homme malade | ✅ **FAIT** (M10) | éclaireur/voleur… = M12 |
 | Boussole (débloque la carte dans ADR) | ❌ ABSENT | **M10** (rôle à redéfinir, monde unifié) |
 | Cité, borehole, champ de bataille, cache, avant-poste (types de sites) | ❌ ABSENT (worldgen) | **M9/M11** (étendre `sites[]`) |
 | Alliage extraterrestre | ✅ **source ACTIVE** (R3a : forages ; appoint champs de bataille) | sources cité/épave + usage = **M11** |
@@ -442,7 +443,18 @@ Le jalon qui transforme l'**inerte** en jouable **et** rend la branche **morte**
   nettoyée **devient un avant-poste** ; ≥ 2–3 setpieces ; tests sim (butin borné, **2ᵉ ramassage = no-op**,
   mine⇒métier, grotte⇒avant-poste, déterminisme).
 
-### 🛠️ M10 — Atelier (objets) · Poste de traite (commerce) · Perks & événements reportés — **M/L**
+### 🛠️ M10 — Atelier (objets) · Poste de traite (commerce) · Perks & événements reportés — **M/L** — ✅ **FAIT (juin 2026)**
+> **Livré, valeurs du CODE SOURCE ADR vérifiées** (room.js/world.js/path.js/events) : 12 objets
+> d'atelier (recettes exactes ; **upgrades = possessions du village à l'ENTREPÔT**, fidèle
+> `World.die()` — jamais perdues à la mort, max 1, best-of : eau +10/20/50, portage +10/30/60,
+> armures 15/25/45 PV ; **armes au SAC**, perdues à la mort comme l'outfit) ; **fusil** 5 dég/1 s à
+> 1 balle/tir, **grenade** 15/5 s (consommable), **baïonnette** 8/2 s via le troc ; **poste de
+> traite** = Room.TradeGoods exact (jusqu'à l'**alliage** 1500 fourrure) ; **OUTFITTING** au coffre
+> (« tout déposer » + s'équiper, action `WITHDRAW`) ; **perks du village** via « le Maître » (coût
+> exact 100 viande + 100 fourrure + 1 torche du sac, `costCarried`) : précis/barbare/insaisissable
+> (effets exacts events.js) ; « l'homme malade » (tirage pondéré 10/30/50 %) ; `USE_MEDS` +20 PV/7 s.
+> +11 unit, +1 e2e. **Différés** : bolas (stun inexistant), boussole (décision §5), laser/plasma (M11).
+
 Rend **non-inertes** les deux bâtiments morts (atelier, poste de traite) et complète l'arsenal d'événements.
 
 - **Atelier = station d'artisanat** (décision actée, [`build-craft-plan.md`](build-craft-plan.md) Phase 4) :

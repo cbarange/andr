@@ -13,8 +13,9 @@ installation.
 > le projet a désormais : un **monde carré exploré** (biomes en régions, vraies bordures montagnes/océans,
 > ~57 **sites variés**, **grottes/mines explorables**, **routes** qui se tissent), un **village vivant &
 > harmonieux** (placement mathématique, lanternes, ruines, villageois dans les huttes), et de l'**audio**.
-> Manquent surtout : **commerce/objets (M10), fin de partie (M11)** — la **survie** (M6/M7) et le
-> **combat temps réel fidèle ADR** (M8) sont posés. Pour reprendre, lire dans l'ordre :
+> Manque surtout : **la fin de partie (M11)** — survie (M6/M7), **combat temps réel** (M8) et
+> **économie d'objets complète** (M10 : atelier, armures, troc, perks) sont posés, fidèles au code
+> source d'ADR. Pour reprendre, lire dans l'ordre :
 > - **[docs/etat.md](docs/etat.md)** — état d'avancement, ce qui marche, décisions, prochaine étape (**à lire en premier**).
 > - **[docs/roadmap-v2.md](docs/roadmap-v2.md)** — **roadmap des jalons à jour** (tableau de bord, ✅/🟡/🔴/❌).
 > - **[docs/architecture.md](docs/architecture.md)** — architecture technique (carte des fichiers, systèmes, hooks de debug).
@@ -125,7 +126,7 @@ Le code sépare strictement **le cerveau** (simulation pure) du **corps** (rendu
 Principes appliqués (§3 du brief), toujours valables :
 
 1. **Cerveau ≠ corps** — `sim/` n'importe ni Babylon ni le DOM ; il est testé au
-   terminal (`npm run test`, **~207 tests**). Le rendu/UI **lisent** l'état et **émettent**
+   terminal (`npm run test`, **~218 tests**). Le rendu/UI **lisent** l'état et **émettent**
    des actions.
 2. **Piloté par les données** — tout le contenu (bois, positions des arbres, équilibrage)
    vit dans [`data/world.ts`](data/world.ts).
@@ -204,7 +205,7 @@ les décisions notables :
 - ✅ Personnage clavier, gravité, ne traverse ni le sol ni les arbres, saute.
 - ✅ Caméra de suivi 3e personne.
 - ✅ S'approcher d'un arbre + `E` augmente le compteur de bois (UI HTML).
-- ✅ Simulation pure testable : `npm run test` (**~207 tests** aujourd'hui) sans Babylon.
+- ✅ Simulation pure testable : `npm run test` (**~218 tests** aujourd'hui) sans Babylon.
 - ✅ Aucun `Math.random()` dans la logique (RNG à graine + test de replay déterministe).
 - ✅ Architecture P2P + mode 2 joueurs (avatars + bois partagé hôte-autoritaire).
 - ✅ Perf : 60 FPS visés, téléchargement réduit.

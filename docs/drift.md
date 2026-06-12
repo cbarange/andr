@@ -83,6 +83,12 @@ oubliés), l'**outillage dev** (exposé en prod) et la **dette de structure** (m
 >   panneau HUD, musique `encounter-*` routée bus event (fix ducking). **Sain** (+17 unit, +2 e2e).
 >   Hooks `__game` combat (getCombat/startEncounter/attack/…) → renforce #4. `main.ts` a ENCORE grossi
 >   (craftView, watcher triple, bloc rencontre) → **A6 de plus en plus pressant**.
+> - **M10 atelier/commerce/perks (juin 2026)** : `GameState.perks` (PERSISTÉ, partagé village) +
+>   `PlayerSurvival.medsReadyAt` ; **caps dynamiques lisant l'ENTREPÔT** (`maxWaterOf`/`maxHealthOf`/
+>   `carryCapacity` étendu — fidèle aux *stores* d'ADR, signatures inchangées) ; actions BUY/USE_MEDS/
+>   WITHDRAW ; `EventChoice.costCarried` + `EventEffect.grantPerk` (EffectDraft.perks, 4 inits) ;
+>   munitions consommées du sac par tir. **Sain** (+11 unit, +1 e2e). UI : tradeView/chestView dans
+>   main.ts → **A6 toujours plus pressant** (~2000 l.).
 > - **Toujours valable** : #4 (outils dev en prod, différé), #7 (`main.ts` god-object — a encore grossi),
 >   #8 (bâtiments merge+instance, différé), #9 (allocations par frame — `Vector3`/`JSON.stringify`/listes reconstruites).
 
