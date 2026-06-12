@@ -174,11 +174,15 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
+1. **M8.5 — FIDÉLITÉ combat & lieux** (retour de test du porteur : « trop éloigné de l'original ») :
+   audit du code source ADR fait → **[`analyse-combat-adr.md`](analyse-combat-adr.md)** (écarts E1–E9
+   priorisés + plan F1–F5). Les plus gros : déclenchement par PAS (pas par temps), combats SCRIPTÉS
+   aux lieux (mines gardées, grottes, maisons), tables exactes par biome, pas de bouton fuir.
+2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
-2. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin
-   lourd (laser, alliage) — alimente M11.
-3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
+3. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin
+   lourd (laser, alliage) — alimente M11 **et M8.5-F3.5** (graphes de scènes ADR documentés).
+4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
    A6 (refactor main.ts — de plus en plus gros).
 
 ## Limitations connues / quirks (à savoir avant de coder)
