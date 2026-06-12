@@ -39,7 +39,7 @@ import { NetRoom } from "./net/room";
 import type { StateSyncMsg } from "./net/messages";
 
 import {
-  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, type GameState,
+  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, maxWaterOf, maxHealthOf, stockOf, type GameState,
 } from "./sim/state";
 import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
@@ -47,7 +47,7 @@ import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter, craftItem,
+  attack, eatMeat, flee, debugStartEncounter, craftItem, buy, useMeds, withdraw,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon } from "./sim/combat";
@@ -56,7 +56,7 @@ import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
   configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
-  enemyById, weaponById, craftableItems,
+  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods,
 } from "../data/world";
 import { createOcean } from "./render/ocean";
 
@@ -73,8 +73,9 @@ import { SpawnEditor } from "./dev/spawnEditor";
 // Ordre d'affichage des ressources dans le sac.
 const BAG_ORDER = [
   "wood", "fur", "meat", "cured meat", "leather", "scales", "teeth", "cloth",
-  "charm", "bait", "iron", "coal", "sulphur", "steel", "bullets",
+  "charm", "bait", "iron", "coal", "sulphur", "steel", "bullets", "medicine",
   "alien alloy", "energy cell", "torch", // butin R3 + outil M9 (sinon invisibles dans le sac)
+  "bone spear", "iron sword", "steel sword", "bayonet", "rifle", "grenade", // armes M8/M10 (outfit)
 ];
 
 declare global {
@@ -94,6 +95,11 @@ declare global {
       getSurvival?: () => { water: number; food: number; health: number; outside: boolean; deathSeq: number; winSeq: number; tier: number };
       setSurvival?: (vals: { water?: number; food?: number; health?: number }) => void;
       getCombat?: () => { enemyId: string; enemyHp: number; seq: number } | null;
+      getMaxes?: () => { water: number; health: number; carry: number };
+      craft?: (itemId: string) => void;
+      buy?: (goodId: string) => void;
+      useMeds?: () => void;
+      withdraw?: (resource: string, amount?: number) => void;
       startEncounter?: (enemyId?: string, enemyHp?: number) => void;
       attack?: (weapon?: string) => void;
       eatMeat?: () => void;
@@ -655,22 +661,25 @@ async function boot(): Promise<void> {
     );
     const room = carryCapacity(state) - carriedTotal(state, self()) > 0;
     const choices: DialogueChoice[] = items.map((it) => {
+      const isUpgrade = it.type === "upgrade"; // M10 : possession du village -> entrepôt, max 1
+      const owned = isUpgrade && it.maximum !== undefined && stockOf(state, it.id) >= it.maximum;
+      const needsRoom = !isUpgrade && !room; // un upgrade ne prend pas de place de sac
       const missing = Object.keys(it.recipe)
         .map((r) => ({ r, lack: it.recipe[r] - Math.floor(state.resources[r] ?? 0) }))
         .filter((m) => m.lack > 0);
       return {
         label: it.name,
-        sublabel: Object.keys(it.recipe).map((r) => `${it.recipe[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
-        tooltip: !room
+        sublabel: owned ? "déjà possédé" : Object.keys(it.recipe).map((r) => `${it.recipe[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
+        tooltip: needsRoom
           ? "sac plein"
-          : missing.length
+          : missing.length && !owned
             ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
             : undefined,
-        enabled: missing.length === 0 && room,
+        enabled: !owned && missing.length === 0 && !needsRoom,
         onSelect: () => {
           emit(craftItem(self(), it.id));
           audio.playSfx("deposit");
-          hud.toast(`${it.name} — dans votre sac.`);
+          hud.toast(isUpgrade ? `${it.name} — le village s'équipe.` : `${it.name} — dans votre sac.`);
           refreshDialogue();
         },
       };
@@ -683,6 +692,61 @@ async function boot(): Promise<void> {
   }
   const craftViewBuilder = (): DialogueView => craftView(false);
   const craftViewWorkshop = (): DialogueView => craftView(true);
+
+  // M10 — POSTE DE TRAITE : vue de commerce (Room.TradeGoods d'ADR — coûts exacts, fourrure/
+  // écailles/dents = monnaies). Achats payés à l'ENTREPÔT, gains à l'ENTREPÔT (guards sim BUY).
+  function tradeView(): DialogueView {
+    const choices: DialogueChoice[] = tradeGoods.map((g) => {
+      const missing = Object.keys(g.cost)
+        .map((r) => ({ r, lack: g.cost[r] - Math.floor(state.resources[r] ?? 0) }))
+        .filter((m) => m.lack > 0);
+      return {
+        label: RESOURCE_LABELS[g.id] ?? g.id,
+        sublabel: Object.keys(g.cost).map((r) => `${g.cost[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
+        tooltip: missing.length
+          ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
+          : undefined,
+        enabled: missing.length === 0,
+        onSelect: () => { emit(buy(self(), g.id)); audio.playSfx("buy"); refreshDialogue(); },
+      };
+    });
+    return {
+      speaker: "le poste de traite",
+      text: "les étals sont garnis. la fourrure fait foi.",
+      choices: [...choices, { label: "(fermer)", enabled: true, onSelect: closeInteractive }],
+    };
+  }
+  const tradeViewRef = (): DialogueView => tradeView();
+
+  // M10 — COFFRE : « tout déposer » + S'ÉQUIPER (l'outfitting d'ADR : retirer des consommables
+  // d'expédition de l'entrepôt vers le sac — action WITHDRAW bornée par stock & capacité).
+  const OUTFIT_IDS = ["cured meat", "medicine", "bullets", "grenade", "torch", "bait"];
+  function chestView(): DialogueView {
+    const total = Math.floor(carriedTotal(state, self()));
+    const cap = carryCapacity(state);
+    const steppers: DialogueStepper[] = OUTFIT_IDS
+      .filter((id) => stockOf(state, id) > 0 || carriedOf(state, self(), id) > 0)
+      .map((id) => ({
+        label: RESOURCE_LABELS[id] ?? id,
+        value: `${Math.floor(carriedOf(state, self(), id))}`,
+        sublabel: `entrepôt : ${Math.floor(stockOf(state, id))}`,
+        canDec: false, // re-déposer = « tout déposer » (DEPOSIT vide le sac entier)
+        canInc: stockOf(state, id) > 0 && total < cap,
+        onDec: () => {},
+        onInc: () => { emit(withdraw(self(), id, 1)); refreshDialogue(); },
+      }));
+    return {
+      speaker: "le coffre",
+      text: `votre sac : ${total}/${cap}. prendre des vivres pour la route, ou tout déposer.`,
+      steppers,
+      choices: [
+        { label: "tout déposer", sublabel: total > 0 ? `${total} au total` : "(sac vide)", enabled: total > 0,
+          onSelect: () => { depositAtChest(); refreshDialogue(); } },
+        { label: "(fermer)", enabled: true, onSelect: closeInteractive },
+      ],
+    };
+  }
+  const chestViewRef = (): DialogueView => chestView();
 
   function formatStores(stores: Record<string, number>): string {
     return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
@@ -874,6 +938,16 @@ async function boot(): Promise<void> {
         }));
       }
     }
+    // M10 — POSTE DE TRAITE construit : commerce (« commercer » : Room.TradeGoods d'ADR).
+    if ((state.buildings["trading post"] ?? 0) > 0) {
+      for (const tp of village.getBuildingPositions("trading post")) {
+        consider(Math.hypot(tp.x - p.x, tp.z - p.z), config.cabinRange, () => ({
+          world: new Vector3(tp.x, terrainHeight(tp.x, tp.z) + 2.4, tp.z),
+          verb: "commercer",
+          act: () => showDialogue(tradeViewRef),
+        }));
+      }
+    }
 
     // Feu (centre).
     consider(Math.hypot(p.x, p.z), config.fire.interactRange, () => ({
@@ -894,7 +968,7 @@ async function boot(): Promise<void> {
     if (cabin.isRepaired) {
       const c = cabin.chestPosition;
       consider(Math.hypot(c.x - p.x, c.z - p.z), config.cabinRange, () => ({
-        world: new Vector3(c.x, c.y + 1.2, c.z), verb: "déposer", act: depositAtChest,
+        world: new Vector3(c.x, c.y + 1.2, c.z), verb: "ouvrir le coffre", act: () => showDialogue(chestViewRef),
       }));
       const b = cabin.boardPosition;
       consider(Math.hypot(b.x - p.x, b.z - p.z), config.cabinRange, () => ({
@@ -1122,8 +1196,12 @@ async function boot(): Promise<void> {
     // Survie (M6/M7) : jauges eau/vivres/PV (fractions) + observation de la MORT (téléport au camp).
     const sv = survivalOf(state, self());
     const SU = config.survival;
-    hud.setSurvival(sv.water / SU.maxWater, sv.food / SU.maxFood, sv.health / SU.maxHealth);
-    hud.setEatHint(carriedOf(state, self(), "cured meat") > 0 && sv.health < SU.maxHealth); // F : manger (M8)
+    const capW = maxWaterOf(state); // M10 : caps d'équipement (outre/armure de l'entrepôt)
+    const capHp = maxHealthOf(state);
+    hud.setSurvival(sv.water / capW, sv.food / SU.maxFood, sv.health / capHp);
+    hud.setEatHint(
+      (carriedOf(state, self(), "cured meat") > 0 || carriedOf(state, self(), "medicine") > 0) && sv.health < capHp,
+    ); // F : manger / se soigner (M8/M10)
     if (sv.deathSeq !== prevDeathSeq) {
       prevDeathSeq = sv.deathSeq;
       encounterFx.clear("death"); // si on est tombé au combat, l'ennemi disparaît
@@ -1425,12 +1503,16 @@ async function boot(): Promise<void> {
       if (currentFocus) currentFocus.act();
       else chopWildTree();
     }
-    // M8 — F : MANGER une viande séchée (+PV). Guard local lisible (la sim re-vérifie tout).
+    // M8/M10 — F : MANGER une viande séchée, sinon SE SOIGNER (médecine). La sim re-vérifie tout.
     if (!uiOpen && input.consumeEat()) {
       const svNow = survivalOf(state, self());
-      if (carriedOf(state, self(), "cured meat") > 0 && svNow.health < config.survival.maxHealth && state.tick >= svNow.eatReadyAt) {
+      const capHpNow = maxHealthOf(state);
+      if (carriedOf(state, self(), "cured meat") > 0 && svNow.health < capHpNow && state.tick >= svNow.eatReadyAt) {
         emit(eatMeat(self()));
         audio.playSfx("eatMeat");
+      } else if (carriedOf(state, self(), "medicine") > 0 && svNow.health < capHpNow && state.tick >= svNow.medsReadyAt) {
+        emit(useMeds(self()));
+        audio.playSfx("useMeds");
       }
     }
 
@@ -1624,6 +1706,11 @@ async function boot(): Promise<void> {
     getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq, winSeq: s.winSeq, tier: s.tier }; },
     setSurvival: (vals: { water?: number; food?: number; health?: number }) => emit(debugSetSurvival(self(), vals)),
     getCombat: () => { const c = state.combat[self()]; return c ? { enemyId: c.enemyId, enemyHp: c.enemyHp, seq: c.seq } : null; },
+    getMaxes: () => ({ water: maxWaterOf(state), health: maxHealthOf(state), carry: carryCapacity(state) }),
+    craft: (itemId: string) => emit(craftItem(self(), itemId)),
+    buy: (goodId: string) => emit(buy(self(), goodId)),
+    useMeds: () => emit(useMeds(self())),
+    withdraw: (resource: string, amount = 1) => emit(withdraw(self(), resource, amount)),
     startEncounter: (enemyId?: string, enemyHp?: number) => emit(debugStartEncounter(self(), enemyId, enemyHp)),
     attack: (weapon = "fists") => emit(attack(self(), weapon)),
     eatMeat: () => emit(eatMeat(self())),

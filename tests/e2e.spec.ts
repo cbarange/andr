@@ -568,3 +568,45 @@ test("M8 — combat : mourir face à l'ennemi renvoie au camp en vidant le sac",
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
+
+// M10 — ATELIER & POSTE DE TRAITE : fabriquer une armure de cuir (upgrade -> ENTREPÔT, PV max 15),
+// acheter écailles puis balles au poste de traite (coûts ADR), s'équiper au coffre (WITHDRAW).
+test("M10 — atelier (armure -> 15 PV), troc ADR et équipement au coffre", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.evaluate(() => window.__game?.pauseEncounters?.());
+  await page.waitForTimeout(600);
+
+  // Tout débloquer (atelier + poste de traite construits) + fournir l'entrepôt.
+  await page.evaluate(() => {
+    window.__game?.cmd?.("/unlock");
+    window.__game?.cmd?.("/set storage leather 250");
+    window.__game?.cmd?.("/set storage scales 40");
+    window.__game?.cmd?.("/set storage fur 200");
+  });
+
+  // 1) ARMURE DE CUIR à l'atelier (200 cuir + 20 écailles) : upgrade -> ENTREPÔT, PV max 10 -> 15.
+  expect((await page.evaluate(() => window.__game?.getMaxes?.()))?.health).toBe(10);
+  await page.evaluate(() => window.__game?.craft?.("l armour"));
+  await expect.poll(() => page.evaluate(() => window.__game?.getMaxes?.()?.health)).toBe(15);
+  await expect.poll(() => stored(page, "l armour")).toBe(1); // possession du village (entrepôt)
+  await page.evaluate(() => window.__game?.craft?.("l armour")); // max 1 -> no-op
+  await expect.poll(() => stored(page, "l armour")).toBe(1);
+
+  // 2) TROC ADR : 150 fourrure -> 1 écaille ; 10 écailles -> 1 balle.
+  const scales0 = await stored(page, "scales");
+  await page.evaluate(() => window.__game?.buy?.("scales"));
+  await expect.poll(() => stored(page, "scales")).toBe(scales0 + 1);
+  await page.evaluate(() => window.__game?.buy?.("bullets"));
+  await expect.poll(() => stored(page, "bullets")).toBeGreaterThanOrEqual(1);
+
+  // 3) S'ÉQUIPER au coffre (l'outfitting d'ADR) : 1 balle de l'entrepôt vers le sac.
+  await page.evaluate(() => window.__game?.withdraw?.("bullets", 1));
+  await expect.poll(() => carried(page, "bullets")).toBe(1);
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});
