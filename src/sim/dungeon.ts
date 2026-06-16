@@ -112,6 +112,23 @@ export function dungeonFor(type: string, cx: number, cz: number, worldSeed: numb
     return { type, nodes, segments };
   }
 
+  if (type === "town" || type === "city") {
+    // --- VILLE/CITÉ (R3b) : séquence scriptée jouée PARMI les ruines (surface). Les butins
+    //     intermédiaires + la FIN (gatée par les étapes) deviennent des nœuds 3D. ---
+    const path = type === "town" ? rollTownPath(rng) : rollCityPath(rng);
+    path.lootNodes.forEach((loot, i) => {
+      if (Object.keys(loot).length === 0) return;
+      const ang = nextFloat(rng) * Math.PI * 2;
+      const rr = 5 + nextFloat(rng) * 5;
+      nodes.push({ id: "l" + i, kind: "chamber", depth: 0, pos: { x: Math.cos(ang) * rr, z: Math.sin(ang) * rr }, loot });
+      segments.push({ from: "entry", to: "l" + i });
+    });
+    const ang = nextFloat(rng) * Math.PI * 2;
+    nodes.push({ id: "end", kind: "chamber", depth: 1, pos: { x: Math.cos(ang) * 8, z: Math.sin(ang) * 8 }, loot: path.endLoot });
+    segments.push({ from: "entry", to: "end" });
+    return { type, nodes, segments };
+  }
+
   const ore = MINE_ORE[type];
   if (ore) {
     // --- MINE : descente courte, orientée vers UN filon. ---
@@ -148,8 +165,9 @@ export function dungeonFor(type: string, cx: number, cz: number, worldSeed: numb
   return { type, nodes, segments };
 }
 
-/** Une étape de PROGRESSION d'une grotte : un combat scripté, ou la torche qui s'éteint (gate). */
-export type CaveStep = { kind: "fight"; enemyId: string } | { kind: "gate" };
+/** Une étape de PROGRESSION scriptée : un combat (parfois SANS échappatoire — combats forcés des
+ *  hôpitaux de cité, boss de mines), ou une gate « torche » (continuer coûte 1 torche). */
+export type CaveStep = { kind: "fight"; enemyId: string; noFlee?: boolean } | { kind: "gate" };
 
 /** Tire le CHEMIN du setpiece grotte (poids ADR exacts) + ses butins. Consomme le RNG en ordre fixe. */
 function rollCavePath(rng: RngState): {
@@ -200,6 +218,108 @@ function rollCavePath(rng: RngState): {
 export function caveSteps(cx: number, cz: number, worldSeed: number): CaveStep[] {
   const rng = createRng(dungeonSeed("cave", cx, cz, worldSeed));
   return rollCavePath(rng).steps;
+}
+
+// ============================================================================
+//  M8.5/R3b — VILLES & CITÉS : les setpieces `town` (18 scènes) et `city` (~33 scènes) d'ADR,
+//  CONDENSÉS en branches linéaires (poids de branche, ennemis, gates torche, butins et FINS
+//  exacts — cf. docs/analyse-combat-adr.md annexe B). Adaptation « surface » : la séquence se
+//  joue PARMI les ruines déjà modélisées (pas d'intérieur), butins = objets 3D, fin gatée.
+// ============================================================================
+
+type RolledPath = { steps: CaveStep[]; lootNodes: Array<Record<string, number>>; endLoot: Record<string, number> };
+
+function rollLootTable(rng: RngState, table: Array<[string, number, number, number]>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [res, chance, min, max] of table) {
+    if (nextFloat(rng) >= chance) continue;
+    out[res] = (out[res] ?? 0) + min + nextInt(rng, Math.max(1, max - min));
+  }
+  return out;
+}
+
+/** VILLE : 30 % école (torche) / 30 % rue (embuscade) / 40 % clinique (torche). */
+function rollTownPath(rng: RngState): RolledPath {
+  const steps: CaveStep[] = [];
+  const lootNodes: Array<Record<string, number>> = [];
+  let endLoot: Record<string, number> = {};
+  const r = nextFloat(rng);
+  if (r < 0.3) {
+    // ÉCOLE (a1, torche) : casier -> charognard -> voyou -> charognard armé -> camp/réserve.
+    steps.push({ kind: "gate" });
+    if (nextFloat(rng) < 0.5) lootNodes.push(rollLootTable(rng, [["cured meat", 1.0, 1, 5], ["torch", 0.8, 1, 3], ["bullets", 0.3, 1, 5], ["medicine", 0.05, 1, 3]]));
+    else steps.push({ kind: "fight", enemyId: "scavenger" });
+    steps.push({ kind: "fight", enemyId: "thug" });
+    steps.push({ kind: "fight", enemyId: "town scavenger" });
+    endLoot = nextFloat(rng) < 0.5
+      ? rollLootTable(rng, [["steel sword", 1.0, 1, 1], ["steel", 1.0, 5, 10], ["cured meat", 1.0, 5, 10], ["bolas", 0.5, 1, 5], ["medicine", 0.3, 1, 2]])
+      : rollLootTable(rng, [["coal", 1.0, 5, 10], ["cured meat", 1.0, 5, 10], ["leather", 1.0, 5, 10]]);
+  } else if (r < 0.6) {
+    // RUE (a2) : voyou -> bête OU caravane -> bête féroce -> justicier -> FUSIL garanti / réserve.
+    steps.push({ kind: "fight", enemyId: "thug" });
+    if (nextFloat(rng) < 0.5) steps.push({ kind: "fight", enemyId: "town beast" });
+    else lootNodes.push(rollLootTable(rng, [["cured meat", 0.8, 1, 5], ["torch", 0.5, 1, 3], ["bullets", 0.3, 1, 5], ["medicine", 0.1, 1, 3]]));
+    steps.push({ kind: "fight", enemyId: "town beast fierce" });
+    steps.push({ kind: "fight", enemyId: "vigilante" });
+    endLoot = nextFloat(rng) < 0.5
+      ? rollLootTable(rng, [["rifle", 1.0, 1, 1], ["bullets", 1.0, 1, 5]])
+      : rollLootTable(rng, [["cured meat", 1.0, 5, 10], ["iron", 1.0, 5, 10], ["torch", 1.0, 1, 5], ["bolas", 0.5, 1, 5], ["medicine", 0.1, 1, 2]]);
+  } else {
+    // CLINIQUE (a3, torche) : le fou furieux -> 30 % tiroirs à médecine / 70 % clinique pillée.
+    steps.push({ kind: "gate" });
+    steps.push({ kind: "fight", enemyId: "madman" });
+    endLoot = nextFloat(rng) < 0.3 ? rollLootTable(rng, [["medicine", 1.0, 2, 5]]) : {};
+  }
+  return { steps, lootNodes, endLoot };
+}
+
+/** CITÉ : 20 % rues / 30 % périmètre militaire / 30 % bidonville / 20 % hôpital (torche). */
+function rollCityPath(rng: RngState): RolledPath {
+  const steps: CaveStep[] = [];
+  const lootNodes: Array<Record<string, number>> = [];
+  let endLoot: Record<string, number> = {};
+  const r = nextFloat(rng);
+  if (r < 0.2) {
+    // RUES/TOUR : lézard -> gravats -> oiseau charognard OU nuée de rats -> nid / cache.
+    steps.push({ kind: "fight", enemyId: "huge lizard" });
+    lootNodes.push(rollLootTable(rng, [["bullets", 0.5, 1, 5], ["steel", 0.8, 1, 10], ["alien alloy", 0.01, 1, 1], ["cloth", 1.0, 1, 10]]));
+    steps.push({ kind: "fight", enemyId: nextFloat(rng) < 0.5 ? "carrion bird" : "rats" });
+    endLoot = nextFloat(rng) < 0.5
+      ? rollLootTable(rng, [["bullets", 0.8, 5, 10], ["bolas", 0.5, 1, 5], ["alien alloy", 0.5, 1, 1]])
+      : rollLootTable(rng, [["torch", 0.8, 1, 5], ["cured meat", 0.5, 1, 5]]);
+  } else if (r < 0.5) {
+    // PÉRIMÈTRE MILITAIRE : sniper OU soldat -> vétéran / soldat / commando -> fins lourdes.
+    steps.push({ kind: "fight", enemyId: nextFloat(rng) < 0.5 ? "sniper" : "soldier" });
+    const r2 = nextFloat(rng);
+    steps.push({ kind: "fight", enemyId: r2 < 0.34 ? "old veteran" : r2 < 0.67 ? "soldier" : "commando" });
+    endLoot = nextFloat(rng) < 0.5
+      ? rollLootTable(rng, [["rifle", 0.8, 1, 1], ["bullets", 0.8, 1, 5], ["laser rifle", 0.3, 1, 1], ["energy cell", 0.3, 1, 5], ["alien alloy", 0.3, 1, 1]])
+      : rollLootTable(rng, [["rifle", 1.0, 1, 1], ["bullets", 1.0, 1, 10], ["grenade", 0.8, 1, 5]]);
+  } else if (r < 0.8) {
+    // BIDONVILLE : homme frêle (50 %) -> échoppe pillée -> squatteurs.
+    if (nextFloat(rng) < 0.5) steps.push({ kind: "fight", enemyId: "frail man" });
+    lootNodes.push(rollLootTable(rng, [["steel sword", 0.8, 1, 1], ["rifle", 0.5, 1, 1], ["bullets", 0.25, 1, 8], ["alien alloy", 0.01, 1, 1], ["medicine", 0.5, 1, 4]]));
+    steps.push({ kind: "fight", enemyId: "squatters" });
+    endLoot = rollLootTable(rng, [["rifle", 0.8, 1, 1], ["bullets", 0.8, 1, 5], ["bolas", 0.5, 1, 5], ["alien alloy", 0.2, 1, 1]]);
+  } else {
+    // HÔPITAL (torche) : vieil homme OU couloirs vides -> lézards/squatteurs -> COMBAT FORCÉ
+    // (créature difforme OU tentacules — « no leave button », fidèle) -> réserve d'hôpital.
+    steps.push({ kind: "gate" });
+    if (nextFloat(rng) < 0.5) steps.push({ kind: "fight", enemyId: "old man" });
+    steps.push({ kind: "fight", enemyId: nextFloat(rng) < 0.5 ? "hospital lizards" : "squatters" });
+    const forced = nextFloat(rng) < 0.5 ? "deformed" : "tentacles";
+    steps.push({ kind: "fight", enemyId: forced, noFlee: true });
+    endLoot = forced === "deformed"
+      ? rollLootTable(rng, [["medicine", 1.0, 3, 12], ["energy cell", 0.8, 2, 5], ["cloth", 0.5, 1, 3], ["steel", 0.3, 2, 3], ["alien alloy", 0.3, 1, 1]])
+      : rollLootTable(rng, [["steel sword", 0.5, 1, 3], ["rifle", 0.3, 1, 2], ["teeth", 1.0, 2, 8], ["cloth", 0.5, 3, 6], ["alien alloy", 0.1, 1, 1]]);
+  }
+  return { steps, lootNodes, endLoot };
+}
+
+/** Étapes de PROGRESSION d'une ville/cité — PUR, dérivé de la graine. */
+export function townSteps(type: "town" | "city", cx: number, cz: number, worldSeed: number): CaveStep[] {
+  const rng = createRng(dungeonSeed(type, cx, cz, worldSeed));
+  return (type === "town" ? rollTownPath(rng) : rollCityPath(rng)).steps;
 }
 
 /** Butin d'un nœud précis (lecture pure du donjon généré). {} si inconnu / sans butin. */
