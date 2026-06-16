@@ -115,7 +115,11 @@ torches et butins précis (annexe B). En bref :
 > voyage (+8, gastronome ×2)** · **mort = 120 s de repos forcé** · **avant-postes par expédition**
 > · **désengagement physique** (distancer l'ennemi > 18 u — poursuite bornée 8 u/s ; derniers
 > gardiens incassables) · **avertissements checkDanger**. Restent : **F3.2** (grottes scriptées),
-> **F3.5** (villes/cités = R3b), **écran de butin** (F4), **F5** (perks d'usage : furtif, boxeur…).
+> **R3b/F3.5 ✅ VILLES & CITÉS SCRIPTÉES** (graphes town/city d'ADR condensés en branches seedées :
+> voyou/charognard/justicier/fou en ville ; sniper/commando/difformes/tentacules en cité, avec les
+> **combats forcés d'hôpital sans fuite** ; butins et fins exacts dont fusil garanti, laser, alliage ;
+> séquence jouée en SURFACE parmi les ruines, cache finale gatée, nettoyée ⇒ avant-poste). Restent :
+> **écran de butin** (F4), **F5** (perks d'usage : furtif, boxeur…), `cityCleared`→Raid militaire (M10).
 
 > Principe : on garde le **monde 3D continu** (acté) — l'unité « pas » d'ADR devient la **distance
 > parcourue** (1 pas ≡ 1 cellule de 12 u), mesurée localement et signalée à la sim comme

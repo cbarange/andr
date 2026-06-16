@@ -52,7 +52,7 @@ import {
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon } from "./sim/combat";
-import { caveSteps } from "./sim/dungeon";
+import { caveSteps, townSteps } from "./sim/dungeon";
 import { EncounterFx } from "./render/encounter";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
@@ -1044,9 +1044,31 @@ async function boot(): Promise<void> {
       }));
     }
 
-    // R3 — FOUILLE DE SURFACE (forages/champs de bataille) : butin 3D autour du site, premier-servi.
+    // R3/R3b — FOUILLE DE SURFACE : forages/champs de bataille (butin libre) ET villes/cités, dont
+    // la CACHE FINALE (`end`) est GARDÉE par la séquence scriptée (voyous, bête, justicier, combats
+    // forcés d'hôpital…) — à franchir avant de la piller (fidèle aux setpieces town/city d'ADR).
     for (const lt of siteLoot.activeLoot()) {
-      if (state.sites?.[lt.cx + "," + lt.cz]?.taken?.[lt.nodeId]) continue; // déjà fouillé
+      const sp = state.sites?.[lt.cx + "," + lt.cz];
+      if (sp?.taken?.[lt.nodeId]) continue; // déjà fouillé
+      const isDungeonEnd = (lt.siteType === "town" || lt.siteType === "city") && lt.nodeId === "end";
+      if (isDungeonEnd) {
+        const steps = townSteps(lt.siteType as "town" | "city", lt.cx, lt.cz, state.worldSeed);
+        const done = sp?.guardians ?? 0;
+        if (done < steps.length) {
+          const next = steps[done];
+          const isGate = next?.kind === "gate";
+          consider(Math.hypot(lt.x - p.x, lt.z - p.z), 6.0, () => ({
+            world: new Vector3(lt.x, lt.y + 0.9, lt.z),
+            verb: isGate ? "forcer la porte (1 torche)" : "s'enfoncer dans les ruines",
+            act: () => {
+              if (isGate && carriedOf(state, self(), "torch") < 1) { hud.toast("il fait trop noir là-dedans — il faut une torche."); return; }
+              emit(engageGuardian(self(), lt.cx, lt.cz, lt.siteType));
+              if (isGate) hud.toast("vous forcez le passage, torche au poing.");
+            },
+          }));
+          continue;
+        }
+      }
       consider(Math.hypot(lt.x - p.x, lt.z - p.z), 3.6, () => ({
         world: new Vector3(lt.x, lt.y + 0.6, lt.z),
         verb: "fouiller",

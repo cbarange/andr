@@ -15,7 +15,7 @@ import {
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
-import { lootForNode, lootNodeIds, caveSteps, type CaveStep } from "./dungeon";
+import { lootForNode, lootNodeIds, caveSteps, townSteps, type CaveStep } from "./dungeon";
 import { drawRoad } from "./roads";
 import { stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit } from "./combat";
 import {
@@ -72,8 +72,10 @@ function buildTicks(id: string): number {
  *  du setpiece tiré de la graine (combats + « la torche s'éteint »). PUR. */
 function siteSteps(siteType: string, cx: number, cz: number, worldSeed: number): CaveStep[] {
   if (siteType === "cave") return caveSteps(cx, cz, worldSeed);
+  if (siteType === "town" || siteType === "city") return townSteps(siteType, cx, cz, worldSeed);
   const list = mineGuardians[siteType];
-  return list ? list.map((enemyId) => ({ kind: "fight", enemyId }) as CaveStep) : [];
+  // Dernier gardien de mine = SANS échappatoire (chef / vétéran / matriarche — fidèle).
+  return list ? list.map((enemyId, i) => ({ kind: "fight", enemyId, noFlee: i === list.length - 1 }) as CaveStep) : [];
 }
 
 // ---- M5 : application d'un effet d'événement (déclaratif) à un BROUILLON d'état. ----
@@ -380,9 +382,9 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key] ?? {};
       if (prog.taken?.[action.nodeId]) return state; // déjà ramassé par quelqu'un
-      // M8.5/F3.2 : la CACHE FINALE d'une grotte est gardée par la séquence du setpiece.
-      if (action.siteType === "cave" && action.nodeId === "end") {
-        const steps = siteSteps("cave", action.cx, action.cz, state.worldSeed);
+      // M8.5/F3.2-R3b : la CACHE FINALE d'une grotte/ville/cité est gardée par la séquence du setpiece.
+      if ((action.siteType === "cave" || action.siteType === "town" || action.siteType === "city") && action.nodeId === "end") {
+        const steps = siteSteps(action.siteType, action.cx, action.cz, state.worldSeed);
         if ((prog.guardians ?? 0) < steps.length) return state; // des étapes restent
       }
       const loot = lootForNode(action.siteType, action.cx, action.cz, state.worldSeed, action.nodeId);
@@ -397,9 +399,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
         room -= add;
       }
       const taken = { ...(prog.taken ?? {}), [action.nodeId]: true };
-      // Grotte ENTIÈREMENT vidée -> nettoyée (devient un avant-poste, cf. rendu R4). Usage unique.
+      // Grotte/ville/cité ENTIÈREMENT vidée -> nettoyée : devient un AVANT-POSTE + trace une route
+      // (fidèle clearDungeon d'ADR ; la cité nettoyée arme aussi le Raid militaire futur).
       let cleared = prog.cleared ?? false;
-      if (!cleared && action.siteType === "cave") {
+      if (!cleared && (action.siteType === "cave" || action.siteType === "town" || action.siteType === "city")) {
         const ids = lootNodeIds(action.siteType, action.cx, action.cz, state.worldSeed);
         cleared = ids.length > 0 && ids.every((id) => taken[id]);
       }
@@ -771,6 +774,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         siteKey: key,
         siteType: action.siteType,
         guardianIdx: idx,
+        ...(step.noFlee ? { noFlee: true } : {}),
       };
       return {
         ...state,
@@ -878,10 +882,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const pid = action.playerId;
       const enc = state.combat[pid];
       if (!enc) return state;
-      if (enc.guardianIdx !== undefined && enc.siteType && mineGuardians[enc.siteType]) {
-        const list = mineGuardians[enc.siteType];
-        if (enc.guardianIdx >= list.length - 1) return state; // dernier gardien de MINE : pas de fuite
-      }
+      if (enc.noFlee) return state; // combat SANS échappatoire (boss de mine, hôpital de cité — fidèle)
       const { [pid]: _fled, ...rest } = state.combat;
       const sv = state.survival[pid] ?? baseSurvival();
       const rec: PlayerSurvival = { ...sv, fightSteps: 0 };

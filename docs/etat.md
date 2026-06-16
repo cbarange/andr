@@ -24,7 +24,7 @@ de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 229 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 234 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -182,11 +182,14 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    expédition**, **désengagement physique** (poursuite bornée), avertissements de danger.
    **Et F3.2 ✅ : GROTTES SCRIPTÉES** — le graphe ADR (30/30/40, combats a1/b3/b4/c1/c2, « la
    torche s'éteint » consommant 1 torche, butins camp/cadavre/fins 1-3 exacts) tiré à la graine,
-   cache finale gatée par la séquence. **Reste** : F3.5 (villes/cités = R3b), écran de butin, F5.
+   cache finale gatée par la séquence. **Et R3b ✅ : VILLES & CITÉS SCRIPTÉES** (branches seedées
+   d'ADR — voyous/justicier/fou en ville ; snipers/commandos/difformes/tentacules en cité avec
+   combats FORCÉS d'hôpital ; fins exactes, cache finale gatée, nettoyée ⇒ avant-poste). **Reste** :
+   écran de butin, F5 (perks d'usage), `cityCleared`→Raid militaire.
 2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
-3. **R3b (donjons ville/cité)** : intérieurs explorables + `cityCleared` (→ Raid militaire) + butin
-   lourd (laser, alliage) — alimente M11 **et M8.5-F3.5** (graphes de scènes ADR documentés).
+3. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
+   (R3b) est livrée, il reste à brancher l'événement de raid.
 4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
    A6 (refactor main.ts — de plus en plus gros).
 

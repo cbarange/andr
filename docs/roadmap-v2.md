@@ -22,16 +22,16 @@
 | **M0–M5** (Acte I : feu→village→métiers→événements) | ✅ |
 | **M9** sites/donjons/mines | 🟢 cœur fait (grotte+mines explorables, avant-poste, **chaîne acier→balles ressuscitée**) |
 | **Chantier C** (refonte monde & campement : A·B·C·D·E·F) | ✅ **TERMINÉ** |
-| **Routes & sites** : R1 variété (~57 sites) · R2 routes · **R3a fouille forages/champs de bataille (→ alliage !)** | ✅ ✅ ✅ · reste R3b (donjons ville/cité) · R4 ⏳ |
+| **Routes & sites** : R1 variété (~57 sites) · R2 routes · R3a forages/champs de bataille · **R3b villes/cités scriptées** | ✅ ✅ ✅ ✅ · R4 ⏳ |
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
 | **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
-| **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 FAITS** (par pas · tables/biomes · mines gardées · GROTTES SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste F3.5 (=R3b), écran de butin, F5 (perks d'usage) |
+| **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 + R3b FAITS** (par pas · tables/biomes · mines/grottes/villes/cités SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste écran de butin, F5 (perks d'usage) |
 | **Contenu manquant** : fin de partie (M11) | ❌ |
 
-> Vérif à chaque pas : **typecheck · ~229 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · ~234 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 

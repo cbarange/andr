@@ -20,7 +20,7 @@ import {
 } from "./actions";
 import { stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
 import { enemyById, weaponById, mineGuardians } from "../../data/world";
-import { dungeonFor, lootNodeIds, caveSteps } from "./dungeon";
+import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
 
@@ -1609,4 +1609,108 @@ describe("fouille de surface — forages & champs de bataille (R3)", () => {
   function worldgenSeedOf(): number {
     return createInitialState(config.rngSeed, 0).worldSeed;
   }
+});
+
+
+describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR", () => {
+  const seed = createInitialState(config.rngSeed, 0).worldSeed;
+  const FISTS = 2 * HZ;
+
+  /** Combat l'ennemi courant aux poings jusqu'à la victoire/mort. */
+  function fightOut(s: GameState, pid = "p1"): GameState {
+    for (let i = 0; i < 60 && s.combat[pid]; i++) {
+      s = reduce(s, attack(pid, "fists"));
+      s = reduce(s, debugSetSurvival(pid, { health: 10 })); // anti-mort pour le test
+      if (s.combat[pid]) s = advanceTicks(s, FISTS);
+    }
+    return s;
+  }
+
+  it("townSteps/cityStips : séquences NON VIDES, déterministes, finissent par un combat", () => {
+    for (const type of ["town", "city"] as const) {
+      let sawSteps = false;
+      for (let i = 1; i < 40; i++) {
+        const st = townSteps(type, i, 3, seed);
+        expect(townSteps(type, i, 3, seed)).toEqual(st); // déterministe
+        if (st.length > 0) { sawSteps = true; expect(st[st.length - 1].kind).toBe("fight"); }
+      }
+      expect(sawSteps).toBe(true);
+    }
+  });
+
+  it("la CACHE FINALE d'une ville est gatée par la séquence (ENGAGE puis TAKE_LOOT)", () => {
+    // trouve une ville dont la séquence est faite de combats (pas de gate, pour tester aux poings)
+    let cx = -1;
+    for (let i = 1; i < 80; i++) {
+      const st = townSteps("town", i, 4, seed);
+      if (st.length > 0 && st.every((x) => x.kind === "fight")) { cx = i; break; }
+    }
+    expect(cx).toBeGreaterThan(0);
+    const steps = townSteps("town", cx, 4, seed);
+    let s: GameState = { ...createInitialState(config.rngSeed, 0) };
+    // end gaté tant que la séquence n'est pas faite
+    expect(reduce(s, takeLoot("p1", cx, 4, "town", "end"))).toBe(s);
+    for (let i = 0; i < steps.length; i++) {
+      s = reduce(s, engageGuardian("p1", cx, 4, "town"));
+      expect(s.combat["p1"]).toBeTruthy();
+      s = fightOut(s);
+      expect(s.sites[siteKey(cx, 4)].guardians).toBe(i + 1);
+    }
+    s = reduce(s, debugClear("p1", "self")); // vide le sac rempli par les combats (sinon "sac plein")
+    const out = reduce(s, takeLoot("p1", cx, 4, "town", "end"));
+    expect(out).not.toBe(s); // la cache s'ouvre enfin
+    expect(out.sites[siteKey(cx, 4)].taken?.["end"]).toBe(true);
+  });
+
+  it("les combats FORCÉS d'hôpital de cité refusent la fuite (noFlee)", () => {
+    // trouve une cité dont la séquence contient un combat noFlee (branche hôpital)
+    let found: { cx: number; idx: number } | null = null;
+    for (let i = 1; i < 120 && !found; i++) {
+      const st = townSteps("city", i, 7, seed);
+      const idx = st.findIndex((x) => x.kind === "fight" && (x as { noFlee?: boolean }).noFlee);
+      if (idx >= 0) found = { cx: i, idx };
+    }
+    expect(found).toBeTruthy();
+    const { cx, idx } = found!;
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { torch: 5 } } };
+    const steps = townSteps("city", cx, 7, seed);
+    for (let i = 0; i <= idx; i++) {
+      s = reduce(s, engageGuardian("p1", cx, 7, "city"));
+      if (i < idx) s = fightOut(s); // franchit les étapes avant le combat forcé
+    }
+    // on est dans le combat FORCÉ : la fuite est refusée
+    expect(s.combat["p1"]?.noFlee).toBe(true);
+    expect(reduce(s, flee("p1"))).toBe(s);
+  });
+
+  it("ville/cité ENTIÈREMENT vidée -> cleared (avant-poste + route, comme la grotte)", () => {
+    // ville à séquence de combats seulement
+    let cx = -1;
+    for (let i = 1; i < 80; i++) {
+      const st = townSteps("town", i, 9, seed);
+      if (st.length > 0 && st.every((x) => x.kind === "fight")) { cx = i; break; }
+    }
+    expect(cx).toBeGreaterThan(0);
+    const ids = lootNodeIds("town", cx, 9, seed);
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } };
+    const steps = townSteps("town", cx, 9, seed);
+    for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 9, "town")); s = fightOut(s); }
+    for (const id of ids) { s = reduce(s, debugClear("p1", "self")); s = reduce(s, takeLoot("p1", cx, 9, "town", id)); }
+    expect(s.sites[siteKey(cx, 9)].cleared).toBe(true); // devient un avant-poste (clearDungeon)
+  });
+
+  it("REPLAY : engager/combattre une ville est déterministe", () => {
+    let cx = -1;
+    for (let i = 1; i < 80; i++) {
+      const st = townSteps("town", i, 11, seed);
+      if (st.length > 0 && st.every((x) => x.kind === "fight")) { cx = i; break; }
+    }
+    const run = (): GameState => {
+      let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } };
+      const steps = townSteps("town", cx, 11, seed);
+      for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 11, "town")); s = fightOut(s); }
+      return s;
+    };
+    expect(run()).toEqual(run());
+  });
 });

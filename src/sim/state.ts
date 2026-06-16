@@ -143,8 +143,9 @@ export interface Encounter {
   seq: number;
   // --- M8.5/F3.1 : rencontre de SETPIECE (gardien de mine). Champs absents = rencontre aléatoire. ---
   siteKey?: string; // site gardé ("cx,cz")
-  siteType?: string; // type du site (ironmine/coalmine/sulphurmine)
-  guardianIdx?: number; // index du gardien dans mineGuardians[siteType]
+  siteType?: string; // type du site (mine / cave / town / city)
+  guardianIdx?: number; // index de l'étape dans la séquence scriptée du site
+  noFlee?: boolean; // combat SANS échappatoire (boss de mine, combats forcés d'hôpital — fidèle ADR)
 }
 
 /**

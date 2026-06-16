@@ -18,7 +18,7 @@ import { dungeonFor } from "../sim/dungeon";
 import type { WorldMap } from "../sim/worldgen";
 import type { LootTarget } from "./interior";
 
-const SURFACE_TYPES = new Set(["borehole", "battlefield"]);
+const SURFACE_TYPES = new Set(["borehole", "battlefield", "town", "city"]); // R3b : ruines fouillables
 const BUILD_R = 52; // bâtit les points de fouille quand le joueur approche du site
 const FREE_R = 72; // libère au-delà (marge anti-clignotement)
 
