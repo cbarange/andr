@@ -11,7 +11,7 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival, SharedEncounter, SharedFlight, maxWaterOf, maxHealthOf, nearestPlayerTo,
+  PlayerSurvival, baseSurvival, SharedEncounter, SharedFlight, maxWaterOf, maxHealthOf, nearestPlayerTo, createInitialState,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
@@ -25,7 +25,7 @@ import { stepFlight, mostUrgentAsteroid } from "./flight";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT,
+  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT, PERKS,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -567,6 +567,24 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // M11/E3 — clôt le vol (après l'évasion -> écran de fin E4, ou le crash -> retour au vaisseau).
       if (!state.flight) return state;
       return { ...state, flight: null, rng: cloneRng(state.rng) };
+    }
+
+    case "PRESTIGE": {
+      // M11/E4 — NG+ : recommence un MONDE NEUF (graine fraîche tirée du RNG -> déterministe). On REPORTE
+      // les perks de combat du village (precise/barbarian/evasive/gastronome) et on incrémente le compteur
+      // d'évasions ; tout le reste repart à zéro (progression, sites, stocks...). Gaté : avoir survécu à
+      // l'évasion (`flight.status === "escaped"`). Le changement de `worldSeed` régénère la carte (clients).
+      if (state.flight?.status !== "escaped") return state;
+      const rng = cloneRng(state.rng);
+      const newSeed = 1 + nextInt(rng, 1_000_000_000);
+      const carry: Record<string, true> = {};
+      for (const k of Object.keys(state.perks)) if (PERKS[k]) carry[k] = true; // perks « réels », pas les flags de progression
+      return {
+        ...createInitialState(config.rngSeed, 0),
+        worldSeed: newSeed,
+        perks: carry,
+        prestige: state.prestige + 1,
+      };
     }
 
     case "CRAFT_ITEM": {

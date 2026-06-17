@@ -167,6 +167,13 @@ export type EndFlightAction = {
   playerId: string;
 };
 
+/** M11/E4 : PRESTIGE (NG+) — après l'évasion, recommence un MONDE NEUF (graine fraîche) en reportant
+ *  les perks du village et en incrémentant le compteur d'évasions. Remplace l'état (sauf prestige/perks). */
+export type PrestigeAction = {
+  type: "PRESTIGE";
+  playerId: string;
+};
+
 /**
  * Se RAVITAILLER à un avant-poste (grotte nettoyée) : remplit l'eau + les vivres du joueur.
  * USAGE UNIQUE fidèle ADR, partagé entre joueurs (premier-servi : l'hôte arbitre). Reste M7.
@@ -401,6 +408,7 @@ export type GameAction =
   | LiftOffAction
   | FlightFireAction
   | EndFlightAction
+  | PrestigeAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -456,6 +464,7 @@ export type PlayerAction =
   | LiftOffAction
   | FlightFireAction
   | EndFlightAction
+  | PrestigeAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -574,6 +583,9 @@ export function flightFire(playerId: string): FlightFireAction {
 }
 export function endFlight(playerId: string): EndFlightAction {
   return { type: "END_FLIGHT", playerId };
+}
+export function prestige(playerId: string): PrestigeAction {
+  return { type: "PRESTIGE", playerId };
 }
 export function useOutpost(playerId: string, cx: number, cz: number): UseOutpostAction {
   return { type: "USE_OUTPOST", playerId, cx, cz };

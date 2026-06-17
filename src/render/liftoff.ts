@@ -37,6 +37,7 @@ export class Liftoff {
   private baseY = 0;
   private prevHull = 0;
   private shake = 0;
+  private escapeT = 0; // temps écoulé depuis l'évasion (le vaisseau s'éloigne dans les étoiles)
   private saved: { clear: Color4; fogMode: number } | null = null;
 
   constructor(private readonly scene: Scene, private readonly camera: ArcRotateCamera) {
@@ -48,9 +49,10 @@ export class Liftoff {
     return this.active;
   }
 
-  /** À appeler chaque frame avec l'état de vol (ou null hors décollage). */
+  /** À appeler chaque frame avec l'état de vol (ou null hors décollage). `escaped` reste à l'écran
+   *  (le vaisseau s'éloigne dans les étoiles) tant que l'écran de fin est ouvert ; `crashed`/null sortent. */
   update(dtSec: number, flight: FlightView | null, tick: number): void {
-    const on = !!flight && (flight.status === "boarding" || flight.status === "ascending");
+    const on = !!flight && (flight.status === "boarding" || flight.status === "ascending" || flight.status === "escaped");
     if (on && !this.active) this.enter(flight!);
     if (!on && this.active) this.exit();
     if (on && this.active) this.drive(dtSec, flight!, tick);
@@ -63,6 +65,7 @@ export class Liftoff {
     this.baseY = terrainHeight(flight.x, flight.z);
     this.prevHull = flight.hull;
     this.shake = 0;
+    this.escapeT = 0;
     // Bascule « espace » : ciel sombre, plus de brouillard (on sauvegarde pour restaurer).
     this.saved = { clear: this.scene.clearColor.clone(), fogMode: this.scene.fogMode };
     this.scene.clearColor = new Color4(0.02, 0.03, 0.06, 1);
@@ -85,6 +88,21 @@ export class Liftoff {
 
   private drive(dtSec: number, flight: FlightView, tick: number): void {
     const ship = this.ship!;
+    // Évasion : le vaisseau accélère vers le haut et rapetisse (il file dans les étoiles).
+    if (flight.status === "escaped") {
+      this.escapeT += dtSec;
+      const riseY = 1 + RISE + this.escapeT * this.escapeT * 14;
+      ship.position.set(0, riseY, 0);
+      ship.rotation.y += dtSec * 0.6;
+      const shrink = Math.max(0.15, 1 - this.escapeT * 0.25);
+      ship.scaling.setAll(shrink);
+      if (this.flame) { const f = 1.1 + Math.sin(performance.now() * 0.04) * 0.3; this.flame.scaling.set(f, 1.4 + f, f); }
+      const shipWorldY = this.baseY + Math.min(riseY, RISE + 30); // la caméra ne suit pas jusqu'à l'infini
+      this.camera.setTarget(new Vector3(flight.x, shipWorldY + 6, flight.z));
+      this.camera.setPosition(new Vector3(flight.x + 6, shipWorldY - 8, flight.z + 14));
+      this.syncRocks(flight, tick, riseY); // (vide à l'évasion)
+      return;
+    }
     const riseY = 1 + flight.progress * RISE; // hauteur LOCALE (root est au sol du vaisseau)
     // Secousse à l'impact (la coque vient d'encaisser).
     if (flight.hull < this.prevHull) this.shake = 0.6;

@@ -49,7 +49,7 @@ import {
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight,
+  liftOff, flightFire, endFlight, prestige,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -118,6 +118,8 @@ declare global {
       flightFire?: () => void;
       endFlight?: () => void;
       getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number } | null;
+      prestige?: () => void;
+      getProgress?: () => { prestige: number };
       pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
@@ -473,21 +475,24 @@ async function boot(): Promise<void> {
     return { state: structuredClone(state), host: { id: net.selfId, forced: net.isForcedHost, epoch: net.epoch } };
   }
 
+  // Régénère TOUTE la couche monde locale pour la graine courante de `state` (changement de /seed
+  // ou PRESTIGE). Idempotent vis-à-vis du rendu (re-pose terrain/sites/intérieurs, vide les FX).
+  function regenerateWorld(): void {
+    configureBorders(state.worldSeed);
+    worldMap = generateWorld(state.worldSeed);
+    registerPlateaus(worldMap); // aplanissement aux sites AVANT de regénérer le terrain
+    terrain.regenerate(worldMap, player.position);
+    sites.placeAll(worldMap, entities);
+    interiors.setMap(worldMap);
+    siteLoot.setMap(worldMap);
+    encounterFx.clearAll(); // les ennemis du monde précédent n'ont plus lieu d'être
+    groundDrops.clearAll();
+  }
+
   function adoptSnapshot(s: StateSyncMsg): void {
     const seedChanged = s.state.worldSeed !== worldMap.seed;
     state = s.state; // remplacement INTÉGRAL (cabinTier, builderTendingUntil, échéances, rng… tout est là)
-    // Si l'hôte a changé la graine du monde (/seed), on régénère la carte localement.
-    if (seedChanged) {
-      configureBorders(s.state.worldSeed); // re-tirer les bordures pour la nouvelle graine
-      worldMap = generateWorld(s.state.worldSeed);
-      registerPlateaus(worldMap); // aplanissement aux sites AVANT de regénérer le terrain
-      terrain.regenerate(worldMap, player.position);
-      sites.placeAll(worldMap, entities);
-      interiors.setMap(worldMap);
-      siteLoot.setMap(worldMap);
-      encounterFx.clearAll(); // M8.6 : les ennemis du monde précédent n'ont plus lieu d'être
-      groundDrops.clearAll();
-    }
+    if (seedChanged) regenerateWorld(); // l'hôte a changé la graine (/seed ou prestige) -> on régénère
   }
 
   function applyAuthoritative(action: PlayerAction): void {
@@ -843,6 +848,31 @@ async function boot(): Promise<void> {
       { label: "pas encore", enabled: true, onSelect: () => showDialogue(shipViewRef) },
     ],
   });
+
+  // M11/E4 — ÉCRAN DE FIN (épilogue) + PRESTIGE (NG+). Ouvert à l'évasion ; « recommencer » réamorce
+  // un monde neuf (graine fraîche) en reportant les perks. « contempler » laisse l'écran ouvert.
+  function restartWorld(): void {
+    const before = state.worldSeed;
+    emit(prestige(self())); // hôte/hors-ligne -> applique localement ; client -> demande à l'hôte (snapshot)
+    closeInteractive();
+    if (state.worldSeed !== before) { // appliqué localement -> régénère le monde + réveil au camp
+      regenerateWorld();
+      player.teleport(cabin.center.x + 1, cabin.center.z + 0.5);
+      cameraFollow = true;
+      saveGame(state);
+    }
+    hud.toast(`un monde neuf s'éveille. (évasions : ${state.prestige})`);
+  }
+  const endingView = (): DialogueView => ({
+    speaker: "épilogue",
+    text: "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
+      + "derrière vous, un feu que vous avez nourri ; devant, les étoiles. vous êtes libre.",
+    choices: [
+      { label: "recommencer — un monde neuf", enabled: true, onSelect: restartWorld },
+      { label: "contempler les étoiles", enabled: true, onSelect: () => { /* reste sur l'écran de fin */ } },
+    ],
+  });
+  const endingViewRef = (): DialogueView => endingView();
 
   function formatStores(stores: Record<string, number>): string {
     return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
@@ -1645,19 +1675,22 @@ async function boot(): Promise<void> {
       }
       audio.playSfx("checkTraps");
     }
-    // M11/E3 — DÉCOLLAGE : transitions terminales (évasion / crash) observées par diff de statut.
+    // M11/E3-E4 — DÉCOLLAGE : transitions terminales (évasion / crash) observées par diff de statut.
     const fStatus = state.flight?.status ?? null;
     if (fStatus !== prevFlightStatus) {
       if (fStatus === "escaped") {
-        hud.toast("vous percez l'atmosphère — la planète sombre s'éloigne, minuscule. (fin : bientôt)");
+        // ÉVASION : écran de fin (le vaisseau s'éloigne en fond, cf. liftoff) -> prestige / contempler.
+        audio.stopEventMusic();
         audio.playSfx("buy");
-        emit(endFlight(self())); // E4 remplacera par un véritable écran de fin + prestige
+        showDialogue(endingViewRef);
       } else if (fStatus === "crashed") {
         hud.toast("la coque cède — le vaisseau retombe en flammes. il faudra réparer et réessayer.");
         audio.playSfx("death");
         const w = shipWorldPos();
         player.teleport(w.x, w.z);
         emit(endFlight(self()));
+      } else if (fStatus === null && prevFlightStatus === "escaped" && hud.interactiveOpen) {
+        closeInteractive(); // prestige déclenché par un AUTRE joueur (co-op) -> on referme l'épilogue
       }
       prevFlightStatus = fStatus;
     }
@@ -1784,7 +1817,7 @@ async function boot(): Promise<void> {
     const uiOpen = hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
     // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
     // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
-    const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending");
+    const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending" || state.flight.status === "escaped");
     const raw = input.getIntent(); // consomme aussi le front du saut
     const intent = (uiOpen || flying) ? { forward: 0, strafe: 0, jump: false, vertical: 0 } : raw;
     player.update(dtSec, intent, cameraYaw(camera));
@@ -2083,6 +2116,8 @@ async function boot(): Promise<void> {
     flightFire: () => emit(flightFire(self())),
     endFlight: () => emit(endFlight(self())),
     getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine } : null; },
+    prestige: () => restartWorld(),
+    getProgress: () => ({ prestige: state.prestige }),
     pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)

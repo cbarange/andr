@@ -151,6 +151,10 @@ export interface GameState {
   //     ascension on-rails, astéroïdes seedés que les joueurs ABATTENT. Voyage au snapshot (migration
   //     d'hôte continue le vol) mais VOLATILE (strippé à la save : au reload on repart du vaisseau). ---
   flight: SharedFlight | null;
+
+  // --- M11/E4 : nombre d'ÉVASIONS réussies (prestige / NG+). Incrémenté quand on s'évade et qu'on
+  //     recommence un monde neuf (graine fraîche + report des perks). ADDITIF, PERSISTÉ. ---
+  prestige: number;
 }
 
 /**
@@ -405,5 +409,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     perks: {},
     ship: { hull: 0, engine: 0 },
     flight: null,
+    prestige: 0,
   };
 }

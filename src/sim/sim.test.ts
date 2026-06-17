@@ -17,7 +17,7 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight,
+  liftOff, flightFire, endFlight, prestige,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
@@ -2084,5 +2084,49 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
       ...Array.from({ length: 200 }, (_, i) => (i % 2 === 0 ? tick() : flightFire("p1"))),
     ];
     expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
+  });
+});
+
+describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
+  /** État APRÈS l'évasion (flight escaped) + progression/perks/stocks à reporter ou réinitialiser. */
+  function escaped(): GameState {
+    return {
+      ...createInitialState(config.rngSeed, 0),
+      perks: { precise: true, gastronome: true, ship_revealed: true, executioner_cleared: true, signal_seen: true },
+      prestige: 2,
+      resources: { wood: 50, "alien alloy": 3 },
+      sites: { "1,1": { discovered: true, cleared: true } },
+      ship: { hull: 20, engine: 3 },
+      flight: {
+        status: "escaped", x: 0, z: 0, hull: 20, hullMax: 20, engine: 3, progress: 1,
+        asteroids: [], nextSpawnAt: 0, nextAsteroidId: 1, fireReadyAt: {}, aboard: { p1: true }, countdownAt: 0, seq: 0,
+      },
+    };
+  }
+
+  it("PRESTIGE : gaté sur l'ÉVASION ; monde neuf, perks reportés, progression réinitialisée, prestige++", () => {
+    const notEscaped: GameState = { ...escaped(), flight: null };
+    expect(reduce(notEscaped, prestige("p1"))).toBe(notEscaped); // pas d'évasion -> no-op
+    const s0 = escaped();
+    const s = reduce(s0, prestige("p1"));
+    expect(s.prestige).toBe(3); // compteur d'évasions ++
+    expect(s.perks["precise"]).toBe(true); // perks de combat REPORTÉS (NG+)
+    expect(s.perks["gastronome"]).toBe(true);
+    expect(s.perks["ship_revealed"]).toBeUndefined(); // flags de progression LARGUÉS
+    expect(s.perks["executioner_cleared"]).toBeUndefined();
+    expect(s.perks["signal_seen"]).toBeUndefined();
+    expect(s.flight).toBeNull(); // plus de vol
+    expect(s.ship).toEqual({ hull: 0, engine: 0 }); // vaisseau réinitialisé
+    expect(s.resources).toEqual({}); // stocks réinitialisés
+    expect(Object.keys(s.sites).length).toBe(0); // exploration réinitialisée
+    expect(s.cabinRepaired).toBe(false); // tout repart de la ruine
+    expect(s.worldSeed).not.toBe(s0.worldSeed); // MONDE NEUF (graine fraîche)
+  });
+
+  it("PRESTIGE : réseau-safe (porte playerId) et déterministe", () => {
+    expect(isNetworkSafeAction(prestige("p1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(prestige("p1"), "p2")).toBe(false);
+    const s0 = escaped();
+    expect(reduce(s0, prestige("p1"))).toEqual(reduce(s0, prestige("p1")));
   });
 });
