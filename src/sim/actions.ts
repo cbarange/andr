@@ -215,6 +215,14 @@ export type SetOutsideAction = {
   onRoad?: boolean;
 };
 
+/** M11/RF4 : le client signale les CHUNKS qu'il vient de voir (révélation du fog-of-war de la minimap).
+ *  Émis au franchissement de chunk (edge, comme SET_OUTSIDE) ; l'hôte fusionne dans `visitedCells`. */
+export type RevealCellsAction = {
+  type: "REVEAL_CELLS";
+  playerId: string;
+  chunks: string[]; // clés "chunkX,chunkZ" ; bornées à 32 côté hôte
+};
+
 // ---- M8 : combat temps réel (rencontres non-spatiales par joueur, fidèle ADR) ----
 
 /**
@@ -432,6 +440,7 @@ export type GameAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | RevealCellsAction
   | StepsAction
   | EngageGuardianAction
   | EnterRoomAction
@@ -490,6 +499,7 @@ export type PlayerAction =
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
+  | RevealCellsAction
   | StepsAction
   | EngageGuardianAction
   | EnterRoomAction
@@ -621,6 +631,9 @@ export function craftItem(playerId: string, itemId: string): CraftItemAction {
 }
 export function setOutside(playerId: string, outside: boolean, tier?: number, onRoad?: boolean): SetOutsideAction {
   return { type: "SET_OUTSIDE", playerId, outside, ...(tier !== undefined ? { tier } : {}), ...(onRoad !== undefined ? { onRoad } : {}) };
+}
+export function revealCells(playerId: string, chunks: string[]): RevealCellsAction {
+  return { type: "REVEAL_CELLS", playerId, chunks };
 }
 export function steps(playerId: string, n: number, tier: number, biome: string, onRoad: boolean, x: number, z: number): StepsAction {
   return { type: "STEPS", playerId, n, tier, biome, onRoad, x, z };

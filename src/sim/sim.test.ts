@@ -17,7 +17,7 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige, discoverShip, enterRoom,
+  liftOff, flightFire, endFlight, prestige, discoverShip, enterRoom, revealCells,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
@@ -1933,6 +1933,33 @@ describe("fin de partie (M11/E1) — le cuirassé scripté & le signal", () => {
   });
 });
 
+describe("minimap — fog-of-war partagé (M11/RF4)", () => {
+  it("REVEAL_CELLS fusionne les chunks (premier-vu), idempotent, sans RNG si rien de neuf", () => {
+    const s0 = createInitialState(config.rngSeed, 0);
+    expect(s0.visitedCells).toEqual({});
+    const s1 = reduce(s0, revealCells("p1", ["0,0", "1,0"]));
+    expect(s1.visitedCells).toEqual({ "0,0": true, "1,0": true });
+    // Idempotent : re-révéler les MÊMES chunks ne change rien (même référence -> no-op).
+    expect(reduce(s1, revealCells("p2", ["0,0"]))).toBe(s1);
+    // Fusion premier-vu : un autre joueur ajoute de nouveaux chunks.
+    const s2 = reduce(s1, revealCells("p2", ["1,0", "2,2"]));
+    expect(s2.visitedCells).toEqual({ "0,0": true, "1,0": true, "2,2": true });
+  });
+
+  it("REVEAL_CELLS est borné à 32 chunks par message (anti-abus)", () => {
+    const many = Array.from({ length: 50 }, (_, i) => `c${i}`);
+    const s = reduce(createInitialState(config.rngSeed, 0), revealCells("p1", many));
+    expect(Object.keys(s.visitedCells).length).toBe(32);
+  });
+
+  it("REVEAL_CELLS est réseau-safe (porte playerId) ; le fog est PERSISTÉ (snapshot sérialisable)", () => {
+    expect(isNetworkSafeAction(revealCells("p1", ["0,0"]), "p1")).toBe(true);
+    expect(isNetworkSafeAction(revealCells("p1", ["0,0"]), "p2")).toBe(false); // usurpation refusée
+    const s = reduce(createInitialState(config.rngSeed, 0), revealCells("p1", ["3,4"]));
+    expect(JSON.parse(JSON.stringify(s)).visitedCells["3,4"]).toBe(true); // voyage dans le snapshot
+  });
+});
+
 describe("cuirassé EXPLORABLE (M11/RF2) — donjon de salles, arènes verrouillées, gate du pont", () => {
   const CX = 40, CZ = 40, KEY = siteKey(CX, CZ);
   const CD = 2 * HZ; // cooldown baïonnette
@@ -2243,6 +2270,7 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
       prestige: 2,
       resources: { wood: 50, "alien alloy": 3, "fleet beacon": 1 },
       sites: { "1,1": { discovered: true, cleared: true } },
+      visitedCells: { "0,0": true, "1,1": true, "2,3": true },
       ship: { hull: 20, engine: 3 },
       flight: {
         status: "escaped", x: 0, z: 0, hull: 20, hullMax: 20, engine: 3, progress: 1,
@@ -2268,6 +2296,7 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
     expect(s.resources).toEqual({}); // stocks réinitialisés (le `fleet beacon` n'est PAS reporté — RF6)
     expect(s.resources["fleet beacon"]).toBeUndefined();
     expect(Object.keys(s.sites).length).toBe(0); // exploration réinitialisée
+    expect(s.visitedCells).toEqual({}); // fog-of-war remis à zéro (monde neuf — RF4)
     expect(s.cabinRepaired).toBe(false); // tout repart de la ruine
     expect(s.worldSeed).not.toBe(s0.worldSeed); // MONDE NEUF (graine fraîche)
   });

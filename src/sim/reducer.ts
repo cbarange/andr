@@ -774,6 +774,17 @@ export function reduce(state: GameState, action: GameAction): GameState {
       return { ...state, survival: { ...state.survival, [pid]: rec }, sites, rng: cloneRng(state.rng) };
     }
 
+    case "REVEAL_CELLS": {
+      // M11/RF4 — FOG-OF-WAR PARTAGÉ : l'hôte fusionne les chunks vus (premier-vu global). Additif &
+      // idempotent ; borné à 32 par message (anti-abus réseau). NO-OP si rien de neuf (pas de RNG).
+      let changed = false;
+      const v = { ...state.visitedCells };
+      for (const c of action.chunks.slice(0, 32)) {
+        if (!v[c]) { v[c] = true; changed = true; }
+      }
+      return changed ? { ...state, visitedCells: v, rng: cloneRng(state.rng) } : state;
+    }
+
     case "VISIT_HOUSE": {
       // M8.5/F3.3 — fidèle au setpiece `house` d'ADR : tirage 25 % médecine ×2–4 / 25 % vivres +
       // EAU REMPLIE / 50 % SQUATTEUR embusqué (combat). One-shot (`visited` = markVisited).

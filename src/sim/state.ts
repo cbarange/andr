@@ -109,6 +109,12 @@ export interface GameState {
   //     plus proche). Clé = `siteKey(cx,cz)`. Déterministe (géométrique) -> P2P via snapshot. Additif. ---
   roads: Record<string, true>;
 
+  // --- M11/RF4 : FOG-OF-WAR PARTAGÉ (minimap). Chunks du monde révélés par N'IMPORTE QUI (premier-vu
+  //     global). Clé = `"chunkX,chunkZ"` (granularité chunk, pas cellule -> save bornée). Posé par
+  //     `REVEAL_CELLS` (client -> hôte fusionne). PERSISTÉ (le fog survit au reload), additif (back-fill
+  //     `{}` au boot). Réinitialisé au PRESTIGE (monde neuf). La minimap LIT ce champ, n'écrit rien. ---
+  visitedCells: Record<string, true>;
+
   // --- M6/M7 : SURVIE par joueur (eau/nourriture/santé), indexée par `playerId` (comme `carried`).
   //     La roadmap parlait d'un `inSafeZone` GLOBAL ; en multijoueur c'est forcément PAR JOUEUR (chacun
   //     est à une position différente) -> on porte `outside` dans l'enregistrement (un drapeau unique ne
@@ -406,6 +412,7 @@ export function createInitialState(seed: number, initialWood: number): GameState
     worldSeed: worldgen.seed,
     sites: {},
     roads: {},
+    visitedCells: {},
     survival: {},
     encounters: {},
     nextEncId: 1,
