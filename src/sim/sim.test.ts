@@ -2012,6 +2012,17 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
     expect(s.flight?.hull).toBe(20);
   });
 
+  it("RF1b — décollage DEPUIS LE CAMP : le pilote INTÉRIEUR (outside=false) embarque quand même", () => {
+    // Le vaisseau est au camp -> le pilote est « dedans » (zone sûre). L'embarquement ne doit PAS exiger
+    // d'être dehors (sinon il attendrait le compte à rebours).
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull: 10, engine: 0 } };
+    s = reduce(s, setOutside("p1", false, 0)); // au camp, à l'intérieur
+    s = reduce(s, setPositions({ p1: { x: SX, z: SZ } }));
+    s = reduce(s, liftOff("p1", SX, SZ));
+    s = advanceTicks(s, 1);
+    expect(s.flight?.status).toBe("ascending"); // décolle tout de suite (pas d'attente du rebours)
+  });
+
   it("le vaisseau ATTEND TOUT LE MONDE : un joueur dehors mais loin retarde le décollage", () => {
     let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull: 20, engine: 0 } };
     s = reduce(s, setOutside("p1", true, 3));

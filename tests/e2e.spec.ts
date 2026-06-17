@@ -645,9 +645,12 @@ test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)"
     for (let i = 0; i < 20; i++) g?.reinforceShip?.();
   });
   await expect.poll(() => page.evaluate(() => window.__game?.getShip?.()?.hull ?? 0)).toBeGreaterThanOrEqual(5);
-  // Une fois trouvé : l'épave devient « examiner le vaisseau ».
+
+  // RF1b — le vaisseau est RAMENÉ AU CAMP : on va à l'ancre camp (24,0) ; l'interaction y est
+  // « examiner le vaisseau » et le décollage part de là (le pilote, pourtant « dedans », embarque).
+  await page.evaluate(() => window.__game?.cmd?.("/tp 24 0"));
+  await page.waitForTimeout(500);
   await expect.poll(() => page.evaluate(() => window.__game?.getFocusVerb?.())).toBe("examiner le vaisseau");
-  await page.waitForTimeout(200);
   await page.evaluate(() => window.__game?.liftOff?.());
   await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null), { timeout: 10_000 }).toBe("ascending");
 

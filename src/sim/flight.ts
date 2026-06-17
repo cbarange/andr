@@ -14,11 +14,13 @@ const SPAWN_TICKS = Math.max(1, Math.round(FLIGHT.spawnIntervalSeconds * HZ));
 const IMPACT_TICKS = Math.max(1, Math.round(FLIGHT.impactLeadSeconds * HZ));
 
 /** Joueurs DEHORS, vivants, hors grâce de respawn — candidats à l'embarquement. TRIÉS (déterministe). */
-function outsideAlivePids(state: GameState, tick: number): string[] {
+// Joueurs VIVANTS (hors grâce de respawn) — candidats à l'embarquement, QU'ILS SOIENT DEHORS OU AU CAMP
+// (RF1b : le vaisseau est désormais au CAMP, donc le pilote est « dedans » au lancement). TRIÉS (déterm.).
+function aliveCrewPids(state: GameState, tick: number): string[] {
   const out: string[] = [];
   for (const pid of Object.keys(state.survival)) {
     const sv = state.survival[pid];
-    if (sv.outside && sv.health > 0 && tick >= sv.respawnReadyAt) out.push(pid);
+    if (sv.health > 0 && tick >= sv.respawnReadyAt) out.push(pid);
   }
   return out.sort();
 }
@@ -49,7 +51,7 @@ export function stepFlight(state: GameState, flight: SharedFlight, tick: number)
   if (flight.status === "boarding") {
     const aboard = { ...flight.aboard };
     let changed = false;
-    const candidates = outsideAlivePids(state, tick);
+    const candidates = aliveCrewPids(state, tick);
     for (const pid of candidates) {
       const p = state.playerPos[pid];
       if (p && !aboard[pid] && Math.hypot(p.x - flight.x, p.z - flight.z) <= FLIGHT.boardRadius) {

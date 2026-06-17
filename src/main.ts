@@ -57,6 +57,7 @@ import { caveSteps, townSteps } from "./sim/dungeon";
 import { EncounterFx, type EncView } from "./render/encounter";
 import { GroundDrops } from "./render/drops";
 import { Liftoff } from "./render/liftoff";
+import { ShipAtCamp } from "./render/shipCamp";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
@@ -402,6 +403,10 @@ async function boot(): Promise<void> {
   const groundDrops = new GroundDrops(scene);
   // M11/E3b — mise en scène CINÉMATIQUE du décollage (ciel d'espace, vaisseau qui s'élève, débris).
   const liftoff = new Liftoff(scene, camera);
+  // M11/RF1b — LE VAISSEAU AU CAMP (« ramené à la base », fidèle ADR) : apparaît une fois l'épave
+  // trouvée et s'assemble au fil de la coque. Ancre à l'est du camp, dégagée des bâtiments (≤ r15).
+  const SHIP_CAMP = { x: 24, z: 0 };
+  const shipAtCamp = new ShipAtCamp(scene, SHIP_CAMP.x, SHIP_CAMP.z);
   // Vue sérialisable des rencontres pour le rendu (snapshot 2 Hz : positions/PV/échéances/seq).
   const toEncViews = (encs: Record<string, SharedEncounter>): Record<string, EncView> => {
     const out: Record<string, EncView> = {};
@@ -805,10 +810,9 @@ async function boot(): Promise<void> {
   // M11/E2 — LE VAISSEAU : réparer l'épave avec l'alliage (l'écran Ship d'ADR). Renforcer la coque
   // (PV de l'ascension) / calibrer le moteur (réduit la difficulté du décollage). Le décollage (E3)
   // s'arme une fois la coque minimale atteinte — annoncé ici pour donner le cap.
-  /** Position-monde du vaisseau (épave) — pour ancrer le décollage. */
+  /** Position-monde du vaisseau — l'ANCRE AU CAMP (RF1b : réparé/décollé depuis la base, fidèle ADR). */
   function shipWorldPos(): { x: number; z: number } {
-    const st = worldMap.sites.find((s) => s.type === "ship");
-    return st ? worldMap.cellToWorldCenter(st.cx, st.cz) : { x: player.position.x, z: player.position.z };
+    return shipAtCamp.worldPos();
   }
   function shipView(): DialogueView {
     const alloy = Math.floor(stockOf(state, "alien alloy"));
@@ -1267,24 +1271,32 @@ async function boot(): Promise<void> {
     }
 
     // M11/RF1 — L'ÉPAVE (au bord du monde) : la TROUVER suffit (fidèle ADR : indépendant du cuirassé).
-    // Tant qu'on ne l'a pas trouvée -> « découvrir l'épave » (DISCOVER_SHIP, pose `ship_found`). Une fois
-    // trouvée -> « examiner le vaisseau » (réparer/décoller). (RF1b déplacera l'interaction AU CAMP.)
-    for (const st of worldMap.sites) {
-      if (st.type !== "ship") continue;
-      const w = worldMap.cellToWorldCenter(st.cx, st.cz);
-      const world = new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z);
-      if (state.perks["ship_found"]) {
-        consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({ world, verb: "examiner le vaisseau", act: () => showDialogue(shipViewRef) }));
-      } else {
+    // Tant qu'on ne l'a pas trouvée -> « découvrir l'épave » (DISCOVER_SHIP). Une fois trouvée, l'épave
+    // n'est plus interactive : le vaisseau se gère AU CAMP (RF1b, branche dédiée plus bas).
+    if (!state.perks["ship_found"]) {
+      for (const st of worldMap.sites) {
+        if (st.type !== "ship") continue;
+        const w = worldMap.cellToWorldCenter(st.cx, st.cz);
         consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({
-          world, verb: "découvrir l'épave",
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z),
+          verb: "découvrir l'épave",
           act: () => {
             emit(discoverShip(self(), st.cx, st.cz));
-            hud.toast("les courbes familières d'un vaisseau wanderer émergent de la cendre. avec un peu d'alliage, il pourrait voler.");
+            hud.toast("les courbes familières d'un vaisseau wanderer émergent de la cendre — il vous attend désormais au camp.");
             audio.playSfx("checkTraps");
           },
         }));
       }
+    }
+
+    // M11/RF1b — LE VAISSEAU AU CAMP : une fois trouvé, on le répare / décolle DEPUIS LA BASE (fidèle ADR).
+    if (state.perks["ship_found"]) {
+      const sc = shipAtCamp.worldPos();
+      consider(Math.hypot(sc.x - p.x, sc.z - p.z), 7.0, () => ({
+        world: new Vector3(sc.x, terrainHeight(sc.x, sc.z) + 3.0, sc.z),
+        verb: "examiner le vaisseau",
+        act: () => showDialogue(shipViewRef),
+      }));
     }
 
     // Reste M7 — AVANT-POSTES : une grotte nettoyée (`cleared`) se ravitaille UNE fois (eau + vivres,
@@ -1969,6 +1981,10 @@ async function boot(): Promise<void> {
     encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
     groundDrops.update(dtSec); // piles de butin au sol (flottement + rotation)
     liftoff.update(dtSec, state.flight, state.tick); // M11/E3b : cinématique du décollage (caméra incluse)
+    // M11/RF1b : le vaisseau au camp — visible une fois trouvé, s'assemble au fil de la coque ; masqué
+    // pendant le décollage (la cinématique `liftoff` représente alors le vaisseau).
+    shipAtCamp.sync(!!state.perks["ship_found"] && !flying, state.ship.hull);
+    shipAtCamp.update(dtSec);
     // M8.5/F1 — PODOMÈTRE : les rencontres se déclenchent PAR PAS de déplacement (1 pas = 1 cellule
     // = 12 u), fidèle au `checkFight` d'ADR. Immobile = rien ; téléport (saut > 3 u/frame) ignoré.
     // Gelé tant qu'on est déjà ENGAGÉ (M8.6) : on n'empile pas une 2ᵉ rencontre sous ses pieds.
@@ -2123,7 +2139,7 @@ async function boot(): Promise<void> {
     reinforceShip: () => emit(reinforceShip(self())),
     upgradeEngine: () => emit(upgradeEngine(self())),
     grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
-    liftOff: () => { const st = worldMap.sites.find((s) => s.type === "ship"); if (st) { const w = worldMap.cellToWorldCenter(st.cx, st.cz); emit(liftOff(self(), w.x, w.z)); } },
+    liftOff: () => { const w = shipWorldPos(); emit(liftOff(self(), w.x, w.z)); },
     flightFire: () => emit(flightFire(self())),
     endFlight: () => emit(endFlight(self())),
     getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine } : null; },

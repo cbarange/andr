@@ -234,13 +234,15 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 > Principe : on **corrige d'abord la fidélité** (faible risque, gros gain, débloque le ressenti correct),
 > puis on **ajoute l'immersion** (gros morceaux rendu+sim), puis le **polish**.
 
-### **RF1 — Fidélité du flux de fin** *(S/M — sim + UI, faible risque)* — **priorité 1**
-- **Dé-gater le vaisseau** : la découverte de l'épave (au bord) pose `ship_found` ; **supprimer** la
-  dépendance au cuirassé (`ship_revealed` ne vient plus de `CLEAR_EXECUTIONER`).
-- **Vaisseau au CAMP** : déplacer l'interaction `shipView`/`liftoff` au camp (ancre `campLayout`) ;
-  l'épave au bord devient la **scène de découverte**.
-- **Accept.** : on peut réparer + décoller **sans** avoir touché au cuirassé, **depuis le camp** ;
-  l'alliage de n'importe quelle source suffit. Tests purs + e2e mis à jour.
+### **RF1 — Fidélité du flux de fin** *(S/M — sim + UI)* — ✅ **FAIT**
+- ✅ **Dé-gaté** : `DISCOVER_SHIP` (atteindre l'épave) pose `ship_found` ; `CLEAR_EXECUTIONER` ne révèle
+  plus le vaisseau (garde `executioner_cleared` + alliage). Gardes réparer/décoller sur `ship_found`.
+- ✅ **Vaisseau au CAMP** (`render/shipCamp.ts`, ancre `(24,0)`) : s'assemble au fil de la coque (reveal) ;
+  interaction « examiner le vaisseau » + décollage **depuis le camp** ; l'épave au bord = scène de
+  découverte (« découvrir l'épave »). Embarquement corrigé : le pilote « dedans » (au camp) embarque
+  (`flight.ts` n'exige plus `outside`). `shipWorldPos()` → ancre camp.
+- ✅ **Vérif** : 263 tests purs (+5 RF1 : DISCOVER_SHIP, dé-gating, embarquement camp…) + e2e M11 (clean)
+  « découvrir l'épave » → camp → réparer → décoller → évasion → prestige. Compat save (back-fill).
 
 ### **RF2 — Cuirassé explorable : salles + portes + arènes** *(L/XL — cœur de la refonte)*
 - **Sim** : type de donjon `executioner` multi-salles dans `dungeon.ts` (antichambre → 3 ailes → pont,
