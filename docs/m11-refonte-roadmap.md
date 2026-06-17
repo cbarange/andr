@@ -276,14 +276,18 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 - ⏳ **Reste (RF2b, avec RF5)** : le pulse de wind-up émissif (`enemyNextAt`) + la revue esthétique en
   contexte (salles sombres) se font quand `ENTER_ROOM` est câblé et l'intérieur rendu.
 
-### **RF4 — Minimap UNIFIÉE & CONTEXTUELLE (échelle monde)** *(M/L)*
-- **Un seul widget minimap**, toujours présent, à **3 layers auto-sélectionnés** (CAMP / MONDE / INTÉRIEUR)
-  selon le contexte du joueur ; transition fluide à chaque changement ; dessin 2D schématique (pas de
-  caméra ortho) ; fog-of-war **partagé co-op** ; joueur + coéquipiers + marqueur d'objectif/edge-pointer ;
-  carte plein écran sur touche dédiée. (cf. §3 pour le détail des sources de données par layer.)
-- **Phasage interne suggéré** (sans casser l'unité visée) : (a) layer MONDE (sites/routes/fog) → (b) layer
-  INTÉRIEUR (graphe de salles, utile dès RF2 pour ne pas se perdre dans le cuirassé) → (c) layer CAMP →
-  (d) coéquipiers + carte plein écran. Mais l'**objectif final = le widget contextuel unique**.
+### **RF4 — Minimap UNIFIÉE & CONTEXTUELLE (échelle monde)** *(M/L)* — ✅ **FAIT**
+- ✅ **RF4a (sim)** : fog-of-war PARTAGÉ `visitedCells` (granularité chunk, persisté) + `REVEAL_CELLS`
+  (réseau-safe, borné 32, idempotent) ; PRESTIGE reset. **3 tests purs.**
+- ✅ **RF4b (widget)** `src/ui/minimap.ts` : **un seul** canvas 2D qui se **contextualise** auto —
+  **CAMP** (feu/cabane/bâtiments/ancre vaisseau), **MONDE** (camp au centre, sites découverts via fog,
+  routes, anneaux de distance, **chevrons d'objectif** épave/cuirassé), **INTÉRIEUR** (grotte = graphe
+  `dungeonFor` ; cuirassé = salles + **portes vert/rouge/bleu** + pont-objectif). Joueur (flèche orientée)
+  + coéquipiers (« à terre » rouge), transition douce, **plein écran sur `M`**. Câblage `main.ts` :
+  `REVEAL_CELLS` au changement de chunk (rayon de vue), `update` chaque frame, détection d'intérieur.
+- ✅ **Vérif** : **278 tests**, **17 e2e**, typecheck ; preview des **3 layers + plein écran** (camp,
+  monde avec fog + diamants d'objectif, intérieur du cuirassé avec salles/portes), zéro erreur console.
+  *(Reste optionnel : coéquipiers testés en solo seulement ; edge-pointer hors-cadre minimal.)*
 - **Accept.** : la MÊME minimap me situe et m'oriente **partout** — au village, en exploration (monde
   entier, sites/routes), en grotte/mine, et dans le cuirassé — en se contextualisant automatiquement ;
   fog-of-war et coéquipiers visibles en co-op.

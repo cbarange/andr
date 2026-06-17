@@ -25,6 +25,7 @@ import { Cabin } from "./render/cabin";
 import { Interiors } from "./render/interior";
 import { ShipInterior } from "./render/shipInterior";
 import { ThresholdCine, AnimatedDoor, DipOverlay } from "./render/threshold";
+import { Minimap } from "./ui/minimap";
 import { SiteLoot } from "./render/siteLoot";
 import { Player } from "./render/player";
 import { createCamera, cameraYaw } from "./render/camera";
@@ -51,7 +52,7 @@ import {
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
   visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige, discoverShip,
+  liftOff, flightFire, endFlight, prestige, discoverShip, revealCells,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -437,6 +438,10 @@ async function boot(): Promise<void> {
   const cineDoor = new AnimatedDoor(scene);
   const dipOverlay = new DipOverlay();
   let cineCommit: (() => void) | null = null;
+  // MINIMAP UNIFIÉE & CONTEXTUELLE (M11/RF4b) : un seul widget 2D qui se contextualise (camp / monde /
+  // intérieur). Lit le snapshot (fog `visitedCells`, sites, routes, donjons) ; plein écran sur `M`.
+  const minimap = new Minimap();
+  let prevChunkKey = ""; // edge-trigger de révélation du fog (émet REVEAL_CELLS au changement de chunk)
   // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
   const siteLoot = new SiteLoot(scene);
   siteLoot.setMap(worldMap);
@@ -1063,6 +1068,8 @@ async function boot(): Promise<void> {
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
     // V (hors UI) : bascule 1ʳᵉ/3ᵉ personne (filet manuel, en plus de l'auto en intérieur).
     if (k === "v" && !hud.interactiveOpen) { forceFpv = !forceFpv; e.preventDefault(); return; }
+    // M (hors UI / cinématique) : bascule la minimap en plein écran (RF4b).
+    if (k === "m" && !hud.interactiveOpen && !cine.active) { minimap.toggleFullscreen(); e.preventDefault(); return; }
     // R (MAINTENU, hors UI) : zoom « longue-vue » (façon OptiFine). Relâché -> keyup ci-dessous.
     if (k === "r" && !hud.interactiveOpen && !devConsole?.isOpen && !spawnEditor?.active) {
       zoomHeld = true;
@@ -1582,6 +1589,19 @@ async function boot(): Promise<void> {
       prevDangerTier = tier;
       prevOnRoad = onRoad;
     }
+    // M11/RF4 — FOG-OF-WAR : au CHANGEMENT de chunk, révèle le chunk courant + ses voisins (rayon de
+    // vue). Edge-triggered (comme SET_OUTSIDE) ; l'hôte fusionne dans `visitedCells` (premier-vu partagé).
+    {
+      const CH = worldgen.chunkCells * worldgen.cellSize;
+      const cxk = Math.floor(player.position.x / CH), czk = Math.floor(player.position.z / CH);
+      const key = cxk + "," + czk;
+      if (key !== prevChunkKey) {
+        prevChunkKey = key;
+        const chunks: string[] = [];
+        for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) chunks.push(`${cxk + dx},${czk + dz}`);
+        emit(revealCells(self(), chunks)); // 25 chunks <= borne 32
+      }
+    }
     // M8.5/F4 — `checkDanger` d'ADR : avertissement aux seuils de distance sans l'armure adéquate
     // (≥ 16 cellules sans armure de fer ; ≥ 36 sans armure d'acier — seuils ADR ×2, monde ×2).
     {
@@ -2045,6 +2065,26 @@ async function boot(): Promise<void> {
     interiors.update(player.position, dtSec, hasTorch);
     interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
     shipInterior.update(player.position, dtSec, state); // M11/RF2b : cuirassé explorable (APRÈS interiors -> l'obscurité du vaisseau l'emporte)
+    // M11/RF4b — MINIMAP contextuelle : détecte l'intérieur actif (cuirassé yaw=0 / grotte-mine yaw camp),
+    // assemble les coéquipiers (transforms réseau + « à terre »), et dessine le layer adéquat.
+    {
+      let mmInterior: { type: string; cx: number; cz: number; yaw: number } | null = null;
+      const shipKey = shipInterior.activeSiteKey();
+      if (shipInterior.isLocalPlayerInside() && shipKey) {
+        const ci = shipKey.indexOf(",");
+        mmInterior = { type: "executioner", cx: Number(shipKey.slice(0, ci)), cz: Number(shipKey.slice(ci + 1)), yaw: 0 };
+      } else if (interiors.isLocalPlayerInside()) {
+        const ck = interiors.activeSiteKey();
+        if (ck) {
+          const ci = ck.indexOf(","); const ccx = Number(ck.slice(0, ci)), ccz = Number(ck.slice(ci + 1));
+          const site = worldMap.sites.find((s) => s.cx === ccx && s.cz === ccz);
+          const w = worldMap.cellToWorldCenter(ccx, ccz);
+          mmInterior = { type: site?.type ?? "cave", cx: ccx, cz: ccz, yaw: Math.atan2(-w.x, -w.z) };
+        }
+      }
+      const peers = remotes.entries().map((e) => ({ id: e.id, x: e.x, z: e.z, dead: (state.survival[e.id]?.health ?? 1) <= 0 }));
+      minimap.update({ state, self: self(), px: player.position.x, pz: player.position.z, yaw: cameraYaw(camera), worldMap, interior: mmInterior, peers });
+    }
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
     encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
