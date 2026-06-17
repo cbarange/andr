@@ -1263,15 +1263,30 @@ async function boot(): Promise<void> {
       }
     }
 
-    // M11/E2 — LE VAISSEAU : une fois le cuirassé nettoyé (`ship_revealed`), l'épave devient réparable.
-    if (state.perks["ship_revealed"]) {
-      for (const st of worldMap.sites) {
-        if (st.type !== "ship") continue;
-        const w = worldMap.cellToWorldCenter(st.cx, st.cz);
+    // M11/E2 — LE VAISSEAU : réparable une fois le cuirassé nettoyé (`ship_revealed`). AVANT ça, l'épave
+    // est inerte : on affiche tout de même un prompt qui ORIENTE le joueur vers le cuirassé (sinon il
+    // reste planté devant sans indice — l'alliage en poche ne débloque rien, c'est le cuirassé qui compte).
+    for (const st of worldMap.sites) {
+      if (st.type !== "ship") continue;
+      const w = worldMap.cellToWorldCenter(st.cx, st.cz);
+      const world = new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z);
+      if (state.perks["ship_revealed"]) {
+        consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({ world, verb: "examiner le vaisseau", act: () => showDialogue(shipViewRef) }));
+      } else {
         consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({
-          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z),
-          verb: "examiner le vaisseau",
-          act: () => showDialogue(shipViewRef),
+          world, verb: "examiner l'épave",
+          act: () => {
+            const ex = worldMap.sites.find((s) => s.type === "executioner");
+            if (ex) {
+              const ew = worldMap.cellToWorldCenter(ex.cx, ex.cz);
+              const dirs = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"];
+              const dir = dirs[((Math.round(Math.atan2(ew.x - p.x, ew.z - p.z) / (Math.PI / 4)) % 8) + 8) % 8];
+              const dist = Math.round(Math.hypot(ew.x - p.x, ew.z - p.z));
+              hud.toast(`l'appareil est mort, mais quelque chose l'alimente au loin : un CUIRASSÉ alien (~${dist} m, vers le ${dir}). réduisez-le au silence pour réveiller ce vaisseau.`);
+            } else {
+              hud.toast("l'appareil est mort — quelque chose l'alimente encore au loin. trouvez le CUIRASSÉ et réduisez-le au silence.");
+            }
+          },
         }));
       }
     }
