@@ -49,6 +49,7 @@ import {
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
+  liftOff, flightFire, endFlight,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -112,6 +113,10 @@ declare global {
       reinforceShip?: () => void;
       upgradeEngine?: () => void;
       grantPerk?: (perk: string) => void;
+      liftOff?: () => void;
+      flightFire?: () => void;
+      endFlight?: () => void;
+      getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number } | null;
       pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
@@ -343,7 +348,7 @@ async function boot(): Promise<void> {
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
-    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {} }
+    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {}, flight: null }
     : createInitialState(config.rngSeed, 0);
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
@@ -2015,6 +2020,10 @@ async function boot(): Promise<void> {
     reinforceShip: () => emit(reinforceShip(self())),
     upgradeEngine: () => emit(upgradeEngine(self())),
     grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
+    liftOff: () => { const st = worldMap.sites.find((s) => s.type === "ship"); if (st) { const w = worldMap.cellToWorldCenter(st.cx, st.cz); emit(liftOff(self(), w.x, w.z)); } },
+    flightFire: () => emit(flightFire(self())),
+    endFlight: () => emit(endFlight(self())),
+    getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine } : null; },
     pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)

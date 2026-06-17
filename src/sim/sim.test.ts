@@ -17,12 +17,13 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
+  liftOff, flightFire, endFlight,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
   engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS, CHASE_SPEED,
 } from "./combat";
-import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP } from "../../data/world";
+import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT } from "../../data/world";
 import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -1976,6 +1977,112 @@ describe("fin de partie (M11/E2) — réparer le vaisseau", () => {
   it("REPLAY : réparer le vaisseau est déterministe", () => {
     const acts: GameAction[] = [debugGrantPerk("ship_revealed"), reinforceShip("p1"), reinforceShip("p1"), upgradeEngine("p1")];
     const s0: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 10 } };
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
+  });
+});
+
+describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () => {
+  const SX = 100, SZ = 0; // position monde du vaisseau (pour l'embarquement)
+
+  /** État : vaisseau RÉVÉLÉ + coque réparée, p1 DEHORS et à la position du vaisseau. */
+  function ready(hull = 20, engine = 0): GameState {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull, engine } };
+    s = reduce(s, setOutside("p1", true, 3));
+    s = reduce(s, setPositions({ p1: { x: SX, z: SZ } }));
+    return s;
+  }
+
+  it("LIFT_OFF : gaté (révélé + coque >= seuil + pas de vol) ; démarre en EMBARQUEMENT", () => {
+    expect(reduce(ready(SHIP.liftoffHullMin - 1), liftOff("p1", SX, SZ)).flight).toBeNull(); // coque trop faible
+    const hidden: GameState = { ...ready(20), perks: {} };
+    expect(reduce(hidden, liftOff("p1", SX, SZ)).flight).toBeNull(); // pas révélé
+    const s = reduce(ready(20), liftOff("p1", SX, SZ));
+    expect(s.flight?.status).toBe("boarding");
+    expect(s.flight?.aboard["p1"]).toBe(true);
+    expect(s.flight?.hullMax).toBe(20);
+    expect(reduce(s, liftOff("p1", SX, SZ)).flight).toBe(s.flight); // déjà en vol -> no-op
+  });
+
+  it("EMBARQUEMENT solo : le pilote à bord -> l'ascension démarre au tic suivant", () => {
+    let s = reduce(ready(20), liftOff("p1", SX, SZ));
+    s = advanceTicks(s, 1);
+    expect(s.flight?.status).toBe("ascending");
+    expect(s.flight?.hull).toBe(20);
+  });
+
+  it("le vaisseau ATTEND TOUT LE MONDE : un joueur dehors mais loin retarde le décollage", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull: 20, engine: 0 } };
+    s = reduce(s, setOutside("p1", true, 3));
+    s = reduce(s, setOutside("p2", true, 3));
+    s = reduce(s, setPositions({ p1: { x: SX, z: SZ }, p2: { x: SX + 500, z: SZ } })); // p2 au loin
+    s = reduce(s, liftOff("p1", SX, SZ));
+    s = advanceTicks(s, 5);
+    expect(s.flight?.status).toBe("boarding"); // attend p2
+    s = reduce(s, setPositions({ p1: { x: SX, z: SZ }, p2: { x: SX + 2, z: SZ } })); // p2 rejoint
+    s = advanceTicks(s, 1);
+    expect(s.flight?.status).toBe("ascending");
+    expect(s.flight?.aboard["p2"]).toBe(true);
+  });
+
+  it("compte à rebours : décolle même si un retardataire ne vient pas", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull: 20, engine: 0 } };
+    s = reduce(s, setOutside("p1", true, 3));
+    s = reduce(s, setOutside("p2", true, 3));
+    s = reduce(s, setPositions({ p1: { x: SX, z: SZ }, p2: { x: SX + 500, z: SZ } }));
+    s = reduce(s, liftOff("p1", SX, SZ));
+    s = advanceTicks(s, FLIGHT.boardingCountdownSeconds * HZ + 2); // au-delà du rebours
+    expect(s.flight?.status).toBe("ascending"); // décollage forcé
+  });
+
+  it("VICTOIRE : en abattant les astéroïdes (FLIGHT_FIRE), la coque tient -> ÉVASION", () => {
+    let s = reduce(ready(20), liftOff("p1", SX, SZ));
+    for (let i = 0; i < 900 && s.flight && s.flight.status !== "escaped" && s.flight.status !== "crashed"; i++) {
+      s = reduce(s, flightFire("p1")); // tire chaque tic (le cooldown limite, mais suffit en solo)
+      s = reduce(s, tick());
+    }
+    expect(s.flight?.status).toBe("escaped");
+    expect(s.flight?.hull).toBeGreaterThan(0);
+  });
+
+  it("DÉFAITE : sans tirer, les débris percent la coque -> CRASH (retry)", () => {
+    let s = reduce(ready(SHIP.liftoffHullMin), liftOff("p1", SX, SZ));
+    for (let i = 0; i < 900 && s.flight && s.flight.status !== "escaped" && s.flight.status !== "crashed"; i++) {
+      s = reduce(s, tick()); // on ne tire PAS
+    }
+    expect(s.flight?.status).toBe("crashed");
+    expect(s.flight?.hull).toBe(0);
+  });
+
+  it("FLIGHT_FIRE : gaté (ascension + à bord + cooldown) ; END_FLIGHT clôt le vol", () => {
+    let s = advanceTicks(reduce(ready(20), liftOff("p1", SX, SZ)), 1); // -> ascending
+    expect(s.flight?.status).toBe("ascending");
+    expect(reduce(s, flightFire("p2"))).toBe(s); // p2 pas à bord -> no-op
+    s = advanceTicks(s, 60); // laisse des astéroïdes apparaître
+    const before = s.flight!.asteroids.length;
+    expect(before).toBeGreaterThan(0);
+    const fired = reduce(s, flightFire("p1"));
+    expect(fired.flight!.asteroids.length).toBe(before - 1); // abat le plus urgent
+    expect(reduce(fired, flightFire("p1"))).toBe(fired); // cooldown -> 2ᵉ tir immédiat = no-op
+    const ended = reduce(s, endFlight("p1"));
+    expect(ended.flight).toBeNull();
+  });
+
+  it("réseau-safe : LIFT_OFF/FLIGHT_FIRE/END_FLIGHT portent playerId", () => {
+    expect(isNetworkSafeAction(liftOff("p1", SX, SZ), "p1")).toBe(true);
+    expect(isNetworkSafeAction(liftOff("p1", SX, SZ), "p2")).toBe(false);
+    expect(isNetworkSafeAction(flightFire("p1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(endFlight("p1"), "p2")).toBe(false);
+  });
+
+  it("REPLAY : un décollage (embarquement + ascension + tirs) est déterministe", () => {
+    const s0: GameState = { ...createInitialState(config.rngSeed, 0), ship: { hull: 20, engine: 1 } };
+    const acts: GameAction[] = [
+      debugGrantPerk("ship_revealed"),
+      setOutside("p1", true, 3),
+      setPositions({ p1: { x: SX, z: SZ } }),
+      liftOff("p1", SX, SZ),
+      ...Array.from({ length: 200 }, (_, i) => (i % 2 === 0 ? tick() : flightFire("p1"))),
+    ];
     expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
 });

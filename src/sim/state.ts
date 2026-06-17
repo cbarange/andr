@@ -146,6 +146,33 @@ export interface GameState {
   //     l'ascension (E3) ; `engine` = poussée (réduit la difficulté du décollage). ADDITIF (back-fillé
   //     au boot), PERSISTÉ (possession du village, comme les upgrades d'entrepôt). Voyage au snapshot. ---
   ship: { hull: number; engine: number };
+
+  // --- M11/E3 : LE DÉCOLLAGE en cours (climax « extraction »). `null` hors décollage. Coque PARTAGÉE,
+  //     ascension on-rails, astéroïdes seedés que les joueurs ABATTENT. Voyage au snapshot (migration
+  //     d'hôte continue le vol) mais VOLATILE (strippé à la save : au reload on repart du vaisseau). ---
+  flight: SharedFlight | null;
+}
+
+/**
+ * UN DÉCOLLAGE COOPÉRATIF en cours (M11/E3). Host-simulé, déterministe (aucun RNG — vagues fixes).
+ * `boarding` : le vaisseau attend les joueurs (à `boardRadius`) ou le compte à rebours ; puis `ascending`
+ * (la coque encaisse les astéroïdes non abattus) ; terminal `escaped` (altitude pleine) / `crashed` (coque 0).
+ */
+export interface SharedFlight {
+  status: "boarding" | "ascending" | "escaped" | "crashed";
+  x: number; // position MONDE du vaisseau (pour l'embarquement par proximité)
+  z: number;
+  hull: number; // PV de coque COMMUNS (partagés par l'équipage)
+  hullMax: number;
+  engine: number; // niveau de moteur capturé au décollage (vitesse d'ascension)
+  progress: number; // 0..1 (altitude) ; évasion à 1
+  asteroids: Array<{ id: number; impactAt: number }>; // débris entrants (impact au tic `impactAt`)
+  nextSpawnAt: number; // tic du prochain spawn
+  nextAsteroidId: number;
+  fireReadyAt: Record<string, number>; // cooldown de tir PAR JOUEUR
+  aboard: Record<string, true>; // équipage à bord
+  countdownAt: number; // tic du décollage forcé (fin d'embarquement)
+  seq: number; // id de création (diff rendu)
 }
 
 /**
@@ -377,5 +404,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     drops: {},
     perks: {},
     ship: { hull: 0, engine: 0 },
+    flight: null,
   };
 }

@@ -18,7 +18,7 @@ export function saveGame(state: GameState): void {
     // On NE sérialise PAS `carried` (sac), `survival` (eau/vivres/PV) ni `combat` (rencontre) :
     // indexés par `selfId` qui change à chaque session -> re-vidés/réinitialisés au chargement
     // (survie PLEINE à la 1ʳᵉ sortie). Inutile de gonfler le blob avec l'état volatil de tous les pairs.
-    const slim: GameState = { ...state, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {} };
+    const slim: GameState = { ...state, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {}, flight: null };
     localStorage.setItem(KEY, JSON.stringify({ version: VERSION, state: slim }));
   } catch {
     /* quota / mode privé : on ignore */

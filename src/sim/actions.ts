@@ -146,6 +146,27 @@ export type UpgradeEngineAction = {
   playerId: string;
 };
 
+/** M11/E3 : arme le DÉCOLLAGE (le vaisseau attend l'équipage à `x,z` puis monte). Gaté : vaisseau
+ *  révélé, coque >= seuil, pas de vol en cours. `x,z` = centre du vaisseau (embarquement par proximité). */
+export type LiftOffAction = {
+  type: "LIFT_OFF";
+  playerId: string;
+  x: number;
+  z: number;
+};
+
+/** M11/E3 : tire pendant l'ascension — abat l'astéroïde le plus urgent (cooldown par joueur). */
+export type FlightFireAction = {
+  type: "FLIGHT_FIRE";
+  playerId: string;
+};
+
+/** M11/E3 : clôt le décollage en cours (après l'évasion -> fin, ou le crash -> retour au vaisseau). */
+export type EndFlightAction = {
+  type: "END_FLIGHT";
+  playerId: string;
+};
+
 /**
  * Se RAVITAILLER à un avant-poste (grotte nettoyée) : remplit l'eau + les vivres du joueur.
  * USAGE UNIQUE fidèle ADR, partagé entre joueurs (premier-servi : l'hôte arbitre). Reste M7.
@@ -377,6 +398,9 @@ export type GameAction =
   | ClearExecutionerAction
   | ReinforceShipAction
   | UpgradeEngineAction
+  | LiftOffAction
+  | FlightFireAction
+  | EndFlightAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -429,6 +453,9 @@ export type PlayerAction =
   | ClearExecutionerAction
   | ReinforceShipAction
   | UpgradeEngineAction
+  | LiftOffAction
+  | FlightFireAction
+  | EndFlightAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -538,6 +565,15 @@ export function reinforceShip(playerId: string): ReinforceShipAction {
 }
 export function upgradeEngine(playerId: string): UpgradeEngineAction {
   return { type: "UPGRADE_ENGINE", playerId };
+}
+export function liftOff(playerId: string, x: number, z: number): LiftOffAction {
+  return { type: "LIFT_OFF", playerId, x, z };
+}
+export function flightFire(playerId: string): FlightFireAction {
+  return { type: "FLIGHT_FIRE", playerId };
+}
+export function endFlight(playerId: string): EndFlightAction {
+  return { type: "END_FLIGHT", playerId };
 }
 export function useOutpost(playerId: string, cx: number, cz: number): UseOutpostAction {
   return { type: "USE_OUTPOST", playerId, cx, cz };

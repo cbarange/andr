@@ -344,6 +344,20 @@ export const SHIP = {
   alloyPerEngine: 1,  // alliage par cran de moteur
 } as const;
 
+/** M11/E3 — LE DÉCOLLAGE (climax « extraction allégée », fidèle au mini-jeu de vol d'ADR adapté au
+ *  co-op) : ascension on-rails, COQUE PARTAGÉE, vagues d'astéroïdes seedées ; les joueurs TIRENT pour
+ *  abattre les débris entrants avant l'impact. Le moteur accélère l'ascension (gantelet plus court). */
+export const FLIGHT = {
+  ascentSeconds: 30,            // durée de l'ascension à vide (le moteur la raccourcit)
+  engineSpeedup: 0.15,          // chaque cran de moteur réduit la durée d'ascension de 15 %
+  spawnIntervalSeconds: 1.4,    // cadence d'apparition des astéroïdes entrants
+  impactLeadSeconds: 2.4,       // délai avant impact (la fenêtre pour tirer)
+  asteroidDamage: 2,            // dégâts à la coque par astéroïde NON abattu
+  fireCooldownSeconds: 0.5,     // cadence de tir PAR JOUEUR (plus de joueurs = plus de canons)
+  boardRadius: 10,              // (u) rayon d'embarquement autour du vaisseau
+  boardingCountdownSeconds: 20, // attente max avant décollage forcé (le vaisseau « attend tout le monde »)
+} as const;
+
 export const resources = {
   wood: { id: "wood", label: "Bois", initial: 0 },
 } as const;

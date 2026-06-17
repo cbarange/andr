@@ -11,7 +11,7 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival, SharedEncounter, maxWaterOf, maxHealthOf, nearestPlayerTo,
+  PlayerSurvival, baseSurvival, SharedEncounter, SharedFlight, maxWaterOf, maxHealthOf, nearestPlayerTo,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
@@ -21,10 +21,11 @@ import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit,
   engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS,
 } from "./combat";
+import { stepFlight, mostUrgentAsteroid } from "./flight";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP,
+  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -530,6 +531,42 @@ export function reduce(state: GameState, action: GameAction): GameState {
       resources["alien alloy"] = stockOf(state, "alien alloy") - SHIP.alloyPerEngine;
       if (resources["alien alloy"] <= 0) delete resources["alien alloy"];
       return { ...state, resources, ship: { ...state.ship, engine: state.ship.engine + 1 }, rng: cloneRng(state.rng) };
+    }
+
+    case "LIFT_OFF": {
+      // M11/E3 — arme le DÉCOLLAGE : le vaisseau passe en EMBARQUEMENT (attend l'équipage à `boardRadius`
+      // ou le compte à rebours), puis monte (cf. TICK 9). Gaté : révélé, coque >= seuil, pas de vol en cours.
+      if (!state.perks["ship_revealed"] || state.flight) return state;
+      if (state.ship.hull < SHIP.liftoffHullMin) return state;
+      const flight: SharedFlight = {
+        status: "boarding",
+        x: action.x, z: action.z,
+        hull: state.ship.hull, hullMax: state.ship.hull, engine: state.ship.engine,
+        progress: 0, asteroids: [], nextSpawnAt: 0, nextAsteroidId: 1,
+        fireReadyAt: {}, aboard: { [action.playerId]: true },
+        countdownAt: state.tick + Math.round(FLIGHT.boardingCountdownSeconds * HZ),
+        seq: state.tick,
+      };
+      return { ...state, flight, rng: cloneRng(state.rng) };
+    }
+
+    case "FLIGHT_FIRE": {
+      // M11/E3 — tir d'un membre d'équipage : abat l'astéroïde le plus urgent (cooldown PAR JOUEUR).
+      const f = state.flight;
+      const pid = action.playerId;
+      if (!f || f.status !== "ascending" || !f.aboard[pid]) return state;
+      if (state.tick < (f.fireReadyAt[pid] ?? 0)) return state; // recharge
+      const target = mostUrgentAsteroid(f);
+      if (!target) return state; // rien à abattre -> pas de tir « à vide »
+      const asteroids = f.asteroids.filter((a) => a.id !== target.id);
+      const fireReadyAt = { ...f.fireReadyAt, [pid]: state.tick + Math.round(FLIGHT.fireCooldownSeconds * HZ) };
+      return { ...state, flight: { ...f, asteroids, fireReadyAt }, rng: cloneRng(state.rng) };
+    }
+
+    case "END_FLIGHT": {
+      // M11/E3 — clôt le vol (après l'évasion -> écran de fin E4, ou le crash -> retour au vaisseau).
+      if (!state.flight) return state;
+      return { ...state, flight: null, rng: cloneRng(state.rng) };
     }
 
     case "CRAFT_ITEM": {
@@ -1386,7 +1423,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const capWater = maxWaterOf(state); // M10 : caps d'équipement (entrepôt, communs)
       const capHp = maxHealthOf(state);
       const survIds = Object.keys(state.survival).sort();
-      if (survIds.length > 0) {
+      // M11/E3 — pendant l'ascension, l'expédition est SUSPENDUE (l'équipage est dans l'espace) :
+      // ni drain de survie, ni combat au sol. Le climax (phase 9) prend le relais.
+      const ascending = state.flight?.status === "ascending";
+      if (survIds.length > 0 && !ascending) {
         const nextSurv: Record<string, PlayerSurvival> = { ...state.survival };
         let survMutated = false;
         for (const pid of survIds) {
@@ -1528,6 +1568,11 @@ export function reduce(state: GameState, action: GameAction): GameState {
         if (nextDrops) drops = nextDrops;
       }
 
+      // 9) DÉCOLLAGE (M11/E3) — ascension du vaisseau (host-autoritaire, déterministe). Hors vol : no-op.
+      //    La survie utilise les valeurs FRAÎCHES (post-drain) pour l'embarquement (joueurs dehors/vivants).
+      let flight = state.flight;
+      if (flight) flight = stepFlight({ ...state, survival }, flight, tick);
+
       return {
         ...state,
         tick,
@@ -1535,6 +1580,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         survival,
         encounters,
         drops,
+        flight,
         fire,
         fireCoolAt,
         temperature,
