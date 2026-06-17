@@ -170,7 +170,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   ⚠️ **Écarts de fidélité vérifiés sur le code source d'ADR** : (1) le cuirassé ne devrait PAS gater le
   vaisseau (sources d'alliage parallèles) ; (2) le vaisseau se gère **depuis le camp** (onglet « An Old
   Starship ») et non au bord du monde ; (3) le **`fleet beacon`** (optionnel, fin alternative) manque.
-  + immersion : le cuirassé doit devenir un **donjon explorable salle-par-salle** (ennemis aliens) ; **minimap** à ajouter.
+  + immersion : le cuirassé doit devenir un **donjon explorable salle-par-salle** (ennemis aliens) ;
+  **minimap unifiée & contextuelle** (échelle monde : camp/exploration/grotte/vaisseau) ; **transitions
+  cinématiques de seuil** (porte qui s'ouvre + travelling + passage 3e↔1re personne à chaque entrée/sortie d'environnement clos, sauf cabane).
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·

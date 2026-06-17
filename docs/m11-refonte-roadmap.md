@@ -121,8 +121,45 @@ Best-practice « arène » (résout le *Door Problem*) :
 - **Spring-arm sphere-cast** (rayon ~0.3-0.5) au lieu d'un simple raycast (Babylon : `camera.checkCollisions`
   + `collisionRadius`) ; **rapprocher vite / éloigner lentement** (anti-oscillation en coin).
 - **Auto-FPV** (ou TPS très serré) dans les couloirs étroits ; **fade des murs** entre caméra et joueur.
-- **Transition extérieur→intérieur** amortie (lerp `radius` + `fov` sur ~0.3-0.5 s) à l'entrée du sas.
+- **Transition extérieur→intérieur** : voir §2.5 (cinématique de seuil, qui REMPLACE le simple lerp).
 - Tout est **local** (zéro incidence host). Réutilise la machinerie FPV existante (déjà active en cabane/grottes).
+
+### 2.5 Transitions CINÉMATIQUES de seuil (« portes morales ») — exigence porteur
+> **Exigence** : entrer/sortir d'un **environnement clos** (grotte, mine, **vaisseau/cuirassé**) déclenche
+> une **mini-cinématique** : la caméra se fige, le joueur lâche les commandes, une **porte/un portillon
+> s'ouvre**, le personnage avance de quelques pas à l'intérieur (mouvement cinématographique), une
+> transition visuelle joue, puis la **maniabilité est rendue** et la caméra passe en **1re personne**.
+> Même chose à la SORTIE (se retourner vers la porte → interagir → cinématique inverse → 3e personne dehors).
+> **Exception : la CABANE** (garde son fondu 3PV↔1PV à hystérésis actuel, sans cinématique).
+> Généralise : *à chaque changement d'angle de caméra nécessaire, une cinématographie joue* (fluide + esthétique).
+
+- **Le seuil = une « porte morale »** matérialisée par un **élément 3D ANIMÉ** propre au type de site :
+  - **Mine** : un **portillon en bois** (battant sur charnière) qui s'ouvre.
+  - **Grotte** : une **arche/faille** marquée (ex. rideau de lianes écarté, ou herse de bois ; un seuil
+    lisible, pas forcément une « porte »).
+  - **Vaisseau / cuirassé** : une **porte futuriste** (coulissante latérale ou **iris circulaire**) +
+    halo lumineux.
+- **Verbe d'interaction** au seuil (touche d'interaction principale, depuis dehors) : « **pénétrer dans
+  le vaisseau** » / « **entrer dans la grotte** » / « **descendre dans la mine** ». Depuis dedans, près
+  du seuil : « **ressortir** ».
+- **Séquence d'ENTRÉE** (commandes verrouillées, caméra scriptée) :
+  1. la porte/portillon joue son **animation d'ouverture** ;
+  2. le personnage **avance** de quelques pas à travers le seuil (déplacement scripté, ease-in/out) ;
+  3. **transition visuelle** au franchissement (reco : *dolly-in* qui suit le perso + **bref creux au noir
+     « mi-fondu »** pile au seuil — masque le build de l'intérieur, technique AAA classique de porte) ;
+  4. de l'autre côté : la caméra **s'installe en 1re personne**, **les commandes reviennent**.
+- **Séquence de SORTIE** : symétrique (marche vers la porte → ouverture vers l'extérieur → dolly-out →
+  mi-fondu → installation en 3e personne dehors → commandes rendues).
+- **Technique recommandée** (l'industrie masque le streaming par une **occlusion/fondu bref au seuil** :
+  RE/Mass Effect/portes) : *dolly-through + dip-to-black* court (**< 1,5 s**), courbes ease-in/out (anti
+  mal des transports), **jamais de coupe sèche**. **Skippable** après la 1re fois (anti-lassitude sur trajets répétés).
+- **100 % LOCAL** (caméra/commandes/cinématique par joueur ; l'intérieur se build déjà localement via
+  `interior.ts`). **Aucune incidence host → zéro risque de désync.** Le creux au noir est le **moment idéal
+  pour déclencher le build/free** de l'intérieur (chargement masqué).
+- **Réutilise** : la machinerie FPV (cabane/grottes) pour l'état 1re personne ; `interior.ts` pour le
+  build au franchissement. **À créer** : un composant « **seuil animé** » (mesh de porte + animation
+  open/close par type) et un petit **orchestrateur de cinématique** (verrouillage input + spline/lerp
+  caméra + marche scriptée + fondu).
 
 ---
 
@@ -230,9 +267,15 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   entier, sites/routes), en grotte/mine, et dans le cuirassé — en se contextualisant automatiquement ;
   fog-of-war et coéquipiers visibles en co-op.
 
-### **RF5 — Caméra intérieur** *(S/M)*
-- Spring-arm sphere-cast + auto-FPV couloir + fade des murs + transition amortie. **Accept.** : combat
-  lisible en espace confiné, pas de caméra dans le mur, pas de snap.
+### **RF5 — Caméra intérieur & TRANSITIONS CINÉMATIQUES de seuil** *(M)*
+- **Caméra** : spring-arm sphere-cast + auto-FPV couloir + fade des murs (§2.4).
+- **Transitions de seuil** (§2.5) : composant « seuil animé » (portillon bois / faille / porte futuriste
+  iris) + orchestrateur de cinématique (verrouillage input → ouverture porte → marche scriptée →
+  dolly + mi-fondu → 1re personne dedans / 3e personne dehors → rendu des commandes). Entrée ET sortie.
+  Build de l'intérieur déclenché pendant le creux au noir. Skippable après la 1re fois.
+- **S'applique aux grottes/mines EXISTANTES** (gain immédiat) **et** au cuirassé (RF2). **Exception : cabane.**
+- **Accept.** : entrer/sortir d'une grotte/mine/du vaisseau joue une mini-cinématique fluide (porte qui
+  s'ouvre, travelling, passage 3e↔1re personne) ; combat intérieur lisible ; aucune coupe sèche ; 100 % local (pas de désync).
 
 ### **RF6 — Beacon & fins** *(S)*
 - `fleet beacon` = drop du boss final du cuirassé ; à l'évasion, **fin étendue** si possédé. **Accept.** :
@@ -258,6 +301,11 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 5. **Minimap** : ✅ **TRANCHÉ (porteur)** — minimap **UNIFIÉE & CONTEXTUELLE à l'échelle du monde
    entier**, toujours présente, qui se contextualise (camp / exploration-monde / grotte-mine / vaisseau).
    Cf. §3 et RF4. (Seul reste un choix de *phasage* interne, pas de périmètre.)
+6. **Transitions de seuil** : ✅ **TRANCHÉ (porteur)** — **cinématique à chaque entrée/sortie** d'environnement
+   clos (grotte/mine/vaisseau, **sauf cabane**) : porte qui s'ouvre → marche scriptée → passage 3e↔1re
+   personne. Cf. §2.5 et RF5. *Style* recommandé : *dolly-through + mi-fondu < 1,5 s, skippable* (à confirmer
+   à l'usage). *Reste à préciser au design : exactement quels environnements (toutes les grottes/mines ? les
+   sites de surface ville/cité aussi ?).*
 
 ---
 
@@ -270,6 +318,10 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   envoyé **tôt** ; timers en `startTime` absolu.
 - **Caméra** : pas de TPS large en couloir (resserrer/FPV) ; pas de snap (lerp) ; rapprocher vite,
   éloigner lentement.
+- **Transitions de seuil (§2.5)** : garder COURT (< 1,5 s) + **skippable** après la 1re fois (lassitude
+  sur trajets répétés) ; courbes ease (anti mal des transports) ; **build/free de l'intérieur PENDANT le
+  creux au noir** (chargement masqué) ; bien **rendre les commandes** et restaurer l'état caméra à la fin
+  (pas de joueur « coincé » si la cinématique est interrompue — prévoir un timeout de sécurité).
 - **Ton** : montrer plutôt que dire ; ne pas sur-expliquer le twist du wanderer ; UI minimaliste fidèle ADR.
 
 ---
@@ -288,6 +340,7 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 | Modèles ship/executioner | `render/sites.ts` | **étendre** (agrandir + intérieur) |
 | Placement des sites | `data/world.ts` `sites`, `worldgen.ts` | **réutiliser** |
 | Minimap / boussole | — | **à créer** (zéro infra) |
+| Seuils animés (portillon/faille/porte iris) + orchestrateur de cinématique de transition | — (FPV existant réutilisé) | **à créer** (composant porte animée + scripteur caméra/input) |
 | Atelier (pour Fabricator) | M10 craft UI | **réutiliser/étendre** |
 
 ---
