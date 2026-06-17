@@ -265,9 +265,11 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   guard, operative, automated/defence turret, unstable automaton* + boss (*unstable prototype 150,
   malformed experiment 200, murderous robot 250, immortal wanderer 500*), stats ADR exactes ; `EnemyDef`
   étendu (`model` + `static?` + `windupSeconds?`).
-- ⏳ **RF3b (modèles — prochain)** : builders low-poly `chitinid`/`turret`/`robot`/`wanderer` (`characters.ts`),
-  émissif = menace, pulse de wind-up lu sur `enemyNextAt`. **Accept.** : silhouettes lisibles, distinctes
-  de la faune terrestre.
+- ✅ **RF3b FAIT (modèles)** : builders low-poly `buildChitinid`/`buildTurret`/`buildRobot`/`buildWanderer`
+  (`characters.ts`), émissif = menace (cyan standard / magenta boss), dispatch `model→builder` dans
+  `encounter.ts`, palette étendue. Vérifié en preview (boss « Vagabond Immortel » lisible, zéro erreur).
+- ⏳ **Reste (RF2b, avec RF5)** : le pulse de wind-up émissif (`enemyNextAt`) + la revue esthétique en
+  contexte (salles sombres) se font quand `ENTER_ROOM` est câblé et l'intérieur rendu.
 
 ### **RF4 — Minimap UNIFIÉE & CONTEXTUELLE (échelle monde)** *(M/L)*
 - **Un seul widget minimap**, toujours présent, à **3 layers auto-sélectionnés** (CAMP / MONDE / INTÉRIEUR)
