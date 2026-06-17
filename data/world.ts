@@ -406,7 +406,7 @@ export const RESOURCE_RARITY: Record<string, Rarity> = {
   wood: "standard", fur: "standard", meat: "standard", "cured meat": "standard", bait: "standard",
   leather: "rare", coal: "rare", iron: "rare", scales: "rare", teeth: "rare",
   cloth: "rare", sulphur: "rare", steel: "rare", bullets: "rare", charm: "rare",
-  "alien alloy": "rare", "energy cell": "rare", // butin de forage / cité / champ de bataille (fin de partie)
+  "alien alloy": "rare", "energy cell": "rare", "fleet beacon": "rare", // butin de fin de partie (le beacon = boss du pont, M11/RF6)
   medicine: "rare", // butin de l'homme grelottant (M8) ; consommée par USE_MEDS (M10)
   grenade: "rare", bayonet: "rare", "laser rifle": "rare", bolas: "rare", // armes de troc / butin
   // Upgrades d'atelier (M10) : possessions de l'ENTREPÔT (max 1 — la rareté importe peu).
@@ -855,7 +855,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   wood: "bois", fur: "fourrure", meat: "viande", "cured meat": "viande séchée",
   leather: "cuir", scales: "écailles", teeth: "dents", cloth: "étoffe", charm: "charme",
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
-  "alien alloy": "alliage", "energy cell": "cellule", torch: "torche",
+  "alien alloy": "alliage", "energy cell": "cellule", "fleet beacon": "balise de flotte", torch: "torche",
   medicine: "médecine", "bone spear": "lance d'os",
   // M10 — atelier & troc :
   waterskin: "outre", cask: "baril", "water tank": "citerne",

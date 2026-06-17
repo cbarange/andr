@@ -370,7 +370,9 @@ export function executionerDungeon(cx: number, cz: number, worldSeed: number): S
   const engLoot = alloy();
   const marLoot = alloy();
   const medLoot = alloy();
-  const briLoot: Record<string, number> = { "alien alloy": 3 + nextInt(rng, 3) }; // 3..5 (RF6 ajoutera le beacon)
+  // Pont : gros cache d'alliage + le FLEET BEACON GARANTI (M11/RF6 — drop du boss `immortal wanderer`,
+  // change la fin : épilogue étendu si ramené à l'évasion ; optionnel, non reporté au prestige).
+  const briLoot: Record<string, number> = { "alien alloy": 3 + nextInt(rng, 3), "fleet beacon": 1 }; // 3..5 + 1 beacon
   // Layout AXIS-ALIGNED & salles ADJACENTES (parois mitoyennes -> sas franc, rendu RF2b simple) :
   // antichambre au centre ; ingénierie/martiale à l'ouest/est ; médicale au nord ; pont au-delà.
   const rooms: DungeonRoom[] = [

@@ -2037,7 +2037,10 @@ describe("cuirassé EXPLORABLE (M11/RF2) — donjon de salles, arènes verrouill
     expect(s.sites[KEY].rooms?.bridge).toBe("cleared");
     expect(s.sites[KEY].cleared).toBe(true); // cuirassé terminé
     expect(Object.keys(s.roads).length).toBeGreaterThan(0); // route tracée (fusion réseau)
-    expect(s.drops[`exec:${KEY}:bridge`]).toBeTruthy(); // butin du pont au sol (RF6 y mettra le beacon)
+    // Butin du pont au sol : alliage + le FLEET BEACON garanti (RF6).
+    const bridgeDrop = s.drops[`exec:${KEY}:bridge`];
+    expect(bridgeDrop).toBeTruthy();
+    expect(bridgeDrop.loot["fleet beacon"]).toBe(1); // drop garanti du boss final
     // Cuirassé fini -> ré-entrer est sans effet.
     expect(reduce(s, enterRoom("p1", CX, CZ, "engineering"))).toBe(s);
   });
@@ -2238,7 +2241,7 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
       ...createInitialState(config.rngSeed, 0),
       perks: { precise: true, gastronome: true, ship_found: true, ship_revealed: true, executioner_cleared: true, signal_seen: true },
       prestige: 2,
-      resources: { wood: 50, "alien alloy": 3 },
+      resources: { wood: 50, "alien alloy": 3, "fleet beacon": 1 },
       sites: { "1,1": { discovered: true, cleared: true } },
       ship: { hull: 20, engine: 3 },
       flight: {
@@ -2262,7 +2265,8 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
     expect(s.perks["signal_seen"]).toBeUndefined();
     expect(s.flight).toBeNull(); // plus de vol
     expect(s.ship).toEqual({ hull: 0, engine: 0 }); // vaisseau réinitialisé
-    expect(s.resources).toEqual({}); // stocks réinitialisés
+    expect(s.resources).toEqual({}); // stocks réinitialisés (le `fleet beacon` n'est PAS reporté — RF6)
+    expect(s.resources["fleet beacon"]).toBeUndefined();
     expect(Object.keys(s.sites).length).toBe(0); // exploration réinitialisée
     expect(s.cabinRepaired).toBe(false); // tout repart de la ruine
     expect(s.worldSeed).not.toBe(s0.worldSeed); // MONDE NEUF (graine fraîche)

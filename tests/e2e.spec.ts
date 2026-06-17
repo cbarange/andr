@@ -663,6 +663,10 @@ test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)"
   }
   await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null)).toBe("escaped");
 
+  // RF6 — le `fleet beacon` est en stock (rempli via fillStorage) -> ÉPILOGUE ÉTENDU (flotte wanderer).
+  expect(await page.evaluate(() => window.__game?.getStored?.()?.["fleet beacon"] ?? 0)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.__game?.endingText?.() ?? "")).toContain("flotte");
+
   // PRESTIGE (NG+) : recommencer -> monde neuf, compteur ++, vaisseau & sim réinitialisés.
   await page.evaluate(() => window.__game?.prestige?.());
   await expect.poll(() => page.evaluate(() => window.__game?.getProgress?.()?.prestige ?? 0)).toBeGreaterThanOrEqual(1);

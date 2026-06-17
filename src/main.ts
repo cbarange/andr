@@ -128,6 +128,7 @@ declare global {
       getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number } | null;
       prestige?: () => void;
       getProgress?: () => { prestige: number };
+      endingText?: () => string;
       pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
@@ -913,15 +914,26 @@ async function boot(): Promise<void> {
     }
     hud.toast(`un monde neuf s'éveille. (évasions : ${state.prestige})`);
   }
-  const endingView = (): DialogueView => ({
-    speaker: "épilogue",
-    text: "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
-      + "derrière vous, un feu que vous avez nourri ; devant, les étoiles. vous êtes libre.",
-    choices: [
-      { label: "recommencer — un monde neuf", enabled: true, onSelect: restartWorld },
-      { label: "contempler les étoiles", enabled: true, onSelect: () => { /* reste sur l'écran de fin */ } },
-    ],
-  });
+  const endingView = (): DialogueView => {
+    // M11/RF6 — FIN ÉTENDUE si le `fleet beacon` (drop du boss du pont) a été ramené à bord
+    // (à l'entrepôt OU au sac). Sinon, fin standard. Le beacon est OPTIONNEL (n'empêche pas l'évasion).
+    const hasBeacon = stockOf(state, "fleet beacon") > 0 || carriedOf(state, self(), "fleet beacon") > 0;
+    const text = hasBeacon
+      ? "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
+        + "la balise de flotte s'éveille dans la soute : un signal court vers les ténèbres, et QUELQUE CHOSE "
+        + "répond. des silhouettes immenses glissent entre les étoiles — la flotte des wanderers vous a "
+        + "entendu·e. vous n'êtes pas seul·e. la première à fuir, jamais la dernière."
+      : "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
+        + "derrière vous, un feu que vous avez nourri ; devant, les étoiles. le silence est total. vous êtes libre.";
+    return {
+      speaker: "épilogue",
+      text,
+      choices: [
+        { label: "recommencer — un monde neuf", enabled: true, onSelect: restartWorld },
+        { label: "contempler les étoiles", enabled: true, onSelect: () => { /* reste sur l'écran de fin */ } },
+      ],
+    };
+  };
   const endingViewRef = (): DialogueView => endingView();
 
   function formatStores(stores: Record<string, number>): string {
@@ -2214,6 +2226,7 @@ async function boot(): Promise<void> {
     getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine } : null; },
     prestige: () => restartWorld(),
     getProgress: () => ({ prestige: state.prestige }),
+    endingText: () => endingView().text, // M11/RF6 : variante d'épilogue (étendue si fleet beacon possédé)
     pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)

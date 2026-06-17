@@ -303,9 +303,13 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 - **Exception : cabane** (garde son fondu 3PV↔1PV). **Accept.** : entrer joue une mini-cinématique fluide,
   aucune coupe sèche, 100 % local.
 
-### **RF6 — Beacon & fins** *(S)*
-- `fleet beacon` = drop du boss final du cuirassé ; à l'évasion, **fin étendue** si possédé. **Accept.** :
-  deux variantes de fin ; beacon non reporté au prestige.
+### **RF6 — Beacon & fins** *(S)* — ✅ **FAIT**
+- ✅ `fleet beacon` = **drop GARANTI** du boss du pont (`immortal wanderer`) — ajouté au `room.loot` du pont
+  (`dungeon.ts`) ; ressource `rare` (labels/rarity `world.ts`), ramassée au sol → sac → entrepôt (TAKE_DROP/
+  DEPOSIT existants, aucune nouvelle action). À l'évasion, **épilogue ÉTENDU** (la flotte wanderer répond)
+  si `fleet beacon` en stock OU au sac ; sinon fin standard. **NON reporté au prestige** (comme l'alliage).
+- ✅ **Vérif** : tests purs (drop garanti au clear du pont, beacon absent après PRESTIGE) + e2e M11
+  (beacon en stock → épilogue « flotte »). Hook debug `endingText`. 275 tests, 17 e2e.
 
 ### **RF7 — Fabricator (optionnel) + polish + audio** *(M)*
 - Onglet Fabricator au camp (gaté antichambre cuirassé), audio de fin/espace dédié, équilibrage.
