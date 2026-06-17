@@ -302,10 +302,9 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
    entier**, toujours présente, qui se contextualise (camp / exploration-monde / grotte-mine / vaisseau).
    Cf. §3 et RF4. (Seul reste un choix de *phasage* interne, pas de périmètre.)
 6. **Transitions de seuil** : ✅ **TRANCHÉ (porteur)** — **cinématique à chaque entrée/sortie** d'environnement
-   clos (grotte/mine/vaisseau, **sauf cabane**) : porte qui s'ouvre → marche scriptée → passage 3e↔1re
-   personne. Cf. §2.5 et RF5. *Style* recommandé : *dolly-through + mi-fondu < 1,5 s, skippable* (à confirmer
-   à l'usage). *Reste à préciser au design : exactement quels environnements (toutes les grottes/mines ? les
-   sites de surface ville/cité aussi ?).*
+   clos : **GROTTE, MINE, VAISSEAU uniquement** (vrais intérieurs clos). **PAS** les sites de surface
+   (ville/cité = fouille en surface, non clos). **Cabane exclue** (garde son fondu actuel). Style recommandé :
+   *dolly-through + mi-fondu < 1,5 s, skippable*. Cf. §2.5 et RF5.
 
 ---
 
