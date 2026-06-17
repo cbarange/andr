@@ -11,11 +11,11 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival, SharedEncounter, SharedFlight, maxWaterOf, maxHealthOf, nearestPlayerTo, createInitialState,
+  PlayerSurvival, baseSurvival, SharedEncounter, SharedFlight, SiteProgress, maxWaterOf, maxHealthOf, nearestPlayerTo, createInitialState,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
-import { lootForNode, lootNodeIds, caveSteps, townSteps, type CaveStep } from "./dungeon";
+import { lootForNode, lootNodeIds, caveSteps, townSteps, executionerDungeon, type CaveStep, type DungeonRoom } from "./dungeon";
 import { drawRoad } from "./roads";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit,
@@ -74,6 +74,20 @@ const DROP_DESPAWN_TICKS = Math.round(config.combat.dropDespawnSeconds * HZ); //
 /** Centre MONDE d'un site (cx,cz) — fidèle à `cellToWorldCenter` du worldgen. Ancre des gardiens. */
 function siteCenter(cx: number, cz: number): { x: number; z: number } {
   return { x: cx * worldgen.cellSize, z: cz * worldgen.cellSize };
+}
+
+/** M11/RF2 : centre MONDE d'une salle du cuirassé (centre du site + offset local de la salle). PUR. */
+function roomWorldCenter(cx: number, cz: number, room: DungeonRoom): { x: number; z: number } {
+  const c = siteCenter(cx, cz);
+  return { x: c.x + room.pos.x, z: c.z + room.pos.z };
+}
+
+/** M11/RF2 : offset déterministe (sans RNG) du i-ème ennemi d'une arène autour du centre de salle —
+ *  un anneau en angle d'or, pour les répartir lisiblement à l'entrée du joueur. PUR. */
+function spreadOffset(i: number): { x: number; z: number } {
+  const ang = i * 2.39996; // angle d'or (rad)
+  const r = 2 + (i % 3) * 1.5; // 2 / 3.5 / 5 u
+  return { x: Math.cos(ang) * r, z: Math.sin(ang) * r };
 }
 
 /** Le joueur est-il ENGAGÉ dans une rencontre quelconque (à portée) ? Garde anti-action en plein
@@ -930,6 +944,55 @@ export function reduce(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case "ENTER_ROOM": {
+      // M11/RF2 — PÉNÉTRER dans une salle du cuirassé : verrou d'arène + spawn de la vague (host).
+      // L'antichambre (hub) n'a pas de combat -> se nettoie au tic suivant. Le PONT exige les 3 ailes.
+      // Idempotent : une salle déjà locked/cleared (ou un cuirassé fini) ne re-spawn jamais.
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.cleared) return state; // cuirassé déjà fini (ou vieille save migrée)
+      const dungeon = executionerDungeon(action.cx, action.cz, state.worldSeed);
+      const room = dungeon.rooms.find((r) => r.id === action.room);
+      if (!room) return state;
+      if (prog.rooms?.[room.id]) return state; // déjà locked ou cleared -> no-op
+      // GATE PONT : le pont n'est franchissable qu'avec les 3 ailes nettoyées.
+      if (room.isBridge && !(prog.wings?.engineering && prog.wings?.martial && prog.wings?.medical)) return state;
+      const rooms = { ...(prog.rooms ?? {}), [room.id]: "locked" as const };
+      const encounters = { ...state.encounters };
+      let nextEncId = state.nextEncId;
+      const center = roomWorldCenter(action.cx, action.cz, room);
+      let i = 0;
+      for (const wave of room.enemies) {
+        const enemy = enemyById[wave.enemyId];
+        if (!enemy) continue;
+        for (let c = 0; c < wave.count; c++) {
+          const off = spreadOffset(i);
+          const id = `exec:${key}:${room.id}:${i}`; // id STABLE (host-only) -> pas de double spawn
+          encounters[id] = {
+            enemyId: enemy.id,
+            enemyHp: enemy.hp,
+            x: center.x + off.x,
+            z: center.z + off.z,
+            enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
+            weaponReadyAt: {},
+            seq: nextEncId++,
+            siteKey: key,
+            siteType: "executioner",
+            roomId: room.id,
+            noFlee: true, // ARÈNE : pas de laisse -> engagement forcé (l'équipe doit nettoyer la salle)
+          };
+          i++;
+        }
+      }
+      return {
+        ...state,
+        sites: { ...state.sites, [key]: { ...prog, type: "executioner", discovered: true, rooms } },
+        encounters,
+        nextEncId,
+        rng: cloneRng(state.rng),
+      };
+    }
+
     case "ATTACK": {
       // M8.6 : frappe une rencontre PARTAGÉE (par `encId`). Guards : rencontre vivante, joueur ENGAGÉ
       // (à portée — via `playerPos`), arme connue & possédée (poings toujours), cooldown PAR JOUEUR
@@ -1518,8 +1581,9 @@ export function reduce(state: GameState, action: GameAction): GameState {
           });
 
           // (2) POURSUITE vers le plus proche des joueurs tenus en laisse (sinon l'ennemi reste sur place).
+          //     Les tourelles (`static`, M11/RF3) ne se déplacent jamais — elles tirent sur place.
           const near = leashed.length ? nearestPlayerTo(stateNow, enc.x, enc.z, leashed) : null;
-          if (near) {
+          if (near && !enemy.static) {
             const target = state.playerPos[near.pid];
             if (target) {
               const moved = stepEnemyToward(enc, target.x, target.z, TICK_SEC);
@@ -1602,6 +1666,45 @@ export function reduce(state: GameState, action: GameAction): GameState {
         if (nextDrops) drops = nextDrops;
       }
 
+      // 8e) CUIRASSÉ (M11/RF2) — CLEAR DE SALLE ÉMERGENT : une salle "locked" dont toutes les
+      //     rencontres sont mortes (via ATTACK) passe "cleared" (host — le client ne décide pas qu'une
+      //     salle est vide). Pose le flag d'AILE (gate du pont) ; le PONT nettoyé FINIT le cuirassé
+      //     (cleared global -> route + masque modèle, comme une grotte). Butin de fin de salle -> drop
+      //     au sol (premier-servi). Aucun RNG (les opérations commutent : indépendantes par salle).
+      let sites = state.sites;
+      let roads = state.roads;
+      {
+        for (const key of Object.keys(sites).sort()) {
+          const prog = sites[key];
+          if (prog.type !== "executioner" || !prog.rooms) continue;
+          const locked = Object.keys(prog.rooms).filter((r) => prog.rooms![r] === "locked").sort();
+          if (locked.length === 0) continue;
+          const [cxs, czs] = key.split(",").map(Number);
+          const dungeon = executionerDungeon(cxs, czs, state.worldSeed);
+          for (const roomId of locked) {
+            const stillAlive = Object.keys(encounters).some((id) => {
+              const e = encounters[id];
+              return e.siteKey === key && e.roomId === roomId;
+            });
+            if (stillAlive) continue; // la salle est encore contestée
+            const room = dungeon.rooms.find((r) => r.id === roomId);
+            if (!room) continue;
+            const cur = sites[key];
+            const newProg: SiteProgress = { ...cur, rooms: { ...cur.rooms!, [roomId]: "cleared" } };
+            if (room.wing) newProg.wings = { ...(newProg.wings ?? {}), [room.wing]: true }; // gate du pont
+            if (room.isBridge) newProg.cleared = true; // cuirassé FINI
+            sites = { ...sites, [key]: newProg };
+            if (room.isBridge) roads = drawRoad(roads, sites, cxs, czs);
+            // Bonus de fin de salle -> drop au sol (le butin individuel des ennemis est déjà tombé via ATTACK).
+            if (Object.keys(room.loot).length > 0) {
+              const c = roomWorldCenter(cxs, czs, room);
+              drops = drops === state.drops ? { ...state.drops } : drops;
+              drops[`exec:${key}:${roomId}`] = { x: c.x, z: c.z, loot: { ...room.loot }, despawnAt: tick + DROP_DESPAWN_TICKS };
+            }
+          }
+        }
+      }
+
       // 9) DÉCOLLAGE (M11/E3) — ascension du vaisseau (host-autoritaire, déterministe). Hors vol : no-op.
       //    La survie utilise les valeurs FRAÎCHES (post-drain) pour l'embarquement (joueurs dehors/vivants).
       let flight = state.flight;
@@ -1635,6 +1738,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
         eventScheduledAt,
         pendingEffects,
         perks: perksOut,
+        sites,
+        roads,
         rng: rng === state.rng ? cloneRng(state.rng) : rng,
       };
     }

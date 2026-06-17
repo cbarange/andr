@@ -245,17 +245,29 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   « découvrir l'épave » → camp → réparer → décoller → évasion → prestige. Compat save (back-fill).
 
 ### **RF2 — Cuirassé explorable : salles + portes + arènes** *(L/XL — cœur de la refonte)*
-- **Sim** : type de donjon `executioner` multi-salles dans `dungeon.ts` (antichambre → 3 ailes → pont,
-  pont gaté sur les 3 ailes) ; état de salle (`locked`/`cleared`), drapeaux d'ailes ; combats à l'entrée
-  (host-autoritaire, réutilise M8.6).
-- **Rendu** : étendre `interior.ts` aux **salles distinctes + sas** ; portes télégraphiées (rouge/vert) ;
-  culling par salle.
+- ✅ **Sim FAIT** : `executionerDungeon(cx,cz,seed)` dans `dungeon.ts` (antichambre hub → 3 ailes
+  ingénierie/martiale/médicale → pont gaté sur les 3 ailes ; layout scripté + butin seedé). Action
+  `ENTER_ROOM` (réseau-safe) : verrou d'arène (`noFlee`) + spawn de la vague (ids stables `exec:key:room:i`,
+  réutilise M8.6). `SiteProgress.rooms`/`wings` + `SharedEncounter.roomId` (additifs). **Clear ÉMERGENT**
+  (TICK 8e, host) : salle vidée → `cleared` + flag d'aile ; **pont nettoyé = cuirassé fini** (`cleared`
+  global + route + drop de fin). Tourelles `static` ne poursuivent pas. Compat : `ENGAGE_GUARDIAN`/
+  `CLEAR_EXECUTIONER` gardés (dormants jusqu'à RF2b). **8 tests purs** (déterminisme, spawn, gate pont,
+  clear émergent, raid complet, replay, réseau-safe, static).
+- ⏳ **RF2b (rendu — prochain)** : `render/shipInterior.ts` (salles distinctes + sas, portes télégraphiées
+  rouge/vert/bleu, culling par salle) ; wiring `main.ts` (focus `pénétrer`/`entrer dans l'aile`/`monter sur
+  le pont` → `ENTER_ROOM` ; retrait du gantelet `ENGAGE_GUARDIAN`/`CLEAR_EXECUTIONER` du flux + back-fill
+  vieilles saves). Couplé à RF5 (cinématique de seuil) et RF3b (modèles).
 - **Accept.** : on explore le cuirassé salle par salle ; entrer dans une salle déclenche un combat
   verrouillé ; le pont s'ouvre une fois les 3 ailes faites ; co-op cohérent. Replay déterministe.
 
 ### **RF3 — Ennemis aliens** *(M — données + modèles)*
-- Modéliser 3-4 archétypes aliens (kit low-poly + `characters.ts`), table d'ennemis dédiée, télégraphie
-  *wind-up* émissive. **Accept.** : silhouettes lisibles, distinctes de la faune terrestre.
+- ✅ **Données FAITES** : table d'aliens en tier 0 (`world.ts`) — *chitinous horror, unruly welder, alien
+  guard, operative, automated/defence turret, unstable automaton* + boss (*unstable prototype 150,
+  malformed experiment 200, murderous robot 250, immortal wanderer 500*), stats ADR exactes ; `EnemyDef`
+  étendu (`model` + `static?` + `windupSeconds?`).
+- ⏳ **RF3b (modèles — prochain)** : builders low-poly `chitinid`/`turret`/`robot`/`wanderer` (`characters.ts`),
+  émissif = menace, pulse de wind-up lu sur `enemyNextAt`. **Accept.** : silhouettes lisibles, distinctes
+  de la faune terrestre.
 
 ### **RF4 — Minimap UNIFIÉE & CONTEXTUELLE (échelle monde)** *(M/L)*
 - **Un seul widget minimap**, toujours présent, à **3 layers auto-sélectionnés** (CAMP / MONDE / INTÉRIEUR)

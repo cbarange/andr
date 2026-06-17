@@ -197,9 +197,10 @@ export interface SharedEncounter {
   lostTicks?: number; // tics consécutifs sans joueur à portée de laisse (leash -> despawn)
   // --- SETPIECE (gardien de mine/grotte/ville/cité). Champs absents = rencontre aléatoire. ---
   siteKey?: string; // site gardé ("cx,cz")
-  siteType?: string; // type du site (mine / cave / town / city)
+  siteType?: string; // type du site (mine / cave / town / city / executioner)
   guardianIdx?: number; // index de l'étape dans la séquence scriptée du site
   noFlee?: boolean; // combat sans laisse (boss de mine, combats forcés d'hôpital — fidèle ADR)
+  roomId?: string; // M11/RF2 : salle du cuirassé (arène) à laquelle cette rencontre est rattachée
 }
 
 /**
@@ -250,6 +251,10 @@ export interface SiteProgress {
   guardians?: number;
   /** Lieu ONE-SHOT déjà visité (maison fouillée, cabane du marais — fidèle `markVisited`). M8.5. */
   visited?: boolean;
+  /** Cuirassé (M11/RF2) : état d'ARÈNE par salle. roomId -> "locked" (combat en cours) | "cleared". */
+  rooms?: Record<string, "locked" | "cleared">;
+  /** Cuirassé (M11/RF2) : ailes terminées (gate du pont). Une aile cleared = `true` ici. */
+  wings?: Partial<Record<"engineering" | "martial" | "medical", true>>;
 }
 
 /** Clé d'un site dans `state.sites` à partir de ses coordonnées de cellule. */

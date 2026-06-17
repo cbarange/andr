@@ -322,6 +322,75 @@ export function townSteps(type: "town" | "city", cx: number, cz: number, worldSe
   return (type === "town" ? rollTownPath(rng) : rollCityPath(rng)).steps;
 }
 
+// ============================================================================
+//  M11/RF2 — LE CUIRASSÉ EXPLORABLE : un DONJON DE SALLES (≠ l'anneau+couloirs continu des
+//  grottes). Antichambre (hub) → 3 ailes (ingénierie/martiale/médicale) → pont (gaté sur les 3
+//  ailes). Layout SCRIPTÉ (climax fidèle ADR `setpieces.js ship`) ; seul le BUTIN de fin de salle
+//  est tiré à la graine. PUR & déterministe (host et clients le recalculent à l'identique).
+//  Positions LOCALES (origine = sas d'entrée ; le rendu translate au centre-monde du site).
+// ============================================================================
+
+export type RoomId = "antechamber" | "engineering" | "martial" | "medical" | "bridge";
+
+/** Une salle du cuirassé : volume rectangulaire, vague d'ennemis (host) + butin de fin de salle. */
+export interface DungeonRoom {
+  id: RoomId;
+  pos: { x: number; z: number }; // centre LOCAL (origine = sas d'entrée)
+  size: { w: number; d: number }; // emprise rectangulaire (u)
+  wing?: "engineering" | "martial" | "medical"; // les 3 ailes (poser le flag à la fin = gate du pont)
+  isHub?: boolean; // antichambre (pas de combat)
+  isBridge?: boolean; // pont (gaté sur les 3 ailes)
+  enemies: Array<{ enemyId: string; count: number }>; // vague d'arène (spawn host à l'entrée)
+  loot: Record<string, number>; // butin de fin de salle (drop au sol au clear)
+}
+
+/** Un sas reliant deux salles (porte rendue, couleur = état d'arène — RF2b/RF5). */
+export interface DungeonDoor {
+  from: RoomId;
+  to: RoomId;
+}
+
+/** Le donjon du cuirassé (graphe de salles + sas). */
+export interface ShipDungeon {
+  type: "executioner";
+  rooms: DungeonRoom[];
+  doors: DungeonDoor[];
+}
+
+/**
+ * Génère le donjon du cuirassé — PUR & déterministe. Layout FIXE (scripté pour le climax) ;
+ * seul le butin de fin de salle (alliage) est tiré à la graine, en ORDRE FIXE.
+ *  - antichambre (hub, sans combat) -> point de départ vers les 3 ailes ;
+ *  - chaque aile = une arène (piétaille + boss) qui pose son flag d'aile au clear ;
+ *  - pont = gaté sur les 3 ailes ; son clear FINIT le cuirassé (le `fleet beacon` y tombera — RF6).
+ */
+export function executionerDungeon(cx: number, cz: number, worldSeed: number): ShipDungeon {
+  const rng = createRng(dungeonSeed("executioner", cx, cz, worldSeed));
+  const alloy = (): Record<string, number> => ({ "alien alloy": 1 + nextInt(rng, 3) }); // 1..3
+  const engLoot = alloy();
+  const marLoot = alloy();
+  const medLoot = alloy();
+  const briLoot: Record<string, number> = { "alien alloy": 3 + nextInt(rng, 3) }; // 3..5 (RF6 ajoutera le beacon)
+  const rooms: DungeonRoom[] = [
+    { id: "antechamber", pos: { x: 0, z: 0 }, size: { w: 20, d: 22 }, isHub: true, enemies: [], loot: {} },
+    { id: "engineering", pos: { x: -26, z: 14 }, size: { w: 20, d: 22 }, wing: "engineering", loot: engLoot,
+      enemies: [{ enemyId: "unruly welder", count: 2 }, { enemyId: "automated turret", count: 1 }, { enemyId: "unstable prototype", count: 1 }] },
+    { id: "martial", pos: { x: 26, z: 14 }, size: { w: 20, d: 22 }, wing: "martial", loot: marLoot,
+      enemies: [{ enemyId: "alien guard", count: 2 }, { enemyId: "defence turret", count: 1 }, { enemyId: "chitinous horror", count: 1 }, { enemyId: "murderous robot", count: 1 }] },
+    { id: "medical", pos: { x: 0, z: 30 }, size: { w: 20, d: 22 }, wing: "medical", loot: medLoot,
+      enemies: [{ enemyId: "defence turret", count: 1 }, { enemyId: "unstable automaton", count: 1 }, { enemyId: "malformed experiment", count: 1 }] },
+    { id: "bridge", pos: { x: 0, z: 56 }, size: { w: 22, d: 24 }, isBridge: true, loot: briLoot,
+      enemies: [{ enemyId: "operative", count: 2 }, { enemyId: "immortal wanderer", count: 1 }] },
+  ];
+  const doors: DungeonDoor[] = [
+    { from: "antechamber", to: "engineering" },
+    { from: "antechamber", to: "martial" },
+    { from: "antechamber", to: "medical" },
+    { from: "medical", to: "bridge" },
+  ];
+  return { type: "executioner", rooms, doors };
+}
+
 /** Butin d'un nœud précis (lecture pure du donjon généré). {} si inconnu / sans butin. */
 export function lootForNode(type: string, cx: number, cz: number, worldSeed: number, nodeId: string): Record<string, number> {
   const node = dungeonFor(type, cx, cz, worldSeed).nodes.find((n) => n.id === nodeId);

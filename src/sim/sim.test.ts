@@ -17,14 +17,14 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige, discoverShip,
+  liftOff, flightFire, endFlight, prestige, discoverShip, enterRoom,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
   engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS, CHASE_SPEED,
 } from "./combat";
 import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT } from "../../data/world";
-import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
+import { dungeonFor, lootNodeIds, caveSteps, townSteps, executionerDungeon } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
 
@@ -1930,6 +1930,137 @@ describe("fin de partie (M11/E1) — le cuirassé scripté & le signal", () => {
     expect(signal.isAvailable(withAlloy)).toBe(true); // alliage en stock -> la lueur pulse
     const seen: GameState = { ...withAlloy, perks: { signal_seen: true } };
     expect(signal.isAvailable(seen)).toBe(false); // déjà vu -> ONE-SHOT
+  });
+});
+
+describe("cuirassé EXPLORABLE (M11/RF2) — donjon de salles, arènes verrouillées, gate du pont", () => {
+  const CX = 40, CZ = 40, KEY = siteKey(CX, CZ);
+  const CD = 2 * HZ; // cooldown baïonnette
+
+  /** Centre-monde d'une salle (centre du site + offset local). */
+  function roomCenter(room: string): { x: number; z: number } {
+    const r = executionerDungeon(CX, CZ, config.rngSeed).rooms.find((x) => x.id === room)!;
+    return { x: CX * CELL + r.pos.x, z: CZ * CELL + r.pos.z };
+  }
+  /** Place p1 DEHORS, debout au centre d'une salle (à portée de toutes les rencontres de l'arène). */
+  function standInRoom(s: GameState, room: string): GameState {
+    const c = roomCenter(room);
+    return standAt(reduce(s, setOutside("p1", true, 3)), "p1", c.x, c.z);
+  }
+  /** Vide une salle : frappe toutes ses rencontres à la baïonnette (anti-mort : full heal) jusqu'au clear. */
+  function killRoom(s: GameState, room: string): GameState {
+    for (let i = 0; i < 600; i++) {
+      const live = Object.keys(s.encounters).filter((id) => s.encounters[id].roomId === room);
+      if (live.length === 0) break;
+      s = reduce(s, debugSetSurvival("p1", { health: 9999 }));
+      for (const id of live) s = reduce(s, attack("p1", "bayonet", id));
+      if (Object.keys(s.encounters).some((id) => s.encounters[id].roomId === room)) s = advanceTicks(s, CD);
+    }
+    return s;
+  }
+  /** Entre dans une salle, s'y poste, la vide, puis 1 TICK pour déclencher le CLEAR émergent (8e). */
+  function takeRoom(s: GameState, room: string): GameState {
+    s = reduce(s, enterRoom("p1", CX, CZ, room));
+    s = standInRoom(s, room);
+    s = killRoom(s, room);
+    return advanceTicks(s, 1);
+  }
+  function fresh(): GameState {
+    return { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "s armour": 1 }, carried: { p1: { bayonet: 1 } } };
+  }
+
+  it("executionerDungeon : PUR & déterministe (mêmes salles/portes/butin pour une même graine)", () => {
+    const a = executionerDungeon(CX, CZ, 12345);
+    const b = executionerDungeon(CX, CZ, 12345);
+    expect(a).toEqual(b);
+    expect(a.rooms.map((r) => r.id)).toEqual(["antechamber", "engineering", "martial", "medical", "bridge"]);
+    expect(a.rooms.find((r) => r.isHub)?.id).toBe("antechamber");
+    expect(a.rooms.find((r) => r.isBridge)?.id).toBe("bridge");
+    expect(a.rooms.filter((r) => r.wing).map((r) => r.wing).sort()).toEqual(["engineering", "martial", "medical"]);
+    // Une graine différente -> même layout (scripté) mais butin potentiellement différent.
+    const c = executionerDungeon(CX, CZ, 999);
+    expect(c.rooms.map((r) => r.id)).toEqual(a.rooms.map((r) => r.id));
+  });
+
+  it("ENTER_ROOM : verrou + spawn de la vague (rencontres taguées roomId, noFlee, ids STABLES)", () => {
+    const dungeon = executionerDungeon(CX, CZ, config.rngSeed);
+    const eng = dungeon.rooms.find((r) => r.id === "engineering")!;
+    const want = eng.enemies.reduce((n, w) => n + w.count, 0); // 2+1+1 = 4
+    const s = reduce(fresh(), enterRoom("p1", CX, CZ, "engineering"));
+    const ids = Object.keys(s.encounters).filter((id) => s.encounters[id].roomId === "engineering");
+    expect(ids.length).toBe(want);
+    expect(ids).toContain(`exec:${KEY}:engineering:0`); // id stable host-only
+    for (const id of ids) {
+      expect(s.encounters[id].noFlee).toBe(true); // arène : engagement forcé
+      expect(s.encounters[id].siteKey).toBe(KEY);
+      expect(s.encounters[id].siteType).toBe("executioner");
+    }
+    expect(s.sites[KEY].rooms?.engineering).toBe("locked");
+    expect(s.sites[KEY].type).toBe("executioner");
+    // Idempotent : ré-entrer dans une salle déjà locked ne re-spawn pas.
+    expect(reduce(s, enterRoom("p1", CX, CZ, "engineering"))).toBe(s);
+  });
+
+  it("ENTER_ROOM(bridge) : NO-OP tant que les 3 ailes ne sont pas nettoyées ; OK une fois complètes", () => {
+    // Pont sans aucune aile -> refusé (aucune rencontre, aucun verrou).
+    const s0 = reduce(fresh(), enterRoom("p1", CX, CZ, "bridge"));
+    expect(s0.sites[KEY]?.rooms?.bridge).toBeUndefined();
+    expect(Object.keys(s0.encounters).length).toBe(0);
+    // Les 3 ailes posées -> le pont s'ouvre (spawn operative×2 + vagabond immortel).
+    const ready: GameState = { ...fresh(), sites: { [KEY]: { type: "executioner", wings: { engineering: true, martial: true, medical: true } } } };
+    const s1 = reduce(ready, enterRoom("p1", CX, CZ, "bridge"));
+    expect(s1.sites[KEY].rooms?.bridge).toBe("locked");
+    const ids = Object.keys(s1.encounters).filter((id) => s1.encounters[id].roomId === "bridge");
+    expect(ids.length).toBe(3); // operative ×2 + immortal wanderer
+    expect(ids.some((id) => s1.encounters[id].enemyId === "immortal wanderer")).toBe(true);
+  });
+
+  it("CLEAR ÉMERGENT (TICK 8e) : vider une aile -> rooms[id]=cleared + flag d'aile + butin au sol", () => {
+    const s = takeRoom(fresh(), "engineering");
+    expect(s.sites[KEY].rooms?.engineering).toBe("cleared");
+    expect(s.sites[KEY].wings?.engineering).toBe(true); // gate du pont
+    expect(s.sites[KEY].cleared).toBeUndefined(); // une aile ne FINIT pas le cuirassé
+    const drop = s.drops[`exec:${KEY}:engineering`];
+    expect(drop).toBeTruthy();
+    expect((drop.loot["alien alloy"] ?? 0)).toBeGreaterThan(0); // bonus de fin de salle
+  });
+
+  it("RAID COMPLET : 3 ailes -> pont ouvrable -> clear du pont = cuirassé FINI (route + cleared global)", () => {
+    let s = fresh();
+    s = takeRoom(s, "engineering");
+    s = takeRoom(s, "martial");
+    s = takeRoom(s, "medical");
+    expect(s.sites[KEY].wings).toEqual({ engineering: true, martial: true, medical: true });
+    expect(s.sites[KEY].cleared).toBeUndefined(); // pas encore : le pont reste
+    // Le pont s'ouvre maintenant ; on le nettoie -> cuirassé FINI.
+    s = takeRoom(s, "bridge");
+    expect(s.sites[KEY].rooms?.bridge).toBe("cleared");
+    expect(s.sites[KEY].cleared).toBe(true); // cuirassé terminé
+    expect(Object.keys(s.roads).length).toBeGreaterThan(0); // route tracée (fusion réseau)
+    expect(s.drops[`exec:${KEY}:bridge`]).toBeTruthy(); // butin du pont au sol (RF6 y mettra le beacon)
+    // Cuirassé fini -> ré-entrer est sans effet.
+    expect(reduce(s, enterRoom("p1", CX, CZ, "engineering"))).toBe(s);
+  });
+
+  it("ENTER_ROOM est réseau-safe (porte playerId)", () => {
+    expect(isNetworkSafeAction(enterRoom("p1", CX, CZ, "engineering"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(enterRoom("p1", CX, CZ, "engineering"), "p2")).toBe(false); // usurpation refusée
+  });
+
+  it("REPLAY : entrer + vider une aile + TICK est déterministe", () => {
+    const run = (): GameState => takeRoom(fresh(), "engineering");
+    expect(run()).toEqual(run());
+  });
+
+  it("RF3 — les tourelles (static) ne POURSUIVENT pas (restent sur place)", () => {
+    expect(enemyById["automated turret"].static).toBe(true);
+    expect(enemyById["defence turret"].static).toBe(true);
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10 };
+    s = { ...s, encounters: { t: { enemyId: "automated turret", enemyHp: 60, x: 100, z: 100, enemyNextAt: 9_999_999, weaponReadyAt: {}, seq: 1 } } };
+    s = standAt(reduce(s, setOutside("p1", true, 3)), "p1", 110, 100); // 10u : tenu en laisse mais hors portée
+    const moved = advanceTicks(s, 20);
+    expect(moved.encounters["t"].x).toBe(100);
+    expect(moved.encounters["t"].z).toBe(100);
   });
 });
 

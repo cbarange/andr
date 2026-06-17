@@ -27,8 +27,8 @@ camp, beacon optionnel) → **refonte planifiée** : [`m11-refonte-roadmap.md`](
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 258 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie inclus
-npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
+npm run test    # 271 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie inclus
+npm run e2e     # 16 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
 
@@ -204,10 +204,11 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    flux d'ennemis 15 Hz interpolé). **Reste** : preview MULTI 2 onglets (manuel), écran de butin,
    F5 (perks d'usage), `cityCleared`→Raid militaire.
 1. **M11-REFONTE (recommandé n°1)** — corriger la fidélité de la fin + l'immersion, d'après l'audit du
-   code source d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)** (RF1 dé-gater le
-   vaisseau + le ramener au camp ; RF2 cuirassé explorable salle-par-salle ; RF3 ennemis aliens ; RF4
-   minimap ; RF5 caméra intérieur ; RF6 beacon/fins ; RF7 Fabricator). **RF1 d'abord** (faible risque,
-   gros gain de fidélité). M11 v1 reste jouable en attendant.
+   code source d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)**. **RF1 ✅** (vaisseau
+   dé-gaté + ramené au camp). **RF2 sim ✅ + RF3 données ✅** (cuirassé = donjon de salles `executionerDungeon`
+   + `ENTER_ROOM` + clear émergent + gate du pont ; table d'aliens). **Prochain : RF2b/RF3b (rendu)** —
+   `shipInterior.ts` (salles/portes/culling) + modèles aliens + wiring `main.ts` (le gantelet reste dormant
+   d'ici là). Puis RF4 minimap ; RF5 caméra/seuils ; RF6 beacon/fins ; RF7 Fabricator. M11 v1 reste jouable.
 2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;

@@ -256,6 +256,16 @@ export type EngageGuardianAction = {
   siteType: string;
 };
 
+/** M11/RF2 : PÉNÈTRE dans une salle du cuirassé (hub/aile/pont) — verrou d'arène + spawn de la vague
+ *  (host). Le pont exige les 3 ailes nettoyées. La salle se CLEAR ensuite d'elle-même (TICK host). */
+export type EnterRoomAction = {
+  type: "ENTER_ROOM";
+  playerId: string;
+  cx: number;
+  cz: number;
+  room: string;
+};
+
 /** M8.5/F3.3 : fouille une MAISON abandonnée (one-shot) — 25 % médecine / 25 % vivres + eau /
  *  50 % squatteur embusqué (combat). Fidèle au setpiece `house` d'ADR. */
 export type VisitHouseAction = {
@@ -424,6 +434,7 @@ export type GameAction =
   | SetOutsideAction
   | StepsAction
   | EngageGuardianAction
+  | EnterRoomAction
   | VisitHouseAction
   | TalkSwampAction
   | AttackAction
@@ -481,6 +492,7 @@ export type PlayerAction =
   | SetOutsideAction
   | StepsAction
   | EngageGuardianAction
+  | EnterRoomAction
   | VisitHouseAction
   | TalkSwampAction
   | AttackAction
@@ -618,6 +630,9 @@ export function setPositions(positions: Record<string, { x: number; z: number }>
 }
 export function takeDrop(playerId: string, dropId: string): TakeDropAction {
   return { type: "TAKE_DROP", playerId, dropId };
+}
+export function enterRoom(playerId: string, cx: number, cz: number, room: string): EnterRoomAction {
+  return { type: "ENTER_ROOM", playerId, cx, cz, room };
 }
 export function engageGuardian(playerId: string, cx: number, cz: number, siteType: string): EngageGuardianAction {
   return { type: "ENGAGE_GUARDIAN", playerId, cx, cz, siteType };

@@ -225,7 +225,11 @@ export interface EnemyDef {
   tier: number; // 0 = setpiece only · 1..3 = distance · 4 = caverne (intérim)
   terrain: "forest" | "field" | "barrens" | "cave" | "none"; // biome requis (gating ADR)
   ranged: boolean; // tire à distance (animation ; soldat/sniper)
-  model: "beast" | "lizard" | "bird" | "humanoid"; // silhouette low-poly (rendu)
+  // Silhouette low-poly (rendu). M11/RF3 ajoute les archétypes ALIENS (cuirassé) : `chitinid` (carapace,
+  // nuée), `turret` (statique, 2 canons), `robot` (humanoïde métal), `wanderer` (boss flottant magenta).
+  model: "beast" | "lizard" | "bird" | "humanoid" | "chitinid" | "turret" | "robot" | "wanderer";
+  static?: boolean; // M11/RF3 : ne POURSUIT pas (tourelles) — la poursuite host saute le déplacement.
+  windupSeconds?: number; // M11/RF3 : télégraphie (rendu) ; défaut = fraction de strikeSeconds.
   loot: Array<[string, number, number, number]>; // [ressource, chance, min, max]
 }
 export const enemies: EnemyDef[] = [
@@ -310,6 +314,33 @@ export const enemies: EnemyDef[] = [
     loot: [["cloth", 0.8, 1, 5], ["teeth", 1.0, 2, 2], ["steel", 0.6, 1, 3], ["scales", 0.1, 2, 3]] },
   { id: "tentacles", name: "tentacules", hp: 60, damage: 2, hit: 0.6, strikeSeconds: 0.5, tier: 0, terrain: "none", ranged: false, model: "lizard",
     loot: [["meat", 1.0, 10, 20]] },
+  // --- M11/RF3 : ALIENS DU CUIRASSÉ (setpieces.js `ship` — gardiens des salles du donjon, jamais
+  //     tirés au hasard). Émissif = menace ; chaque salle mêle de la piétaille + un boss. Le butin
+  //     individuel (alliage/cellules) + le bonus de fin de salle font du cuirassé la grande source
+  //     d'alliage de fin de partie (fidèle ADR). ---
+  { id: "chitinous horror", name: "horreur chitineuse", hp: 60, damage: 1, hit: 0.8, strikeSeconds: 1, tier: 0, terrain: "none", ranged: false, model: "chitinid",
+    loot: [["scales", 0.8, 1, 3], ["teeth", 0.5, 1, 2]] }, // quadrupède rapide (nuée)
+  { id: "unruly welder", name: "soudeur déchaîné", hp: 30, damage: 4, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "robot",
+    loot: [["energy cell", 0.5, 1, 3], ["alien alloy", 0.1, 1, 1]] },
+  { id: "alien guard", name: "garde alien", hp: 50, damage: 8, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "humanoid",
+    loot: [["energy cell", 0.5, 1, 5], ["alien alloy", 0.1, 1, 1]] },
+  { id: "operative", name: "agent alien", hp: 60, damage: 8, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: true, model: "humanoid",
+    loot: [["energy cell", 0.6, 2, 5], ["laser rifle", 0.1, 1, 1]] },
+  { id: "automated turret", name: "tourelle automatisée", hp: 60, damage: 8, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: true, model: "turret", static: true,
+    loot: [["energy cell", 0.8, 2, 5], ["alien alloy", 0.2, 1, 1]] },
+  { id: "defence turret", name: "tourelle défensive", hp: 60, damage: 8, hit: 0.8, strikeSeconds: 2, tier: 0, terrain: "none", ranged: true, model: "turret", static: true,
+    loot: [["energy cell", 0.8, 2, 5], ["alien alloy", 0.2, 1, 1]] },
+  { id: "unstable automaton", name: "automate instable", hp: 100, damage: 5, hit: 0.7, strikeSeconds: 2, tier: 0, terrain: "none", ranged: false, model: "robot",
+    loot: [["energy cell", 0.8, 2, 6], ["alien alloy", 0.3, 1, 2]] },
+  // Boss de salle (émissif magenta/cyan vif — `windupSeconds` télégraphié) :
+  { id: "unstable prototype", name: "prototype instable", hp: 150, damage: 5, hit: 0.8, strikeSeconds: 2, windupSeconds: 0.8, tier: 0, terrain: "none", ranged: false, model: "robot",
+    loot: [["alien alloy", 0.6, 1, 3], ["energy cell", 0.8, 3, 6]] },
+  { id: "malformed experiment", name: "expérience difforme", hp: 200, damage: 5, hit: 0.6, strikeSeconds: 2, windupSeconds: 0.9, tier: 0, terrain: "none", ranged: false, model: "chitinid",
+    loot: [["alien alloy", 0.6, 1, 3], ["energy cell", 0.8, 3, 6]] },
+  { id: "murderous robot", name: "robot meurtrier", hp: 250, damage: 10, hit: 0.8, strikeSeconds: 2, windupSeconds: 1.0, tier: 0, terrain: "none", ranged: false, model: "robot",
+    loot: [["alien alloy", 0.8, 2, 4], ["energy cell", 1.0, 4, 8]] },
+  { id: "immortal wanderer", name: "vagabond immortel", hp: 500, damage: 12, hit: 0.8, strikeSeconds: 2, windupSeconds: 1.2, tier: 0, terrain: "none", ranged: false, model: "wanderer",
+    loot: [["alien alloy", 1.0, 1, 3], ["energy cell", 1.0, 3, 8]] }, // boss du PONT (le beacon = room.loot, RF6)
 ];
 export const enemyById: Record<string, EnemyDef> = Object.fromEntries(enemies.map((e) => [e.id, e]));
 /** Ennemis éligibles d'un tier (1..4). (Le tier 0 — setpieces — n'est jamais tiré au hasard.) */
