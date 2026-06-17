@@ -617,3 +617,50 @@ test("M10 — atelier (armure -> 15 PV), troc ADR et équipement au coffre", asy
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
+
+// M11 — FIN DE PARTIE : réparer le vaisseau (alliage), décoller, abattre les débris jusqu'à l'évasion,
+// puis PRESTIGE (NG+) -> monde neuf. On force la révélation + l'alliage par les raccourcis dev (le raid
+// du cuirassé est couvert en unitaire) ; le reste passe par le vrai chemin de jeu (hooks `__game`).
+test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(600);
+
+  // Révéler le vaisseau + alliage (raccourci dev) ; moteur au max + coque au max (ascension courte & sûre).
+  await page.evaluate(() => {
+    const g = window.__game;
+    g?.grantPerk?.("ship_revealed"); g?.setCabinTier?.(10); g?.fillStorage?.(0.6);
+    for (let i = 0; i < 3; i++) g?.upgradeEngine?.();
+    for (let i = 0; i < 20; i++) g?.reinforceShip?.();
+  });
+  await expect.poll(() => page.evaluate(() => window.__game?.getShip?.()?.hull ?? 0)).toBeGreaterThanOrEqual(5);
+
+  // Aller à l'épave (dehors), puis DÉCOLLER.
+  await page.evaluate(() => window.__game?.cmd?.("/tp ship"));
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(400);
+  await page.evaluate(() => window.__game?.liftOff?.());
+  await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null), { timeout: 10_000 }).toBe("ascending");
+
+  // Abattre les débris (FLIGHT_FIRE) jusqu'à l'évasion — la coque tient si l'on tire assez.
+  for (let i = 0; i < 220; i++) {
+    const st = await page.evaluate(() => window.__game?.getFlight?.()?.status ?? "null");
+    if (st === "escaped" || st === "null") break;
+    await page.evaluate(() => window.__game?.flightFire?.());
+    await page.waitForTimeout(120);
+  }
+  await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null)).toBe("escaped");
+
+  // PRESTIGE (NG+) : recommencer -> monde neuf, compteur ++, vaisseau & sim réinitialisés.
+  await page.evaluate(() => window.__game?.prestige?.());
+  await expect.poll(() => page.evaluate(() => window.__game?.getProgress?.()?.prestige ?? 0)).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.())).toBeNull();
+  await expect.poll(() => page.evaluate(() => window.__game?.getShip?.()?.hull ?? -1)).toBe(0); // vaisseau remis à zéro
+  await expect.poll(() => page.evaluate(() => window.__game?.getCabinRepaired?.() ?? true)).toBe(false); // monde neuf (ruine)
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});

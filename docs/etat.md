@@ -17,14 +17,15 @@
 host-autoritaire**. L'**Acte I jouable de bout en bout** (feu → construction → population → métiers/chaînes),
 le **village vivant et harmonieux**, un **monde carré exploré** (biomes en régions, vraies bordures, sites
 variés, grottes/mines explorables, routes qui se tissent), la **survie dehors** (M6/M7), le **combat
-temps réel fidèle ADR** (M8) et l'**économie d'objets complète** (M10 : atelier, armures/armes, poste
-de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l'alliage a déjà sa source.
+temps réel fidèle ADR** désormais **COOPÉRATIF** (M8.6 : ennemis partagés, attaquables à plusieurs),
+l'**économie d'objets complète** (M10) et **LA FIN DE PARTIE** (M11 : raid du cuirassé → réparer le
+vaisseau → décollage co-op → évasion → prestige). **La boucle ADR est complète, le jeu est finissable.**
 
 ## Vérification (tout vert)
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 239 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 258 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie inclus
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -161,6 +162,10 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **M10 (atelier/commerce/perks) ✅** — les 2 derniers bâtiments inertes (atelier, poste de traite)
   sont VIVANTS ; tiers 2/3 jouables avec armures ; outfitting au coffre. Reste : bolas (stun),
   boussole (décision ouverte), laser/plasma (butin de cité, M11).
+- **M11 (fin de partie) ✅** — **le cuirassé** (raid scripté co-op) révèle **le vaisseau** ; on le RÉPARE à
+  l'alliage (coque/moteur), on **DÉCOLLE** (extraction co-op : coque partagée, débris seedés abattus au
+  tir, cinématique d'ascension), on **S'ÉVADE** (écran de fin), puis **PRESTIGE** (NG+ : monde neuf,
+  perks reportés). Sim déterministe (`flight.ts`) + rendu (`liftoff.ts`). Reste : preview 2 onglets, audio de fin.
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -191,16 +196,19 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    PARTAGÉS ancrés dans le monde (poursuite, frappe d'un engagé au hasard, **butin au sol premier-servi**,
    flux d'ennemis 15 Hz interpolé). **Reste** : preview MULTI 2 onglets (manuel), écran de butin,
    F5 (perks d'usage), `cityCleared`→Raid militaire.
-1. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
-   décollage → fin → prestige. Le DERNIER acte manquant.
+1. **M11 ✅ FIN DE PARTIE LIVRÉE** — cuirassé scripté (raid co-op) → réparer le vaisseau (coque/moteur
+   à l'alliage) → **décollage** (extraction co-op : coque partagée, débris seedés abattus au tir) →
+   **évasion** (écran de fin) → **prestige** (NG+ : monde neuf, perks reportés). e2e + 258 tests verts.
+   **Reste M11** : preview MULTI 2 onglets du décollage (manuel), polish audio de fin/espace.
 2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
-   A6 (refactor main.ts — de plus en plus gros).
+   **A6 (refactor main.ts — devenu gros, surtout depuis M8.6/M11)**.
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Fin de partie = absente** (M11 : seul acte manquant). Combat : ennemis PARTAGÉS visibles de tous
-  (M8.6) ; tier/onRoad/positions déclarés par le client (même confiance que SET_OUTSIDE — host-feedé).
+- **Boucle ADR COMPLÈTE & finissable** (M11 livré : raid → vaisseau → décollage → évasion → prestige).
+  Combat : ennemis PARTAGÉS visibles de tous (M8.6) ; tier/onRoad/positions déclarés par le client
+  (même confiance que SET_OUTSIDE — host-feedé). Décollage co-op : preview 2 onglets reste à valider manuellement.
 - **Équipement & perks = au VILLAGE** (entrepôt partagé/perks communs — divergence coop assumée,
   fidèle aux *stores* d'ADR qui est solo) ; bolas/boussole différés.
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;

@@ -30,9 +30,10 @@
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
 | **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 + R3b FAITS** (par pas · tables/biomes · mines/grottes/villes/cités SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste écran de butin, F5 (perks d'usage) |
 | **M8.6 combat COOPÉRATIF** : ennemis PARTAGÉS ancrés dans le monde (HP commun, position autoritaire, attaquables ENSEMBLE), poursuite du plus proche, frappe d'un engagé au hasard, **butin au sol premier-servi**, flux d'ennemis 15 Hz interpolé, désengagement par laisse | ✅ **FAIT** (`SET_POSITIONS` host-feedé, reducer pur ; `combat[pid]`→`encounters[id]`) — reste preview MULTI 2 onglets (manuel) |
-| **Contenu manquant** : fin de partie (M11) | ❌ |
+| **M11 fin de partie** : cuirassé scripté (raid co-op) → réparer le vaisseau (coque/moteur à l'alliage) → DÉCOLLAGE (extraction co-op : coque partagée, débris seedés abattus au tir, cinématique) → ÉVASION (écran de fin) → PRESTIGE (NG+ monde neuf, perks reportés) | ✅ **FAIT** — `sim/flight.ts` (déterministe) + `render/liftoff.ts` ; e2e de bout en bout. Reste : preview 2 onglets, audio de fin |
+| **Contenu manquant** | ✅ — la boucle ADR est complète & finissable |
 
-> Vérif à chaque pas : **typecheck · 239 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · 258 tests unit · 16 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -475,20 +476,22 @@ Rend **non-inertes** les deux bâtiments morts (atelier, poste de traite) et com
 - **Acceptation** : fabriquer une outre/un sac/une arme à l'atelier ; troquer fourrure→boussole/écailles ;
   au moins un perk actif ; tests des coûts/effets.
 
-### 🚀 M11 — Fin de partie : épave → vaisseau → espace → fin → prestige — **M/L**
-L'arc final. **`alien alloy` a désormais sa source principale** (R3a : fouille des forages) ; reste à brancher cité/épave et surtout l'USAGE (réparer le vaisseau).
+### 🚀 M11 — Fin de partie : cuirassé → vaisseau → décollage → évasion → prestige — ✅ **FAIT**
+L'arc final, livré. Fidèle ADR, adapté au **3D coopératif** (cf. [`m11-plan.md`](m11-plan.md)).
 
-- **Worldgen — combler (critique)** : ajouter **`borehole`** (×~10, source principale d'alliage) et
-  **`battlefield`** (armes lourdes) ; **`cache`** (×1, report de prestige). *(Sans eux, la fin est
-  inatteignable : seuls `ship`/`executioner` existent.)* ~~Ajouter la ressource `alien alloy` + `energy cell`~~
-  ✅ (déjà déclarées dans la table de rareté ; **reste à leur donner une source** via ces sites).
-- **`sim/`** : setpiece **`executioner`** (3 ailes + l'immortel) → accès au vaisseau ; `ship` (coque/propulseurs),
-  `REINFORCE_HULL`/`UPGRADE_ENGINE` (coût alliage) ; **mini-jeu spatial** (esquive d'astéroïdes, altitude 0→60+ —
-  peut rester **arcade local**, score validé par l'hôte) ; **fin de partie** + le **twist narratif** (« vous êtes
-  un wanderer ») ; ébauche de **prestige** (la cache reverse les stocks de la partie précédente).
-- **`render`/`ui`** : site de l'épave, séquence de réparation, **mini-jeu d'ascension 3D**, écran de fin.
-- **🔊 A7** : `ship`/`space`/`ending` (musique) + `reinforce-hull`/`upgrade-engine`/`lift-off`/`asteroid-hit-1..8`/`crash`.
-- **Acceptation** : boucle complète atteignable de bout en bout ; fin déclenchée ; persistance de la partie.
+- **E1** ✅ : `executioner` = **gantelet scripté** (`mineGuardians`/`siteSteps`, dernier sans laisse) — raid
+  CO-OP (rencontres partagées M8.6) ; le nettoyer → cache d'alliage + révèle le vaisseau. Événement « signal ».
+- **E2** ✅ : `state.ship {hull,engine}` ; `REINFORCE_SHIP`/`UPGRADE_ENGINE` (alliage de l'entrepôt) ;
+  panneau « le vaisseau » + confirmation point-of-no-return.
+- **E3** ✅ : `sim/flight.ts` (PUR/déterministe, AUCUN RNG) — embarquement « le vaisseau attend tout le
+  monde » → ascension → coque PARTAGÉE encaisse les débris seedés que les joueurs **abattent** (`FLIGHT_FIRE`),
+  moteur raccourcit le gantelet, crash→retry / altitude→évasion. `render/liftoff.ts` : cinématique d'ascension
+  (ciel d'espace, vaisseau low-poly, étoiles, débris, secousse d'impact).
+- **E4** ✅ : écran de fin (épilogue) + **PRESTIGE** (`PRESTIGE` action déterministe : monde neuf, perks de
+  combat reportés, compteur d'évasions ++).
+- **E5** ✅ : e2e de bout en bout (`tests/e2e.spec.ts` : réparer → décoller → s'évader → prestige) ; docs.
+- **🔊 A7 (reste)** : musiques `space`/`ending` + SFX `lift-off`/`asteroid-hit` dédiés (placeholders actuels :
+  `build`/`weaponRanged`/`buy`). **Preview MULTI 2 onglets** du décollage groupé : à valider manuellement.
 
 ### ✨ M12 (transverse) — Équilibrage, polish, perf, accessibilité, audio
 - Réglage des courbes (coûts/income), écran-titre, ombres/LOD, *deep imports* Babylon (bundle), TURN robuste.
