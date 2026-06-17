@@ -56,6 +56,7 @@ import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
 import { caveSteps, townSteps } from "./sim/dungeon";
 import { EncounterFx, type EncView } from "./render/encounter";
 import { GroundDrops } from "./render/drops";
+import { Liftoff } from "./render/liftoff";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
@@ -394,6 +395,8 @@ async function boot(): Promise<void> {
   // autoritaire (visible de tous), interpolé vers le flux rapide de l'hôte. + BUTIN AU SOL (drops).
   const encounterFx = new EncounterFx(scene);
   const groundDrops = new GroundDrops(scene);
+  // M11/E3b — mise en scène CINÉMATIQUE du décollage (ciel d'espace, vaisseau qui s'élève, débris).
+  const liftoff = new Liftoff(scene, camera);
   // Vue sérialisable des rencontres pour le rendu (snapshot 2 Hz : positions/PV/échéances/seq).
   const toEncViews = (encs: Record<string, SharedEncounter>): Record<string, EncView> => {
     const out: Record<string, EncView> = {};
@@ -794,6 +797,11 @@ async function boot(): Promise<void> {
   // M11/E2 — LE VAISSEAU : réparer l'épave avec l'alliage (l'écran Ship d'ADR). Renforcer la coque
   // (PV de l'ascension) / calibrer le moteur (réduit la difficulté du décollage). Le décollage (E3)
   // s'arme une fois la coque minimale atteinte — annoncé ici pour donner le cap.
+  /** Position-monde du vaisseau (épave) — pour ancrer le décollage. */
+  function shipWorldPos(): { x: number; z: number } {
+    const st = worldMap.sites.find((s) => s.type === "ship");
+    return st ? worldMap.cellToWorldCenter(st.cx, st.cz) : { x: player.position.x, z: player.position.z };
+  }
   function shipView(): DialogueView {
     const alloy = Math.floor(stockOf(state, "alien alloy"));
     const { hull, engine } = state.ship;
@@ -801,7 +809,7 @@ async function boot(): Promise<void> {
     return {
       speaker: "le vaisseau",
       text: `coque ${hull}/${SHIP.hullMax} · moteur ${engine}/${SHIP.engineMax} · alliage en réserve : ${alloy}. `
-        + (ready ? "la coque tiendra l'ascension. (décollage : bientôt)" : `il faut au moins ${SHIP.liftoffHullMin} de coque pour décoller.`),
+        + (ready ? "la coque tiendra l'ascension." : `il faut au moins ${SHIP.liftoffHullMin} de coque pour décoller.`),
       choices: [
         {
           label: "renforcer la coque", sublabel: `${SHIP.alloyPerHull} alliage → +1 coque`,
@@ -815,11 +823,26 @@ async function boot(): Promise<void> {
           enabled: engine < SHIP.engineMax && alloy >= SHIP.alloyPerEngine,
           onSelect: () => { emit(upgradeEngine(self())); audio.playSfx("build"); refreshDialogue(); },
         },
+        {
+          label: "DÉCOLLER", sublabel: ready ? "quitter cette planète" : `coque insuffisante (${hull}/${SHIP.liftoffHullMin})`,
+          tooltip: ready ? undefined : "renforce d'abord la coque",
+          enabled: ready,
+          onSelect: () => showDialogue(liftoffConfirmView), // point-of-no-return : on confirme
+        },
         { label: "(fermer)", enabled: true, onSelect: closeInteractive },
       ],
     };
   }
   const shipViewRef = (): DialogueView => shipView();
+  // Confirmation du décollage (point-of-no-return — standard de l'industrie avant un climax irréversible).
+  const liftoffConfirmView = (): DialogueView => ({
+    speaker: "le vaisseau",
+    text: "les moteurs grondent. une fois lancés, plus de retour en arrière — il faudra percer l'atmosphère. prêt ?",
+    choices: [
+      { label: "décoller — quitter ce monde", enabled: true, onSelect: () => { const w = shipWorldPos(); emit(liftOff(self(), w.x, w.z)); closeInteractive(); } },
+      { label: "pas encore", enabled: true, onSelect: () => showDialogue(shipViewRef) },
+    ],
+  });
 
   function formatStores(stores: Record<string, number>): string {
     return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
@@ -1366,6 +1389,7 @@ async function boot(): Promise<void> {
   let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
+  let prevFlightStatus: string | null = state.flight?.status ?? null; // M11/E3 : transitions évasion/crash
   let lastEncSeen: SharedEncounter | null = null; // dernière rencontre où l'on était engagé (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
   let prevOnRoad: boolean | null = null;
@@ -1621,7 +1645,34 @@ async function boot(): Promise<void> {
       }
       audio.playSfx("checkTraps");
     }
-    if (engagedNow) {
+    // M11/E3 — DÉCOLLAGE : transitions terminales (évasion / crash) observées par diff de statut.
+    const fStatus = state.flight?.status ?? null;
+    if (fStatus !== prevFlightStatus) {
+      if (fStatus === "escaped") {
+        hud.toast("vous percez l'atmosphère — la planète sombre s'éloigne, minuscule. (fin : bientôt)");
+        audio.playSfx("buy");
+        emit(endFlight(self())); // E4 remplacera par un véritable écran de fin + prestige
+      } else if (fStatus === "crashed") {
+        hud.toast("la coque cède — le vaisseau retombe en flammes. il faudra réparer et réessayer.");
+        audio.playSfx("death");
+        const w = shipWorldPos();
+        player.teleport(w.x, w.z);
+        emit(endFlight(self()));
+      }
+      prevFlightStatus = fStatus;
+    }
+
+    if (state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending")) {
+      // HUD du décollage (réutilise le panneau de combat) : coque commune + altitude + débris entrants.
+      const f = state.flight;
+      const boarding = f.status === "boarding";
+      hud.setCombat({
+        name: boarding ? "embarquement…" : "ascension",
+        hpFrac: f.hull / Math.max(1, f.hullMax),
+        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}% · ${f.asteroids.length} entrant(s) — [E] tirer`,
+        ready: !boarding && f.asteroids.length > 0,
+      });
+    } else if (engagedNow) {
       const enc = engagedNow.enc;
       const def = enemyById[enc.enemyId];
       const w = bestReadyWeapon(state, self(), enc);
@@ -1731,8 +1782,11 @@ async function boot(): Promise<void> {
     // 2) Entrées -> personnage + interaction (E). Le déplacement est neutralisé quand une UI
     //    est ouverte (les touches servent alors à naviguer le dialogue, cf. listener clavier).
     const uiOpen = hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
+    // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
+    // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
+    const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending");
     const raw = input.getIntent(); // consomme aussi le front du saut
-    const intent = uiOpen ? { forward: 0, strafe: 0, jump: false, vertical: 0 } : raw;
+    const intent = (uiOpen || flying) ? { forward: 0, strafe: 0, jump: false, vertical: 0 } : raw;
     player.update(dtSec, intent, cameraYaw(camera));
     // Footsteps (A3) : pas réguliers tant qu'on se déplace au sol (cosmétique, variante au hasard).
     const walking = !player.isFlying && (Math.abs(intent.forward) > 0.05 || Math.abs(intent.strafe) > 0.05);
@@ -1749,9 +1803,12 @@ async function boot(): Promise<void> {
       if (taps.back) hud.toast(`vitesse ×${player.adjustSpeed(-1).toFixed(1)}`);
       if (taps.jump) { player.setFly(!player.isFlying); hud.toast(player.isFlying ? "vol ON (Espace ↑ / Maj ↓)" : "vol OFF"); }
     }
-    currentFocus = uiOpen ? null : computeFocus();
+    currentFocus = (uiOpen || flying) ? null : computeFocus();
     const interacted = input.consumeInteract();
-    if (!uiOpen && interacted) {
+    if (flying) {
+      // E = TIRER sur le débris le plus urgent (la sim borne via le cooldown par joueur).
+      if (interacted && state.flight?.status === "ascending") { emit(flightFire(self())); audio.playSfx("weaponRanged"); }
+    } else if (!uiOpen && interacted) {
       // Avec focus (village/camp) -> action ciblée (tooltip). Sinon, en exploration ->
       // on coupe l'arbre sauvage le plus proche (sans tooltip).
       if (currentFocus) currentFocus.act();
@@ -1771,8 +1828,9 @@ async function boot(): Promise<void> {
     }
 
     // 3) Caméra : suit le joueur + spring-arm (collision murs) + bascule 3ᵉ↔1ʳᵉ personne lissée.
+    //    (Sautée pendant le décollage : `liftoff` pilote alors la caméra cinématique.)
     const pp = player.position;
-    if (cameraFollow) {
+    if (cameraFollow && !flying) {
       const distCabin = Math.hypot(pp.x - cabin.center.x, pp.z - cabin.center.z);
       // Entrée/sortie de la cabane avec HYSTÉRÉSIS (pas de clignotement dans l'embrasure).
       if (insideCabin) { if (distCabin > cabin.footprintRadius + 0.8) insideCabin = false; }
@@ -1866,6 +1924,7 @@ async function boot(): Promise<void> {
     siteLoot.applyProgress(state.sites ?? {});
     encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
     groundDrops.update(dtSec); // piles de butin au sol (flottement + rotation)
+    liftoff.update(dtSec, state.flight, state.tick); // M11/E3b : cinématique du décollage (caméra incluse)
     // M8.5/F1 — PODOMÈTRE : les rencontres se déclenchent PAR PAS de déplacement (1 pas = 1 cellule
     // = 12 u), fidèle au `checkFight` d'ADR. Immobile = rien ; téléport (saut > 3 u/frame) ignoré.
     // Gelé tant qu'on est déjà ENGAGÉ (M8.6) : on n'empile pas une 2ᵉ rencontre sous ses pieds.
