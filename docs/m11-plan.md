@@ -1,9 +1,14 @@
-# Plan — M11 : LA FIN DE PARTIE (le départ)
+# Plan — M11 : LA FIN DE PARTIE (le départ) — *plan v1, IMPLÉMENTÉ*
 
-> Le dernier acte manquant d'*A Dark Room 3D*. Fidèle à ADR (raid du cuirassé → réparer le vaisseau →
-> décoller → s'évader), adapté à notre **3D coopératif** (rencontres partagées M8.6, sim host-
-> autoritaire déterministe), avec les **best-practices de l'industrie** (foreshadowing, UI diégétique,
-> point-of-no-return, climax d'extraction co-op, netcode déterministe, perf on-rails).
+> ⚠️ **HISTORIQUE** : ce plan a été implémenté (M11 v1, E1→E5). Un **audit ultérieur du code source
+> d'ADR** a révélé **3 écarts de fidélité** (le cuirassé ne devrait PAS gater le vaisseau ; le vaisseau se
+> gère **depuis le camp** ; le **`fleet beacon`** optionnel manque) + des manques d'immersion (cuirassé non
+> explorable, pas de minimap). **La refonte fait foi désormais :** **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)**.
+> Ce document reste comme trace de la v1.
+
+> Le dernier acte manquant d'*A Dark Room 3D*. Adapté à notre **3D coopératif** (rencontres partagées
+> M8.6, sim host-autoritaire déterministe), avec les **best-practices de l'industrie** (foreshadowing, UI
+> diégétique, point-of-no-return, climax d'extraction co-op, netcode déterministe, perf on-rails).
 
 ## Décisions porteur ACTÉES (juin 2026)
 1. **Format du climax = EXTRACTION ALLÉGÉE.** Ascension cinématique + survie coopérative : coque

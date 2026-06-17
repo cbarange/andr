@@ -19,7 +19,9 @@ le **village vivant et harmonieux**, un **monde carré exploré** (biomes en ré
 variés, grottes/mines explorables, routes qui se tissent), la **survie dehors** (M6/M7), le **combat
 temps réel fidèle ADR** désormais **COOPÉRATIF** (M8.6 : ennemis partagés, attaquables à plusieurs),
 l'**économie d'objets complète** (M10) et **LA FIN DE PARTIE** (M11 : raid du cuirassé → réparer le
-vaisseau → décollage co-op → évasion → prestige). **La boucle ADR est complète, le jeu est finissable.**
+vaisseau → décollage co-op → évasion → prestige). **La boucle ADR est complète, le jeu est finissable** —
+mais le **flux de fin v1 s'écarte de l'original** sur 3 points (cuirassé non requis, vaisseau géré au
+camp, beacon optionnel) → **refonte planifiée** : [`m11-refonte-roadmap.md`](m11-refonte-roadmap.md).
 
 ## Vérification (tout vert)
 ```bash
@@ -162,10 +164,13 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **M10 (atelier/commerce/perks) ✅** — les 2 derniers bâtiments inertes (atelier, poste de traite)
   sont VIVANTS ; tiers 2/3 jouables avec armures ; outfitting au coffre. Reste : bolas (stun),
   boussole (décision ouverte), laser/plasma (butin de cité, M11).
-- **M11 (fin de partie) ✅** — **le cuirassé** (raid scripté co-op) révèle **le vaisseau** ; on le RÉPARE à
-  l'alliage (coque/moteur), on **DÉCOLLE** (extraction co-op : coque partagée, débris seedés abattus au
-  tir, cinématique d'ascension), on **S'ÉVADE** (écran de fin), puis **PRESTIGE** (NG+ : monde neuf,
-  perks reportés). Sim déterministe (`flight.ts`) + rendu (`liftoff.ts`). Reste : preview 2 onglets, audio de fin.
+- **M11 (fin de partie) ✅ v1 — REFONTE PLANIFIÉE** ([`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)).
+  Livré : cuirassé (raid co-op) → réparer le vaisseau (coque/moteur à l'alliage) → **DÉCOLLAGE** (extraction
+  co-op, cinématique) → **ÉVASION** (écran de fin) → **PRESTIGE** (NG+). Sim `flight.ts` + rendu `liftoff.ts`.
+  ⚠️ **Écarts de fidélité vérifiés sur le code source d'ADR** : (1) le cuirassé ne devrait PAS gater le
+  vaisseau (sources d'alliage parallèles) ; (2) le vaisseau se gère **depuis le camp** (onglet « An Old
+  Starship ») et non au bord du monde ; (3) le **`fleet beacon`** (optionnel, fin alternative) manque.
+  + immersion : le cuirassé doit devenir un **donjon explorable salle-par-salle** (ennemis aliens) ; **minimap** à ajouter.
 - **M9 — sites/donjons/mines** 🟢 cœur fait (grotte+mines explorables, avant-poste, chaîne ressuscitée) ;
   **+ routes (R2)** ✅ et **+ variété de sites (R1)** ✅. Reste : intérieurs maison/ville/cité, butin alliage (R3).
 - **Chantier C — refonte monde & campement** ✅ TERMINÉ (A biomes · B bordures · C placement maths · D ruines ·
@@ -196,19 +201,22 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    PARTAGÉS ancrés dans le monde (poursuite, frappe d'un engagé au hasard, **butin au sol premier-servi**,
    flux d'ennemis 15 Hz interpolé). **Reste** : preview MULTI 2 onglets (manuel), écran de butin,
    F5 (perks d'usage), `cityCleared`→Raid militaire.
-1. **M11 ✅ FIN DE PARTIE LIVRÉE** — cuirassé scripté (raid co-op) → réparer le vaisseau (coque/moteur
-   à l'alliage) → **décollage** (extraction co-op : coque partagée, débris seedés abattus au tir) →
-   **évasion** (écran de fin) → **prestige** (NG+ : monde neuf, perks reportés). e2e + 258 tests verts.
-   **Reste M11** : preview MULTI 2 onglets du décollage (manuel), polish audio de fin/espace.
+1. **M11-REFONTE (recommandé n°1)** — corriger la fidélité de la fin + l'immersion, d'après l'audit du
+   code source d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)** (RF1 dé-gater le
+   vaisseau + le ramener au camp ; RF2 cuirassé explorable salle-par-salle ; RF3 ennemis aliens ; RF4
+   minimap ; RF5 caméra intérieur ; RF6 beacon/fins ; RF7 Fabricator). **RF1 d'abord** (faible risque,
+   gros gain de fidélité). M11 v1 reste jouable en attendant.
 2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
    **A6 (refactor main.ts — devenu gros, surtout depuis M8.6/M11)**.
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Boucle ADR COMPLÈTE & finissable** (M11 livré : raid → vaisseau → décollage → évasion → prestige).
-  Combat : ennemis PARTAGÉS visibles de tous (M8.6) ; tier/onRoad/positions déclarés par le client
-  (même confiance que SET_OUTSIDE — host-feedé). Décollage co-op : preview 2 onglets reste à valider manuellement.
+- **Boucle ADR COMPLÈTE & finissable** (M11 v1 : raid → vaisseau → décollage → évasion → prestige) —
+  mais **le flux de fin v1 s'écarte de l'original** (cuirassé non requis / vaisseau au camp / beacon) :
+  refonte planifiée ([`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)). Combat : ennemis PARTAGÉS
+  visibles de tous (M8.6) ; tier/onRoad/positions déclarés par le client (host-feedé). Décollage co-op :
+  preview 2 onglets à valider manuellement.
 - **Équipement & perks = au VILLAGE** (entrepôt partagé/perks communs — divergence coop assumée,
   fidèle aux *stores* d'ADR qui est solo) ; bolas/boussole différés.
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;
