@@ -118,11 +118,22 @@ export interface GameState {
   //     émet `SET_OUTSIDE` au franchissement (edge), l'hôte vide/recharge sur échéances par joueur. ---
   survival: Record<string, PlayerSurvival>;
 
-  // --- M8 : COMBAT par joueur — rencontre NON-SPATIALE (duel abstrait 1v1, fidèle ADR : l'ennemi
-  //     est rendu LOCALEMENT devant le joueur, aucune position dans la sim). Indexé par `playerId`.
-  //     Champ ADDITIF (backfill `{}`, strippé à la save comme `carried`/`survival`). Autoritaire :
-  //     déclenchement + frappes ennemies dans TICK (hôte), dégâts/butin via le RNG à graine. ---
-  combat: Record<string, Encounter>;
+  // --- M8.6 : COMBAT COOPÉRATIF — rencontres PARTAGÉES, ancrées dans le monde (HP commun, position
+  //     AUTORITAIRE, plusieurs attaquants). Indexées par un id de rencontre (`nextEncId`, ou le
+  //     `siteKey` pour un gardien de setpiece). ADDITIF (backfill `{}`, strippé à la save). Autoritaire :
+  //     poursuite + frappes dans TICK (hôte), dégâts/butin via le RNG à graine. Voyage dans le snapshot. ---
+  encounters: Record<string, SharedEncounter>;
+  /** Compteur d'id de rencontre (host, monotone) — id des rencontres aléatoires + `seq` (diff rendu). */
+  nextEncId: number;
+
+  // --- M8.6 : POSITIONS des joueurs DANS la sim (x,z), injectées par `SET_POSITIONS` (l'hôte
+  //     s'auto-applique depuis les transforms reçus). Permettent au reducer PUR de calculer la
+  //     poursuite et l'engagement. VOLATILE (strippé à la save ; `selfId` change). ---
+  playerPos: Record<string, { x: number; z: number }>;
+
+  // --- M8.6 : BUTIN AU SOL (premier-servi) — tombé à la mort d'un ennemi, ramassable par n'importe
+  //     qui (`TAKE_DROP`). Voyage dans le snapshot ; expire à `despawnAt`. VOLATILE (strip save). ---
+  drops: Record<string, { x: number; z: number; loot: Record<string, number>; despawnAt: number }>;
 
   // --- M10 : PERKS du VILLAGE (clés de PERKS, accordés par l'événement « le Maître »). Partagés
   //     entre joueurs (divergence coop assumée — ADR est solo ; un perk par-joueur serait perdu au
@@ -131,21 +142,26 @@ export interface GameState {
 }
 
 /**
- * Une RENCONTRE en cours pour un joueur (duel 1v1). Échéances en tics. `weaponReadyAt` = cooldown
- * par ARME (réinitialisé entre deux combats, comme l'écran de combat d'ADR). `seq` = numéro de la
- * rencontre (copié du compteur du joueur) -> le rendu observe l'apparition par diff.
+ * Une RENCONTRE PARTAGÉE (M8.6) : un ennemi ANCRÉ dans le monde (x,z autoritaires, host-simulés),
+ * à HP commun, que TOUS les joueurs voient et peuvent frapper. L'ennemi POURSUIT le plus proche et
+ * frappe un engagé au hasard. `weaponReadyAt` = cooldowns PAR JOUEUR (chacun ses armes/recharges).
+ * `seq` = id de création (le rendu observe apparition/disparition par diff).
  */
-export interface Encounter {
+export interface SharedEncounter {
   enemyId: string;
   enemyHp: number;
+  x: number; // position MONDE autoritaire (host-simulée ; diffusée à 15 Hz + dans le snapshot)
+  z: number;
   enemyNextAt: number; // tic de la prochaine frappe ennemie (attackDelay d'ADR)
-  weaponReadyAt: Record<string, number>; // arme -> tic à partir duquel elle peut refrapper
+  weaponReadyAt: Record<string, Record<string, number>>; // pid -> arme -> tic de recharge
   seq: number;
-  // --- M8.5/F3.1 : rencontre de SETPIECE (gardien de mine). Champs absents = rencontre aléatoire. ---
+  lastTarget?: string; // dernier joueur frappé (rendu : l'ennemi lui fait face)
+  lostTicks?: number; // tics consécutifs sans joueur à portée de laisse (leash -> despawn)
+  // --- SETPIECE (gardien de mine/grotte/ville/cité). Champs absents = rencontre aléatoire. ---
   siteKey?: string; // site gardé ("cx,cz")
   siteType?: string; // type du site (mine / cave / town / city)
   guardianIdx?: number; // index de l'étape dans la séquence scriptée du site
-  noFlee?: boolean; // combat SANS échappatoire (boss de mine, combats forcés d'hôpital — fidèle ADR)
+  noFlee?: boolean; // combat sans laisse (boss de mine, combats forcés d'hôpital — fidèle ADR)
 }
 
 /**
@@ -170,8 +186,7 @@ export interface PlayerSurvival {
   fightSteps: number; // PAS de déplacement depuis le dernier combat (FIGHT_DELAY d'ADR — M8.5/F1)
   eatReadyAt: number; // tic à partir duquel on peut re-MANGER (anti-spam, EAT_COOLDOWN d'ADR)
   medsReadyAt: number; // tic à partir duquel on peut re-SE SOIGNER (médecine, MEDS_COOLDOWN d'ADR)
-  winSeq: number; // nombre de VICTOIRES (signal rendu : effondrement de l'ennemi + toast butin)
-  encounterSeq: number; // nombre de RENCONTRES créées (monotone ; copié dans Encounter.seq -> diff rendu)
+  winSeq: number; // nombre de VICTOIRES (coup fatal porté ; signal rendu/toast)
 }
 
 /** Progression d'exploration d'UN site (mine/grotte). Tous les champs sont optionnels/diffus. */
@@ -250,8 +265,23 @@ export function baseSurvival(): PlayerSurvival {
     eatReadyAt: 0,
     medsReadyAt: 0,
     winSeq: 0,
-    encounterSeq: 0,
   };
+}
+
+/** Joueur le plus proche d'un point (x,z) parmi `pids` (ou tous), via `state.playerPos`. PUR.
+ *  Renvoie `{ pid, dist }` ou null si aucune position connue. Tie-break déterministe (id trié). */
+export function nearestPlayerTo(
+  state: GameState, x: number, z: number, pids?: string[],
+): { pid: string; dist: number } | null {
+  const keys = (pids ?? Object.keys(state.playerPos)).slice().sort();
+  let best: { pid: string; dist: number } | null = null;
+  for (const pid of keys) {
+    const p = state.playerPos[pid];
+    if (!p) continue;
+    const d = Math.hypot(p.x - x, p.z - z);
+    if (!best || d < best.dist) best = { pid, dist: d };
+  }
+  return best;
 }
 
 /** Lecture DÉFENSIVE de la survie d'un joueur (plein par défaut si pas encore d'enregistrement). */
@@ -334,7 +364,10 @@ export function createInitialState(seed: number, initialWood: number): GameState
     sites: {},
     roads: {},
     survival: {},
-    combat: {},
+    encounters: {},
+    nextEncId: 1,
+    playerPos: {},
+    drops: {},
     perks: {},
   };
 }

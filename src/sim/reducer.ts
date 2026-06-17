@@ -11,17 +11,20 @@
 
 import {
   GameState, Fire, Temp, BUILDER_ABSENT, stockOf, freeWorkers, sumWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, siteKey,
-  PlayerSurvival, baseSurvival, Encounter, maxWaterOf, maxHealthOf,
+  PlayerSurvival, baseSurvival, SharedEncounter, maxWaterOf, maxHealthOf, nearestPlayerTo,
 } from "./state";
 import { GameAction } from "./actions";
 import { cloneRng, nextFloat, nextInt, RngState } from "./rng";
 import { lootForNode, lootNodeIds, caveSteps, townSteps, type CaveStep } from "./dungeon";
 import { drawRoad } from "./roads";
-import { stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit } from "./combat";
+import {
+  stepFightTriggers, pickEnemy, rollEnemyLoot, ownsWeapon, hasAmmo, attackDamage, playerHit, enemyHit,
+  engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS,
+} from "./combat";
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById, mineGuardians,
+  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -62,6 +65,24 @@ const EAT_COOLDOWN_TICKS = config.combat.eatCooldownSeconds * HZ;
 const EAT_MEAT_HEAL = config.combat.eatMeatHeal;
 const MEDS_COOLDOWN_TICKS = config.combat.medsCooldownSeconds * HZ;
 const MEDS_HEAL = config.combat.medsHeal;
+// --- M8.6 : combat coopératif (rencontres partagées, poursuite, butin au sol) ---
+const TICK_SEC = 1 / HZ; // durée d'un tic en secondes (pour la poursuite : pas borné = CHASE_SPEED * dt)
+const LEASH_GRACE_TICKS = Math.round(config.combat.leashGraceSeconds * HZ); // hors laisse N tics -> despawn
+const DROP_DESPAWN_TICKS = Math.round(config.combat.dropDespawnSeconds * HZ); // durée de vie d'un drop au sol
+
+/** Centre MONDE d'un site (cx,cz) — fidèle à `cellToWorldCenter` du worldgen. Ancre des gardiens. */
+function siteCenter(cx: number, cz: number): { x: number; z: number } {
+  return { x: cx * worldgen.cellSize, z: cz * worldgen.cellSize };
+}
+
+/** Le joueur est-il ENGAGÉ dans une rencontre quelconque (à portée) ? Garde anti-action en plein
+ *  combat (M8.6 — dépend de `state.playerPos` ; sans position connue, considéré NON engagé). PUR. */
+function playerEngaged(state: GameState, pid: string, tick: number): boolean {
+  for (const id of Object.keys(state.encounters)) {
+    if (engagedPids(state, state.encounters[id], tick).includes(pid)) return true;
+  }
+  return false;
+}
 
 /** Durée d'un chantier en TICS (>= 1) — la constructrice bâtit ce bâtiment en autant de tics. */
 function buildTicks(id: string): number {
@@ -585,7 +606,6 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const onRoad = action.onRoad ?? cur.onRoad;
       if (state.survival[pid] && cur.outside === action.outside && cur.tier === tier && cur.onRoad === onRoad) return state;
       const rec: PlayerSurvival = { ...cur, outside: action.outside, tier, onRoad };
-      let combat = state.combat;
       if (cur.outside !== action.outside || !state.survival[pid]) {
         if (action.outside) {
           // Sort dehors : (ré)arme les échéances de drain + repart de zéro pas (jamais de combat
@@ -595,15 +615,13 @@ export function reduce(state: GameState, action: GameAction): GameState {
           rec.healthAt = state.tick + HEALTH_DRAIN_TICKS;
           rec.fightSteps = 0;
         } else {
-          // Rentre au camp : arme la recharge ; un combat en cours est ROMPU (désengagement).
+          // Rentre au camp : arme la recharge. Le DÉSENGAGEMENT d'un combat est désormais ÉMERGENT
+          // (M8.6) : `outside:false` exclut le joueur des `engagedPids` -> l'ennemi cesse de le viser ;
+          // s'il ne reste personne, la laisse fera décrocher la rencontre (cf. TICK 8b).
           rec.waterAt = state.tick + RECHARGE_TICKS;
           rec.foodAt = state.tick + RECHARGE_TICKS;
           rec.healthAt = state.tick + RECHARGE_TICKS;
-          if (combat[pid]) {
-            const { [pid]: _gone, ...rest } = combat;
-            combat = rest;
-            rec.fightSteps = 0;
-          }
+          rec.fightSteps = 0;
         }
       }
       // M8.5/F4 — FIN D'EXPÉDITION : le retour au village « repose » les avant-postes de CE joueur
@@ -622,7 +640,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         }
         if (changed) sites = next;
       }
-      return { ...state, survival: { ...state.survival, [pid]: rec }, combat, sites, rng: cloneRng(state.rng) };
+      return { ...state, survival: { ...state.survival, [pid]: rec }, sites, rng: cloneRng(state.rng) };
     }
 
     case "VISIT_HOUSE": {
@@ -632,7 +650,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key] ?? {};
       if (prog.visited) return state; // déjà fouillée
-      if (state.combat[pid]) return state;
+      if (playerEngaged(state, pid, state.tick)) return state; // pas de fouille en plein combat
       const rng = cloneRng(state.rng);
       const sites = { ...state.sites, [key]: { ...prog, type: prog.type ?? "house", discovered: true, visited: true } };
       const roll = nextFloat(rng);
@@ -661,17 +679,21 @@ export function reduce(state: GameState, action: GameAction): GameState {
         }
         return { ...state, sites, carried: { ...state.carried, [pid]: bag }, survival: { ...state.survival, [pid]: rec }, rng };
       }
-      // 50 % : la maison est OCCUPÉE — un squatteur charge, lame rouillée au poing.
+      // 50 % : la maison est OCCUPÉE — un squatteur charge, lame rouillée au poing. Rencontre
+      // PARTAGÉE ancrée au centre de la maison (M8.6) : un pair proche peut prêter main-forte.
+      void sv;
       const enemy = enemyById["squatter"];
-      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
-      const enc: Encounter = {
+      const c = siteCenter(action.cx, action.cz);
+      const id = String(state.nextEncId);
+      const enc: SharedEncounter = {
         enemyId: enemy.id,
         enemyHp: enemy.hp,
+        x: c.x, z: c.z,
         enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
         weaponReadyAt: {},
-        seq: rec.encounterSeq,
+        seq: state.nextEncId,
       };
-      return { ...state, sites, combat: { ...state.combat, [pid]: enc }, survival: { ...state.survival, [pid]: rec }, rng };
+      return { ...state, sites, encounters: { ...state.encounters, [id]: enc }, nextEncId: state.nextEncId + 1, rng };
     }
 
     case "TALK_SWAMP": {
@@ -702,12 +724,15 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const pid = action.playerId;
       const sv = state.survival[pid];
       if (!sv || !sv.outside || state.tick < sv.respawnReadyAt) return state;
-      if (state.combat[pid]) return state; // déjà en combat
+      // M8.6 — « déjà en combat » = déjà à portée d'une rencontre (on n'en empile pas une 2ᵉ sous ses pieds).
+      for (const id of Object.keys(state.encounters)) {
+        const e = state.encounters[id];
+        if (Math.hypot(action.x - e.x, action.z - e.z) <= ENGAGE_RADIUS) return state;
+      }
       const n = Math.max(1, Math.min(MAX_STEPS_PER_ACTION, Math.floor(action.n)));
       let fightSteps = sv.fightSteps;
       let rng = state.rng;
-      let encounter: Encounter | null = null;
-      let encounterSeq = sv.encounterSeq;
+      let encounter: SharedEncounter | null = null;
       for (let i = 0; i < n; i++) {
         fightSteps++;
         if (fightSteps <= FIGHT_DELAY_STEPS) continue;
@@ -716,22 +741,23 @@ export function reduce(state: GameState, action: GameAction): GameState {
         fightSteps = 0; // tirage réussi : compteur remis à zéro MÊME si le pool est vide (fidèle)
         const enemy = action.onRoad ? null : pickEnemy(rng, action.tier, action.biome);
         if (!enemy) continue;
-        encounterSeq++;
         encounter = {
           enemyId: enemy.id,
           enemyHp: enemy.hp,
+          x: action.x, z: action.z, // ANCRE la rencontre PARTAGÉE où le joueur l'a déclenchée (M8.6)
           enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
           weaponReadyAt: {},
-          seq: encounterSeq,
+          seq: state.nextEncId,
         };
         break; // en combat : les pas restants sont abandonnés
       }
       if (fightSteps === sv.fightSteps && !encounter) return state; // rien n'a changé
-      const rec: PlayerSurvival = { ...sv, fightSteps, encounterSeq };
+      const rec: PlayerSurvival = { ...sv, fightSteps };
       return {
         ...state,
         survival: { ...state.survival, [pid]: rec },
-        combat: encounter ? { ...state.combat, [pid]: encounter } : state.combat,
+        encounters: encounter ? { ...state.encounters, [String(state.nextEncId)]: encounter } : state.encounters,
+        nextEncId: encounter ? state.nextEncId + 1 : state.nextEncId,
         rng: rng === state.rng ? cloneRng(state.rng) : rng,
       };
     }
@@ -740,10 +766,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // M8.5/F3.1-F3.2 — la PROCHAINE étape scriptée d'un site (mine OU grotte) : un COMBAT de
       // gardien, ou la « torche qui s'éteint » (gate : rallumer coûte 1 torche du sac).
       const pid = action.playerId;
-      if (state.combat[pid]) return state;
+      const key = siteKey(action.cx, action.cz);
+      if (state.encounters[key]) return state; // le gardien de ce site est DÉJÀ sur le terrain
       const list = siteSteps(action.siteType, action.cx, action.cz, state.worldSeed);
       if (list.length === 0) return state;
-      const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key] ?? {};
       const idx = prog.guardians ?? 0;
       if (idx >= list.length) return state; // toutes les étapes franchies
@@ -763,14 +789,16 @@ export function reduce(state: GameState, action: GameAction): GameState {
       }
       const enemy = enemyById[step.enemyId];
       if (!enemy) return state;
-      const sv = state.survival[pid] ?? baseSurvival();
-      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
-      const enc: Encounter = {
+      // Rencontre PARTAGÉE ancrée au CENTRE du site (déterministe) ; son id EST le `siteKey` (un
+      // seul gardien à la fois par site). M8.6 — plusieurs joueurs peuvent l'attaquer ensemble.
+      const c = siteCenter(action.cx, action.cz);
+      const enc: SharedEncounter = {
         enemyId: enemy.id,
         enemyHp: enemy.hp,
+        x: c.x, z: c.z,
         enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
         weaponReadyAt: {},
-        seq: rec.encounterSeq,
+        seq: state.nextEncId,
         siteKey: key,
         siteType: action.siteType,
         guardianIdx: idx,
@@ -778,25 +806,28 @@ export function reduce(state: GameState, action: GameAction): GameState {
       };
       return {
         ...state,
-        combat: { ...state.combat, [pid]: enc },
-        survival: { ...state.survival, [pid]: rec },
+        encounters: { ...state.encounters, [key]: enc },
+        nextEncId: state.nextEncId + 1,
         sites: { ...state.sites, [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true } },
         rng: cloneRng(state.rng),
       };
     }
 
     case "ATTACK": {
-      // M8 : frappe l'ennemi de SA rencontre. Guards : rencontre active, arme connue & possédée
-      // (poings toujours), cooldown de L'ARME écoulé. Chance de toucher (défaut ADR 0.8) via le
-      // RNG à graine. À 0 PV ennemi : VICTOIRE — butin (tirages ADR) au SAC borné, `winSeq`++.
+      // M8.6 : frappe une rencontre PARTAGÉE (par `encId`). Guards : rencontre vivante, joueur ENGAGÉ
+      // (à portée — via `playerPos`), arme connue & possédée (poings toujours), cooldown PAR JOUEUR
+      // écoulé. Chance de toucher (0.8 ADR) via le RNG à graine. À 0 PV : VICTOIRE -> butin AU SOL
+      // (premier-servi), rencontre retirée, `winSeq`++ du tueur, progression du setpiece.
       const pid = action.playerId;
-      const enc = state.combat[pid];
+      const enc = state.encounters[action.encId];
       if (!enc) return state;
+      if (!engagedPids(state, enc, state.tick).includes(pid)) return state; // hors de portée
       const weapon = weaponById[action.weapon];
       if (!weapon) return state;
       if (!ownsWeapon(state, pid, weapon.id)) return state;
       if (!hasAmmo(state, pid, weapon)) return state; // fusil sans balle / sans grenade (M10)
-      if (state.tick < (enc.weaponReadyAt[weapon.id] ?? 0)) return state; // l'arme recharge
+      const ready = enc.weaponReadyAt[pid] ?? {};
+      if (state.tick < (ready[weapon.id] ?? 0)) return state; // l'arme de CE joueur recharge
       const rng = cloneRng(state.rng);
       // Munition consommée À CHAQUE tir (touché ou non — fidèle ADR), depuis le SAC.
       let carriedAfter = state.carried;
@@ -808,31 +839,28 @@ export function reduce(state: GameState, action: GameAction): GameState {
       }
       const hit = nextFloat(rng) < playerHit(state.perks);
       const enemyHp = hit ? enc.enemyHp - attackDamage(weapon, state.perks) : enc.enemyHp;
+      const cooldownAt = state.tick + Math.round(weapon.cooldownSeconds * HZ);
       if (enemyHp > 0) {
-        const nextEnc: Encounter = {
+        const nextEnc: SharedEncounter = {
           ...enc,
           enemyHp,
-          weaponReadyAt: { ...enc.weaponReadyAt, [weapon.id]: state.tick + Math.round(weapon.cooldownSeconds * HZ) },
+          weaponReadyAt: { ...enc.weaponReadyAt, [pid]: { ...ready, [weapon.id]: cooldownAt } },
         };
-        return { ...state, carried: carriedAfter, combat: { ...state.combat, [pid]: nextEnc }, rng };
+        return { ...state, carried: carriedAfter, encounters: { ...state.encounters, [action.encId]: nextEnc }, rng };
       }
-      // VICTOIRE : butin de l'ennemi -> SAC (borné, boucle clamp de TAKE_LOOT) ; rencontre fermée.
+      // VICTOIRE : l'ennemi tombe -> son butin se répand AU SOL (premier-servi, M8.6) ; rencontre retirée.
       const enemy = enemyById[enc.enemyId];
       const loot = enemy ? rollEnemyLoot(rng, enemy) : {};
-      let bagTotal = 0;
-      for (const k of Object.keys(carriedAfter[pid] ?? {})) bagTotal += carriedAfter[pid][k];
-      let room = carryCapacity(state) - bagTotal;
-      const bag = { ...(carriedAfter[pid] ?? {}) };
-      for (const r of Object.keys(loot)) {
-        if (room <= 0) break;
-        const add = Math.min(loot[r], room);
-        bag[r] = (bag[r] ?? 0) + add;
-        room -= add;
+      const { [action.encId]: _won, ...restEnc } = state.encounters;
+      let drops = state.drops;
+      let nextEncId = state.nextEncId;
+      if (Object.keys(loot).length > 0) {
+        drops = { ...state.drops, [String(nextEncId)]: { x: enc.x, z: enc.z, loot, despawnAt: state.tick + DROP_DESPAWN_TICKS } };
+        nextEncId += 1;
       }
-      const { [pid]: _won, ...restCombat } = state.combat;
       const sv = state.survival[pid] ?? baseSurvival();
       const rec: PlayerSurvival = { ...sv, winSeq: sv.winSeq + 1, fightSteps: 0 };
-      // M8.5/F3.1 : victoire sur un GARDIEN de mine -> progression de la séquence scriptée.
+      // M8.5/F3.1 : victoire sur un GARDIEN de site -> progression de la séquence scriptée.
       let sites = state.sites;
       if (enc.siteKey !== undefined && enc.guardianIdx !== undefined) {
         const prog = (state.sites ?? {})[enc.siteKey] ?? {};
@@ -842,8 +870,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
       }
       return {
         ...state,
-        carried: { ...carriedAfter, [pid]: bag },
-        combat: restCombat,
+        carried: carriedAfter,
+        encounters: restEnc,
+        drops,
+        nextEncId,
         survival: { ...state.survival, [pid]: rec },
         sites,
         rng,
@@ -875,38 +905,54 @@ export function reduce(state: GameState, action: GameAction): GameState {
       };
     }
 
-    case "FLEE": {
-      // M8 : rompt la rencontre (désengagement « physique » du monde continu — adaptation : ADR
-      // n'a pas de bouton fuir, le retrait sera affiné en F4). Le DERNIER gardien d'une mine est
-      // SANS échappatoire (fidèle « no run button » du chef/vétéran/matriarche).
+    case "SET_POSITIONS": {
+      // M8.6 — l'hôte injecte les positions des joueurs DANS la sim (s'auto-applique depuis les
+      // transforms qu'il reçoit déjà, ~10 Hz). Permet au reducer PUR de calculer poursuite &
+      // engagement. Host-only (pas réseau-safe : généré localement comme TICK). Pas de RNG.
+      return { ...state, playerPos: action.positions };
+    }
+
+    case "TAKE_DROP": {
+      // M8.6 — ramasse une pile de butin AU SOL (premier-servi) : butin -> SAC borné (boucle clamp
+      // de TAKE_LOOT), pile retirée. NO-OP si la pile n'existe plus (un autre l'a prise / expirée).
       const pid = action.playerId;
-      const enc = state.combat[pid];
-      if (!enc) return state;
-      if (enc.noFlee) return state; // combat SANS échappatoire (boss de mine, hôpital de cité — fidèle)
-      const { [pid]: _fled, ...rest } = state.combat;
-      const sv = state.survival[pid] ?? baseSurvival();
-      const rec: PlayerSurvival = { ...sv, fightSteps: 0 };
-      return { ...state, combat: rest, survival: { ...state.survival, [pid]: rec }, rng: cloneRng(state.rng) };
+      const drop = state.drops[action.dropId];
+      if (!drop) return state;
+      let bagTotal = 0;
+      for (const k of Object.keys(state.carried[pid] ?? {})) bagTotal += state.carried[pid][k];
+      let room = carryCapacity(state) - bagTotal;
+      const bag = { ...(state.carried[pid] ?? {}) };
+      for (const r of Object.keys(drop.loot)) {
+        if (room <= 0) break;
+        const add = Math.min(drop.loot[r], room);
+        if (add <= 0) continue;
+        bag[r] = (bag[r] ?? 0) + add;
+        room -= add;
+      }
+      const { [action.dropId]: _taken, ...restDrops } = state.drops;
+      return { ...state, carried: { ...state.carried, [pid]: bag }, drops: restDrops, rng: cloneRng(state.rng) };
     }
 
     case "DEBUG_START_ENCOUNTER": {
-      // Force une rencontre (test/e2e) — `enemyHp` optionnel (raccourci « ennemi à 1 PV »).
+      // Force une rencontre PARTAGÉE (test/e2e) — ancrée à la position connue du joueur (ou origine).
+      // `enemyHp` optionnel (raccourci « ennemi à 1 PV »).
       const pid = action.playerId;
       const enemy = enemyById[action.enemyId ?? "snarling beast"];
-      if (!enemy || state.combat[pid]) return state;
-      const sv = state.survival[pid] ?? baseSurvival();
-      const rec: PlayerSurvival = { ...sv, encounterSeq: sv.encounterSeq + 1 };
-      const enc: Encounter = {
+      if (!enemy || playerEngaged(state, pid, state.tick)) return state;
+      const p = state.playerPos[pid] ?? { x: 0, z: 0 };
+      const id = String(state.nextEncId);
+      const enc: SharedEncounter = {
         enemyId: enemy.id,
         enemyHp: action.enemyHp ?? enemy.hp,
+        x: p.x, z: p.z,
         enemyNextAt: state.tick + Math.round(enemy.strikeSeconds * HZ),
         weaponReadyAt: {},
-        seq: rec.encounterSeq,
+        seq: state.nextEncId,
       };
       return {
         ...state,
-        combat: { ...state.combat, [pid]: enc },
-        survival: { ...state.survival, [pid]: rec },
+        encounters: { ...state.encounters, [id]: enc },
+        nextEncId: state.nextEncId + 1,
         rng: cloneRng(state.rng),
       };
     }
@@ -1286,7 +1332,6 @@ export function reduce(state: GameState, action: GameAction): GameState {
       //    consomme AUCUN RNG ; le tri reste défensif ici (il devient PORTEUR en 8a/8b).
       let survival = state.survival;
       let carried = state.carried;
-      let combat = state.combat;
       const capWater = maxWaterOf(state); // M10 : caps d'équipement (entrepôt, communs)
       const capHp = maxHealthOf(state);
       const survIds = Object.keys(state.survival).sort();
@@ -1326,32 +1371,76 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // (8a — le DÉCLENCHEMENT des rencontres n'est PLUS temporel : il vit dans l'action STEPS,
       //  par PAS de déplacement, fidèle au `checkFight` d'ADR — cf. M8.5/F1.)
 
-      // 8b) COMBAT — FRAPPES ENNEMIES : à l'échéance `enemyNextAt`, tirage de toucher (par ennemi,
-      //     comme ADR) -> dégâts sur la santé (plancher 0 ; mort en 8c). Tri PORTEUR (RNG).
+      // 8b) COMBAT COOPÉRATIF (M8.6) — par rencontre PARTAGÉE (tri PORTEUR du RNG). Pour chacune :
+      //   (1) ENGAGÉS = joueurs dehors/vivants à <= ENGAGE_RADIUS (sous-ensemble des « tenus en laisse ») ;
+      //   (2) POURSUITE : l'ennemi avance (borné) vers le plus proche des joueurs tenus en laisse ;
+      //   (3) FRAPPE : à l'échéance `enemyNextAt`, il touche UN engagé au hasard (RNG seedé) -> dégâts ;
+      //   (4) LAISSE : aucun joueur à <= LEASH_RADIUS pendant LEASH_GRACE tics -> il décroche (despawn ;
+      //       setpiece : `guardians` conservé). `noFlee` (boss) désactive la laisse.
+      let encounters = state.encounters;
       {
-        const ids = Object.keys(combat).sort();
-        let nextSurv: Record<string, PlayerSurvival> | null = null;
-        let nextCombat: Record<string, Encounter> | null = null;
-        for (const pid of ids) {
-          const enc = (nextCombat ?? combat)[pid];
-          const sv = (nextSurv ?? survival)[pid];
-          if (!sv || tick < enc.enemyNextAt) continue;
-          const enemy = enemyById[enc.enemyId];
+        const ids = Object.keys(encounters).sort();
+        for (const id of ids) {
+          const enc0 = encounters[id];
+          const enemy = enemyById[enc0.enemyId];
           if (!enemy) continue;
-          rng = rng === state.rng ? cloneRng(state.rng) : rng;
-          nextCombat = nextCombat ?? { ...combat };
-          nextCombat[pid] = { ...enc, enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ) };
-          if (nextFloat(rng) < enemyHit(enemy.hit, state.perks)) {
-            nextSurv = nextSurv ?? { ...survival };
-            nextSurv[pid] = { ...sv, health: Math.max(0, sv.health - enemy.damage) };
+          let enc = enc0;
+          const stateNow = { ...state, survival };
+          const leashed = engagedPids(stateNow, enc, tick, LEASH_RADIUS); // dehors/vivants, à portée de laisse
+          const engaged = leashed.filter((pid) => {
+            const p = state.playerPos[pid];
+            return p !== undefined && Math.hypot(p.x - enc.x, p.z - enc.z) <= ENGAGE_RADIUS;
+          });
+
+          // (2) POURSUITE vers le plus proche des joueurs tenus en laisse (sinon l'ennemi reste sur place).
+          const near = leashed.length ? nearestPlayerTo(stateNow, enc.x, enc.z, leashed) : null;
+          if (near) {
+            const target = state.playerPos[near.pid];
+            if (target) {
+              const moved = stepEnemyToward(enc, target.x, target.z, TICK_SEC);
+              if (moved.x !== enc.x || moved.z !== enc.z) enc = { ...enc, x: moved.x, z: moved.z };
+            }
+          }
+
+          // (3) FRAPPE : à l'échéance, un engagé au hasard encaisse (RNG porteur : 1 tirage de cible + 1 de toucher).
+          if (tick >= enc.enemyNextAt) {
+            enc = { ...enc, enemyNextAt: tick + Math.round(enemy.strikeSeconds * HZ) };
+            if (engaged.length > 0) {
+              rng = rng === state.rng ? cloneRng(state.rng) : rng;
+              const victim = engaged[nextInt(rng, engaged.length)];
+              const hit = nextFloat(rng) < enemyHit(enemy.hit, state.perks);
+              if (hit) {
+                const sv = survival[victim];
+                if (sv) {
+                  survival = survival === state.survival ? { ...state.survival } : survival;
+                  survival[victim] = { ...sv, health: Math.max(0, sv.health - enemy.damage) };
+                }
+              }
+              if (enc.lastTarget !== victim) enc = { ...enc, lastTarget: victim };
+            }
+          }
+
+          // (4) LAISSE : compteur de tics « hors laisse » (remis à zéro dès qu'un joueur est tenu).
+          let drop = false;
+          if (!enc.noFlee) {
+            const lost = leashed.length ? 0 : (enc.lostTicks ?? 0) + 1;
+            if (lost !== (enc.lostTicks ?? 0)) enc = { ...enc, lostTicks: lost };
+            if (lost >= LEASH_GRACE_TICKS) drop = true;
+          }
+
+          if (drop) {
+            encounters = encounters === state.encounters ? { ...state.encounters } : encounters;
+            delete encounters[id];
+          } else if (enc !== enc0) {
+            encounters = encounters === state.encounters ? { ...state.encounters } : encounters;
+            encounters[id] = enc;
           }
         }
-        if (nextSurv) survival = nextSurv;
-        if (nextCombat) combat = nextCombat;
       }
 
       // 8c) MORT — balayage UNIFIÉ (soif ET combat) : dehors, hors grâce, 0 PV -> record neuf
-      //     (compteurs monotones préservés), sac perdu, knob d'entrepôt, rencontre fermée.
+      //     (compteurs monotones préservés), sac perdu, knob d'entrepôt. La sortie de l'engagement
+      //     est ÉMERGENTE (M8.6 : le mort, `outside:false`, est exclu des `engagedPids` dès le tic suivant).
       {
         const ids = Object.keys(survival).sort();
         let nextSurv: Record<string, PlayerSurvival> | null = null;
@@ -1363,7 +1452,6 @@ export function reduce(state: GameState, action: GameAction): GameState {
             ...baseSurvival(),
             deathSeq: sv.deathSeq + 1,
             winSeq: sv.winSeq,
-            encounterSeq: sv.encounterSeq,
             respawnReadyAt: tick + RESPAWN_COOLDOWN_TICKS,
           };
           if (carried[pid] && Object.keys(carried[pid]).length > 0) carried = { ...carried, [pid]: {} }; // perte du sac
@@ -1372,12 +1460,21 @@ export function reduce(state: GameState, action: GameAction): GameState {
             for (const r of Object.keys(res)) res[r] = Math.max(0, Math.floor(res[r] * (1 - DEATH_STORAGE_PENALTY)));
             resources = res;
           }
-          if (combat[pid]) {
-            const { [pid]: _dead, ...rest } = combat;
-            combat = rest;
-          }
         }
         if (nextSurv) survival = nextSurv;
+      }
+
+      // 8d) BUTIN AU SOL — expiration : les piles dont la durée de vie est écoulée disparaissent.
+      let drops = state.drops;
+      {
+        let nextDrops: typeof drops | null = null;
+        for (const id of Object.keys(drops)) {
+          if (drops[id].despawnAt <= tick) {
+            nextDrops = nextDrops ?? { ...drops };
+            delete nextDrops[id];
+          }
+        }
+        if (nextDrops) drops = nextDrops;
       }
 
       return {
@@ -1385,7 +1482,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
         tick,
         carried,
         survival,
-        combat,
+        encounters,
+        drops,
         fire,
         fireCoolAt,
         temperature,

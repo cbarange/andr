@@ -26,12 +26,13 @@
 | **Chantier A** : A3 (P2P failover) · A4 (migration save) | ✅ ✅ · A2 ⏸️(dev) · A5 ⏸️ · A6 ⏳ |
 | **Chantier D** : juice 🟡 · confort FOV/sensibilité ✅ | reste rebind, jour/nuit, AO, reverb… |
 | **M6 seuil · M7 survie** : rempart/porte/puits · eau/vivres/PV par joueur (drain dehors, mort = perte du sac, recharge camp) · **ravitaillement aux avant-postes** (usage unique) | ✅ · ✅ (fog of war ⏸️ différé ; équilibrage = M12) |
-| **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT/FLEE, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (reste : armes/armures M10, ennemi des pairs distants) |
+| **M8 combat temps réel** : rencontres tiérées (FIGHT_CHANCE ADR), armes à cooldown, EAT_MEAT, mort unifiée, créatures 3D, fabrication diégétique (torche/lance d'os) | ✅ cœur (étendu en CO-OP par M8.6) |
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
 | **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 + R3b FAITS** (par pas · tables/biomes · mines/grottes/villes/cités SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste écran de butin, F5 (perks d'usage) |
+| **M8.6 combat COOPÉRATIF** : ennemis PARTAGÉS ancrés dans le monde (HP commun, position autoritaire, attaquables ENSEMBLE), poursuite du plus proche, frappe d'un engagé au hasard, **butin au sol premier-servi**, flux d'ennemis 15 Hz interpolé, désengagement par laisse | ✅ **FAIT** (`SET_POSITIONS` host-feedé, reducer pur ; `combat[pid]`→`encounters[id]`) — reste preview MULTI 2 onglets (manuel) |
 | **Contenu manquant** : fin de partie (M11) | ❌ |
 
-> Vérif à chaque pas : **typecheck · ~234 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · 239 tests unit · 15 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
@@ -130,7 +131,7 @@ l'avancement :
 | Événements (room/outside, choix→conséquences) | ✅ 9/~15 | M5 fait ; reste → M10 |
 | Carte / biomes / sites (génération + rendu) | 🟡 INERTE | M7/M9 (logique) |
 | Survie eau / nourriture / mort | ✅ **FAIT** (M6+M7 : drain dehors, mort = perte du sac, recharge camp) | équilibrage M12 |
-| Combat (ennemis, armes, PV, butin, soin) | ✅ **FAIT** (M8 : temps réel, tables ADR exactes, soin = manger) | armes/armures = M10 |
+| Combat (ennemis, armes, PV, butin, soin) | ✅ **FAIT** (M8 temps réel, tables ADR · **M8.6 CO-OP** : ennemis partagés attaquables ensemble, butin au sol) | extension multijoueur (ADR est solo) |
 | Mines fer/charbon/soufre (sécuriser ⇒ mineur) | ✅ **FAIT** (M9) | — |
 | Sidérurgie acier→balles | ✅ **ressuscité** (M9) | équilibrage M12 |
 | Sites/donjons : **grotte + 3 mines** explorables | ✅ **FAIT** (M9) | — |

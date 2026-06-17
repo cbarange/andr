@@ -507,9 +507,9 @@ test("M6/M7 — la survie se vide dehors et la mort renvoie au camp en vidant le
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
 
-// M8 — COMBAT (victoire) : rencontre forcée (ennemi à 1 PV), E/attack jusqu'à la victoire ->
-// butin au sac (table ADR : fourrure garantie), rencontre fermée, winSeq incrémenté.
-test("M8 — combat : la victoire ferme la rencontre et met le butin au sac", async ({ page }) => {
+// M8.6 — COMBAT COOPÉRATIF (victoire) : rencontre PARTAGÉE forcée (ennemi à 1 PV), E/attack jusqu'à
+// la victoire -> butin AU SOL (drop, table ADR : fourrure garantie), winSeq++, puis on RAMASSE -> sac.
+test("M8.6 — combat : la victoire fait tomber le butin AU SOL, ramassable", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (err) => pageErrors.push(String(err)));
 
@@ -520,10 +520,11 @@ test("M8 — combat : la victoire ferme la rencontre et met le butin au sac", as
 
   await page.evaluate(() => window.__game?.teleport?.(120, 0)); // dehors (tier 1)
   await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(300); // laisse l'hôte injecter notre position dans la sim (SET_POSITIONS)
 
-  await page.evaluate(() => window.__game?.startEncounter?.("snarling beast", 1)); // 1 PV -> tombe vite
+  await page.evaluate(() => window.__game?.startEncounter?.("snarling beast", 1)); // 1 PV -> tombe vite, à nos pieds
   await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.()?.enemyId ?? null)).toBe("snarling beast");
-  await expect(page.locator("#combatPanel")).toBeVisible(); // panneau de rencontre affiché
+  await expect(page.locator("#combatPanel")).toBeVisible(); // panneau de rencontre affiché (on est engagé)
 
   // Frapper jusqu'à la victoire (hit 0.8 -> quelques coups ; cooldown 2 s entre chaque).
   for (let i = 0; i < 10; i++) {
@@ -532,17 +533,22 @@ test("M8 — combat : la victoire ferme la rencontre et met le butin au sac", as
     await page.evaluate(() => window.__game?.attack?.());
     await page.waitForTimeout(2200);
   }
-  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull();
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull(); // plus engagé
   await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.winSeq ?? 0)).toBeGreaterThanOrEqual(1);
-  await expect.poll(() => carried(page, "fur")).toBeGreaterThanOrEqual(1); // butin (chance 1.0)
   await expect(page.locator("#combatPanel")).toBeHidden();
+  // Le butin gît AU SOL (premier-servi), PAS au sac tant qu'on n'a pas ramassé.
+  await expect.poll(() => page.evaluate(() => window.__game?.getDrops?.()?.length ?? 0)).toBeGreaterThanOrEqual(1);
+  expect(await carried(page, "fur")).toBe(0);
+  await page.evaluate(() => window.__game?.takeDrop?.()); // ramasse la pile
+  await expect.poll(() => carried(page, "fur")).toBeGreaterThanOrEqual(1); // butin au sac (chance 1.0)
+  await expect.poll(() => page.evaluate(() => window.__game?.getDrops?.()?.length ?? 0)).toBe(0); // pile retirée
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
 
-// M8 — COMBAT (mort) : un soldat (8 dégâts) face à 1 PV -> mort = chemin unifié M7 (sac vidé,
-// réveil au camp) + rencontre fermée.
-test("M8 — combat : mourir face à l'ennemi renvoie au camp en vidant le sac", async ({ page }) => {
+// M8.6 — COMBAT (mort) : un soldat (8 dégâts) face à 1 PV -> mort = chemin unifié M7 (sac vidé,
+// réveil au camp). L'ennemi PARTAGÉ survit, mais on QUITTE l'engagement (getCombat -> null).
+test("M8.6 — combat : mourir face à l'ennemi renvoie au camp en vidant le sac", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (err) => pageErrors.push(String(err)));
 
@@ -553,14 +559,15 @@ test("M8 — combat : mourir face à l'ennemi renvoie au camp en vidant le sac",
 
   await page.evaluate(() => window.__game?.teleport?.(300, 300)); // loin (tier 3)
   await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(300); // laisse l'hôte injecter notre position dans la sim (SET_POSITIONS)
 
   await page.evaluate(() => window.__game?.forceGather?.()); // du bois dans le sac (à perdre)
   await expect.poll(() => carried(page, "wood")).toBeGreaterThan(0);
   await page.evaluate(() => window.__game?.setSurvival?.({ health: 1 }));
-  await page.evaluate(() => window.__game?.startEncounter?.("soldier")); // 8 dégâts -> mort à la 1ʳᵉ touche
+  await page.evaluate(() => window.__game?.startEncounter?.("soldier")); // 8 dégâts -> mort à la 1ʳᵉ touche, à nos pieds
 
   await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.deathSeq ?? 0), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
-  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull(); // rencontre fermée
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.())).toBeNull(); // on quitte l'engagement (réveil au camp)
   await expect.poll(() => carried(page, "wood")).toBe(0); // sac perdu
   await expect
     .poll(() => page.evaluate(() => { const p = window.__game?.getPlayer?.(); return p ? Math.hypot(p.x, p.z) : 999; }), { timeout: 10_000 })

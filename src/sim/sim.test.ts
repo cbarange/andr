@@ -15,11 +15,14 @@ import {
   discoverSite, takeLoot, clearHazard, secureMine, clearCave, craftItem,
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp,
+  attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
+  visitHouse, talkSwamp, setPositions, takeDrop,
 } from "./actions";
-import { stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit } from "./combat";
-import { enemyById, weaponById, mineGuardians } from "../../data/world";
+import {
+  stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
+  engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS, CHASE_SPEED,
+} from "./combat";
+import { enemyById, weaponById, mineGuardians, worldgen } from "../../data/world";
 import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -37,6 +40,19 @@ const ticksFor = (id: string): number => Math.max(1, Math.round(buildSecondsFor(
 /** État de base où la cabane est réparée (entrepôt + construction débloqués). */
 function repaired(extra: Partial<GameState> = {}): GameState {
   return { ...createInitialState(config.rngSeed, 0), builder: MAX, cabinRepaired: true, cabinTier: 1, ...extra };
+}
+
+// --- Helpers COMBAT COOPÉRATIF (M8.6) : rencontres PARTAGÉES, attaquables si l'on est À PORTÉE ---
+const CELL = worldgen.cellSize; // ancrage monde d'un gardien de setpiece : son centre = (cx*CELL, cz*CELL)
+/** Pose/MAJ la position d'un joueur dans la sim (fusionne `playerPos`, comme l'hôte ~10 Hz). */
+function standAt(s: GameState, pid: string, x: number, z: number): GameState {
+  return reduce(s, setPositions({ ...s.playerPos, [pid]: { x, z } }));
+}
+/** Premier id de rencontre (utilitaire pour les rencontres aléatoires : un seul ennemi en jeu). */
+function firstEncId(s: GameState): string { return Object.keys(s.encounters)[0]; }
+/** La rencontre où ce joueur est engagé (à portée) — ou la première, pour les assertions de test. */
+function encOf(s: GameState): GameState["encounters"][string] | undefined {
+  return s.encounters[firstEncId(s)];
 }
 
 describe("état initial", () => {
@@ -857,23 +873,26 @@ describe("M9 — grotte nettoyée ⇒ avant-poste, et déterminisme global", () 
     expect(steps[steps.length - 1].kind).toBe("fight"); // le chemin finit TOUJOURS par c1/c2
     expect(caveSteps(5, 5, seed)).toEqual(steps); // déterministe
     // end gaté tant que les étapes ne sont pas franchies
+    const KEY = siteKey(5, 5);
     let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { torch: 3, "steel sword": 1 } } };
+    s = reduce(s, setOutside("p1", true, 4)); // sous terre = dehors (engageable)
+    s = standAt(s, "p1", 5 * CELL, 5 * CELL); // debout au cœur de la grotte (ancre du gardien)
     expect(reduce(s, takeLoot("p1", 5, 5, "cave", "end"))).toBe(s);
-    // franchir chaque étape via ENGAGE_GUARDIAN (gate = consomme une torche ; fight = combat)
-    const FISTS = 2 * HZ;
+    // franchir chaque étape via ENGAGE_GUARDIAN (gate = consomme une torche ; fight = combat partagé)
     for (let i = 0; i < steps.length; i++) {
       const before = s;
       s = reduce(s, engageGuardian("p1", 5, 5, "cave"));
       if (steps[i].kind === "gate") {
         expect(carriedOf(s, "p1", "torch")).toBe(carriedOf(before, "p1", "torch") - 1); // torche consommée
-        expect(s.sites[siteKey(5, 5)].guardians).toBe(i + 1);
+        expect(s.sites[KEY].guardians).toBe(i + 1);
       } else {
-        expect(s.combat["p1"]?.enemyId).toBe((steps[i] as { enemyId: string }).enemyId);
-        for (let k = 0; k < 20 && s.combat["p1"]; k++) {
-          s = reduce(s, attack("p1", "steel sword"));
-          if (s.combat["p1"]) s = advanceTicks(s, FISTS);
+        expect(s.encounters[KEY]?.enemyId).toBe((steps[i] as { enemyId: string }).enemyId);
+        for (let k = 0; k < 30 && s.encounters[KEY]; k++) {
+          s = reduce(s, debugSetSurvival("p1", { health: 9999 })); // anti-mort pour le test (reste engagé)
+          s = reduce(s, attack("p1", "steel sword", KEY));
+          if (s.encounters[KEY]) s = advanceTicks(s, 2 * HZ);
         }
-        expect(s.sites[siteKey(5, 5)].guardians).toBe(i + 1);
+        expect(s.sites[KEY].guardians).toBe(i + 1);
       }
     }
     // la cache finale s'ouvre enfin
@@ -882,9 +901,10 @@ describe("M9 — grotte nettoyée ⇒ avant-poste, et déterminisme global", () 
     expect(out.sites[siteKey(5, 5)].taken?.["end"]).toBe(true);
   });
 
-  it("GATE sans torche = no-op ; combat de grotte = désengageable (pas un dernier gardien de mine)", () => {
+  it("GATE sans torche = no-op ; combat de grotte = DÉCROCHABLE en s'éloignant (pas un boss de mine)", () => {
     const seed = createInitialState(config.rngSeed, 0).worldSeed;
-    // cherche une grotte dont la 1ʳᵉ étape est une GATE (b2) — sinon teste au moins le flee.
+    const GRACE = Math.round(config.combat.leashGraceSeconds * HZ);
+    // cherche une grotte dont la 1ʳᵉ étape est une GATE (b2) — sinon teste au moins le décrochage.
     let gateCave: [number, number] | null = null;
     let fightCave: [number, number] | null = null;
     for (let i = 1; i < 60; i++) {
@@ -898,11 +918,16 @@ describe("M9 — grotte nettoyée ⇒ avant-poste, et déterminisme global", () 
       expect(reduce(s0, engageGuardian("p1", gateCave[0], gateCave[1], "cave"))).toBe(s0);
     }
     if (fightCave) {
-      let s = createInitialState(config.rngSeed, 0);
-      s = reduce(s, engageGuardian("p1", fightCave[0], fightCave[1], "cave"));
-      expect(s.combat["p1"]).toBeTruthy();
-      const fled = reduce(s, flee("p1"));
-      expect(fled.combat["p1"]).toBeUndefined(); // les bêtes de grotte se distancent (pas une mine)
+      const [cx, cz] = fightCave;
+      const KEY = siteKey(cx, cz);
+      let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 4));
+      s = standAt(s, "p1", cx * CELL, cz * CELL);
+      s = reduce(s, engageGuardian("p1", cx, cz, "cave"));
+      expect(s.encounters[KEY]).toBeTruthy();
+      expect(s.encounters[KEY].noFlee).toBeFalsy(); // bête de grotte : pas un boss -> décrochable
+      s = standAt(s, "p1", cx * CELL + LEASH_RADIUS + 5, cz * CELL); // on la sème
+      s = advanceTicks(s, GRACE + 1);
+      expect(s.encounters[KEY]).toBeUndefined(); // les bêtes de grotte se distancent (pas une mine)
     }
   });
 
@@ -1164,72 +1189,118 @@ describe("combat (M8/M8.5) — helpers purs, fidèles ADR", () => {
   });
 });
 
-describe("combat (M8) — rencontres, armes, mort & soin", () => {
+describe("combat coopératif (M8.6) — rencontres PARTAGÉES, armes, mort & soin", () => {
   const CB = config.combat;
   const FISTS_CD = 2 * HZ; // poings : cooldown 2 s (ADR)
+  const GRACE = Math.round(CB.leashGraceSeconds * HZ); // tics hors laisse avant décrochage
 
-  /** État avec une rencontre forcée (bête grondante 5/1 par défaut). */
+  /** État avec une rencontre PARTAGÉE forcée : p1 DEHORS, debout SUR l'ennemi (donc ENGAGÉ). */
   function inFight(enemyId = "snarling beast", hp?: number, extra: Partial<GameState> = {}): GameState {
     let s: GameState = { ...createInitialState(config.rngSeed, 0), ...extra };
+    s = reduce(s, setOutside("p1", true, 1));
+    s = standAt(s, "p1", 0, 0); // l'ennemi naît à la position du joueur -> à portée
     s = reduce(s, debugStartEncounter("p1", enemyId, hp));
     return s;
   }
+  /** Frappe la (seule) rencontre courante avec `weapon`. */
+  const atk = (s: GameState, weapon = "fists", pid = "p1"): GameState => reduce(s, attack(pid, weapon, firstEncId(s)));
 
-  it("DEBUG_START_ENCOUNTER crée la rencontre (hp forcé, seq monotone)", () => {
-    const s = inFight("cave lizard", 1);
-    expect(s.combat["p1"]?.enemyId).toBe("cave lizard");
-    expect(s.combat["p1"]?.enemyHp).toBe(1);
-    expect(s.combat["p1"]?.seq).toBe(1);
-    expect(survivalOf(s, "p1").encounterSeq).toBe(1);
+  it("DEBUG_START_ENCOUNTER crée une rencontre PARTAGÉE ancrée à la position (seq, nextEncId++)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = standAt(s, "p1", 30, -12);
+    s = reduce(s, debugStartEncounter("p1", "cave lizard", 1));
+    const enc = encOf(s)!;
+    expect(enc.enemyId).toBe("cave lizard");
+    expect(enc.enemyHp).toBe(1);
+    expect(enc.x).toBe(30); expect(enc.z).toBe(-12); // ancrée où se tient le joueur
+    expect(enc.seq).toBe(1);
+    expect(s.nextEncId).toBe(2); // compteur monotone
   });
 
-  it("ATTACK respecte le COOLDOWN de l'arme (2ᵉ coup immédiat = no-op)", () => {
-    const s1 = reduce(inFight("soldier"), attack("p1", "fists"));
-    expect(reduce(s1, attack("p1", "fists"))).toBe(s1); // l'arme recharge
+  it("ATTACK exige d'être ENGAGÉ (à portée) — hors de portée = no-op", () => {
+    const s = inFight();
+    const id = firstEncId(s);
+    const far = standAt(s, "p1", 100, 100); // p1 s'éloigne (l'ennemi reste ancré à l'origine)
+    expect(reduce(far, attack("p1", "fists", id))).toBe(far); // trop loin -> refusé
+    expect(atk(s)).not.toBe(s); // à portée -> frappe
+  });
+
+  it("ATTACK respecte le COOLDOWN PAR JOUEUR (2ᵉ coup immédiat = no-op)", () => {
+    const s1 = atk(inFight("snarling beast", 50)); // ennemi costaud : survit à plusieurs coups
+    const id = firstEncId(s1);
+    expect(reduce(s1, attack("p1", "fists", id))).toBe(s1); // l'arme recharge
     const after = advanceTicks(s1, FISTS_CD);
-    expect(reduce(after, attack("p1", "fists"))).not.toBe(after); // re-frappe possible
+    expect(reduce(after, attack("p1", "fists", firstEncId(after)))).not.toBe(after); // re-frappe possible
   });
 
   it("ATTACK exige de POSSÉDER l'arme (lance d'os = au sac, pattern torche)", () => {
     const s = inFight();
-    expect(reduce(s, attack("p1", "bone spear"))).toBe(s); // pas au sac
-    const armed: GameState = { ...s, carried: { p1: { "bone spear": 1 } } };
-    expect(reduce(armed, attack("p1", "bone spear"))).not.toBe(armed);
-    expect(reduce(s, attack("p1", "inconnue"))).toBe(s); // arme inconnue
+    const id = firstEncId(s);
+    expect(reduce(s, attack("p1", "bone spear", id))).toBe(s); // pas au sac
+    const armed = { ...s, carried: { p1: { "bone spear": 1 } } };
+    expect(reduce(armed, attack("p1", "bone spear", id))).not.toBe(armed);
+    expect(reduce(s, attack("p1", "inconnue", id))).toBe(s); // arme inconnue
   });
 
-  it("VICTOIRE : butin (table ADR) au SAC, rencontre fermée, winSeq++, répit armé", () => {
+  it("VICTOIRE : butin AU SOL (drop), rencontre retirée, winSeq++, répit ; TAKE_DROP -> sac", () => {
     let s = inFight("snarling beast", 1); // 1 PV -> tombe au 1ᵉʳ coup qui touche
-    for (let i = 0; i < 12 && s.combat["p1"]; i++) {
-      s = reduce(s, attack("p1", "fists"));
-      if (s.combat["p1"]) s = advanceTicks(s, FISTS_CD);
+    for (let i = 0; i < 12 && encOf(s); i++) {
+      s = atk(s);
+      if (encOf(s)) s = advanceTicks(s, FISTS_CD);
     }
-    expect(s.combat["p1"]).toBeUndefined(); // vaincu
+    expect(Object.keys(s.encounters).length).toBe(0); // vaincu, rencontre retirée
     const sv = survivalOf(s, "p1");
     expect(sv.winSeq).toBe(1);
-    expect(sv.fightSteps).toBe(0); // FIGHT_DELAY repart de zéro (min 3 pas avant le prochain)
-    expect(carriedOf(s, "p1", "fur")).toBeGreaterThanOrEqual(1); // chance 1.0 dans la table
+    expect(sv.fightSteps).toBe(0); // FIGHT_DELAY repart de zéro
+    // Le butin gît AU SOL (premier-servi), PAS directement au sac.
+    const dropId = Object.keys(s.drops)[0];
+    expect(dropId).toBeTruthy();
+    expect(s.drops[dropId].loot["fur"]).toBeGreaterThanOrEqual(1); // chance 1.0 dans la table
+    expect(carriedOf(s, "p1", "fur")).toBe(0); // tant qu'on n'a pas ramassé
+    s = reduce(s, takeDrop("p1", dropId));
+    expect(carriedOf(s, "p1", "fur")).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(s.drops).length).toBe(0); // pile retirée
+    expect(reduce(s, takeDrop("p1", dropId))).toBe(s); // déjà prise -> no-op (premier-servi)
   });
 
-  it("l'ennemi FRAPPE à échéance (la santé baisse)", () => {
-    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
-    s = reduce(s, debugStartEncounter("p1", "snarling beast")); // 1 dégât / 3 s (pas de mort ici)
-    s = advanceTicks(s, Math.round(enemyById["snarling beast"].strikeSeconds * HZ) * 5 + 5);
+  it("l'ennemi FRAPPE un engagé à échéance (la santé baisse)", () => {
+    let s = inFight("snarling beast"); // 1 dégât / 1 s
+    s = advanceTicks(s, enemyById["snarling beast"].strikeSeconds * HZ * 5 + 5);
     const sv = survivalOf(s, "p1");
     expect(sv.deathSeq).toBe(0); // pas mort (1 dégât par frappe)
     expect(sv.health).toBeLessThan(config.survival.maxHealth);
   });
 
-  it("MORT en combat = chemin UNIFIÉ : sac vidé, deathSeq++, rencontre fermée, winSeq préservé", () => {
+  it("l'ennemi alterne ses cibles : 2 joueurs engagés sont TOUS deux frappés (RNG porteur)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = reduce(s, setOutside("p2", true, 1));
+    s = standAt(s, "p1", 0, 0);
+    s = standAt(s, "p2", 1, 0); // les deux à portée de l'ennemi (qui naît en 0,0)
+    s = reduce(s, debugStartEncounter("p1", "snarling beast")); // 1 dégât, frappe vite
+    let hitP1 = false, hitP2 = false;
+    for (let i = 0; i < 30; i++) {
+      const b1 = survivalOf(s, "p1").health, b2 = survivalOf(s, "p2").health;
+      s = advanceTicks(s, 20);
+      if (survivalOf(s, "p1").health < b1) hitP1 = true;
+      if (survivalOf(s, "p2").health < b2) hitP2 = true;
+      s = reduce(s, debugSetSurvival("p1", { health: 10 })); // anti-mort -> on observe le ciblage
+      s = reduce(s, debugSetSurvival("p2", { health: 10 }));
+    }
+    expect(hitP1).toBe(true);
+    expect(hitP2).toBe(true); // l'ennemi ne s'acharne PAS sur un seul joueur
+  });
+
+  it("MORT en combat = chemin UNIFIÉ : sac vidé, deathSeq++, winSeq préservé (ennemi PARTAGÉ survit)", () => {
     let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { wood: 5 } } };
     s = reduce(s, setOutside("p1", true, 3));
+    s = standAt(s, "p1", 0, 0);
     s = reduce(s, debugSetSurvival("p1", { health: 1 }));
     s = reduce(s, debugStartEncounter("p1", "soldier")); // 8 dég -> mort à la 1ʳᵉ frappe qui touche
-    s = advanceTicks(s, Math.round(enemyById["soldier"].strikeSeconds * HZ) * 6 + 5);
+    s = advanceTicks(s, enemyById["soldier"].strikeSeconds * HZ * 6 + 5);
     const sv = survivalOf(s, "p1");
     expect(sv.deathSeq).toBe(1);
     expect(sv.health).toBe(config.survival.maxHealth); // ressuscité plein
-    expect(s.combat["p1"]).toBeUndefined(); // rencontre fermée
+    expect(sv.outside).toBe(false); // de retour au camp -> exclu de l'engagement
     expect(carriedTotal(s, "p1")).toBe(0); // sac perdu
   });
 
@@ -1249,20 +1320,20 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
     expect(reduce(broke, eatMeat("p1"))).toBe(broke); // pas de viande -> no-op
   });
 
-  it("le DÉSENGAGEMENT ferme la rencontre et remet le compteur de pas à zéro", () => {
-    const s0 = inFight();
-    const s = reduce(s0, flee("p1"));
-    expect(s.combat["p1"]).toBeUndefined();
-    expect(survivalOf(s, "p1").fightSteps).toBe(0);
-    expect(reduce(s, flee("p1"))).toBe(s); // pas de rencontre -> no-op
+  it("DÉSENGAGEMENT par la LAISSE : semer l'ennemi (> LEASH_RADIUS) le fait décrocher (despawn)", () => {
+    let s = inFight("snarling beast");
+    expect(encOf(s)).toBeTruthy();
+    s = standAt(s, "p1", LEASH_RADIUS + 5, 0); // au-delà de la laisse : l'ennemi ne « tient » plus personne
+    s = advanceTicks(s, GRACE + 1);
+    expect(Object.keys(s.encounters).length).toBe(0); // décroché
   });
 
-  it("rentrer au camp ROMPT le combat (fuite automatique)", () => {
-    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 2));
-    s = reduce(s, debugStartEncounter("p1"));
-    expect(s.combat["p1"]).toBeTruthy();
-    s = reduce(s, setOutside("p1", false, 0));
-    expect(s.combat["p1"]).toBeUndefined();
+  it("rentrer au camp (outside:false) sort de l'engagement -> l'ennemi décroche", () => {
+    let s = inFight();
+    expect(encOf(s)).toBeTruthy();
+    s = reduce(s, setOutside("p1", false, 0)); // au village : exclu des engagés
+    s = advanceTicks(s, GRACE + 1);
+    expect(Object.keys(s.encounters).length).toBe(0);
   });
 
   it("RÉGRESSION H1 : un changement de tier/route seul ne ré-arme PAS les drains", () => {
@@ -1275,101 +1346,163 @@ describe("combat (M8) — rencontres, armes, mort & soin", () => {
     expect(survivalOf(s, "p1").waterAt).toBe(waterAt0); // l'horloge de soif n'a PAS bougé
   });
 
-  it("DÉCLENCHEMENT PAR PAS (M8.5/F1) : jamais avant le 4ᵉ pas, déterministe, replay identique", () => {
+  it("DÉCLENCHEMENT PAR PAS (M8.5/F1) : rencontre ANCRÉE à (x,z), jamais avant le 4ᵉ pas, replay", () => {
     const run = (): { s: GameState; firstFightStep: number } => {
       let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
       let firstFightStep = -1;
-      for (let i = 1; i <= 200 && !s.combat["p1"]; i++) {
-        s = reduce(s, steps("p1", 1, 1, "forest", false));
-        if (s.combat["p1"] && firstFightStep < 0) firstFightStep = i;
+      for (let i = 1; i <= 200 && Object.keys(s.encounters).length === 0; i++) {
+        s = reduce(s, steps("p1", 1, 1, "forest", false, 5 * i, 0)); // avance en x à chaque pas
+        if (Object.keys(s.encounters).length > 0 && firstFightStep < 0) firstFightStep = i;
       }
       return { s, firstFightStep };
     };
     const a = run();
-    expect(a.s.combat["p1"]).toBeTruthy(); // une rencontre finit par survenir (~20 %/pas)
+    expect(Object.keys(a.s.encounters).length).toBe(1); // une rencontre finit par survenir (~20 %/pas)
     expect(a.firstFightStep).toBeGreaterThan(3); // FIGHT_DELAY : jamais avant le 4ᵉ pas
-    expect(a.s.combat["p1"].enemyId).toBe("snarling beast"); // forêt tier 1
+    const enc = encOf(a.s)!;
+    expect(enc.enemyId).toBe("snarling beast"); // forêt tier 1
+    expect(enc.x).toBe(5 * a.firstFightStep); // ANCRÉE au pas qui l'a déclenchée
     expect(a.s).toEqual(run().s); // replay-equality
   });
 
   it("IMMOBILE = AUCUN combat (le temps ne déclenche plus rien — fidèle ADR)", () => {
     let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 3));
     s = reduce(s, debugSetSurvival("p1", { water: 10, food: 10, health: 10 }));
-    s = advanceTicks(s, 20 * 60); // 1 minute sim sans bouger
-    expect(Object.keys(s.combat).length).toBe(0);
+    s = advanceTicks(s, 20 * 60); // 1 minute sim sans bouger (ni STEPS)
+    expect(Object.keys(s.encounters).length).toBe(0);
   });
 
   it("ROUTE = AUCUNE rencontre (le tirage est dépensé, le pool est vide — fidèle ADR)", () => {
     let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
-    for (let i = 0; i < 200; i++) s = reduce(s, steps("p1", 1, 1, "forest", true)); // toujours sur route
-    expect(Object.keys(s.combat).length).toBe(0);
+    for (let i = 0; i < 200; i++) s = reduce(s, steps("p1", 1, 1, "forest", true, 5 * i, 0)); // sur route
+    expect(Object.keys(s.encounters).length).toBe(0);
   });
 
-  it("MINES GARDÉES (M8.5/F3.1) : séquence scriptée, SECURE gaté, dernier gardien sans fuite", () => {
-    const FISTS = 2 * HZ;
+  it("MINES GARDÉES (M8.5/F3.1) : séquence scriptée PARTAGÉE, SECURE gaté, dernier gardien sans laisse", () => {
+    const KEY = siteKey(7, 7);
+    const CENTER = { x: 7 * CELL, z: 7 * CELL };
     let s: GameState = {
       ...createInitialState(config.rngSeed, 0),
       carried: { p1: { "steel sword": 1 } }, // 6 dég -> les gardiens de charbon tombent vite
     };
+    s = reduce(s, setOutside("p1", true, 4)); // sous terre = dehors (engageable)
+    s = standAt(s, "p1", CENTER.x, CENTER.z); // debout au cœur du site (ancre du gardien)
     // SECURE refusé tant que les gardiens vivent.
     expect(reduce(s, secureMine("p1", 7, 7, "coalmine"))).toBe(s);
-    // Gardien 1 (homme de la mine, 10 PV).
+    // Gardien 1 (homme de la mine, 10 PV) — la rencontre porte l'id du site.
     s = reduce(s, engageGuardian("p1", 7, 7, "coalmine"));
-    expect(s.combat["p1"]?.enemyId).toBe("mine man");
-    expect(s.combat["p1"]?.guardianIdx).toBe(0);
+    expect(s.encounters[KEY]?.enemyId).toBe("mine man");
+    expect(s.encounters[KEY]?.guardianIdx).toBe(0);
     const fight = (st: GameState): GameState => {
       let cur = st;
-      for (let i = 0; i < 20 && cur.combat["p1"]; i++) {
-        cur = reduce(cur, attack("p1", "steel sword"));
-        if (cur.combat["p1"]) cur = advanceTicks(cur, FISTS);
+      for (let i = 0; i < 30 && cur.encounters[KEY]; i++) {
+        cur = reduce(cur, debugSetSurvival("p1", { health: 9999 })); // anti-mort pour le test (reste engagé)
+        cur = reduce(cur, attack("p1", "steel sword", KEY));
+        if (cur.encounters[KEY]) cur = advanceTicks(cur, 2 * HZ);
       }
       return cur;
     };
     s = fight(s);
-    expect(s.sites[siteKey(7, 7)].guardians).toBe(1);
+    expect(s.sites[KEY].guardians).toBe(1);
     expect(reduce(s, secureMine("p1", 7, 7, "coalmine"))).toBe(s); // toujours gaté
-    // Gardien 2 (homme), puis le CHEF (sans fuite).
+    // Gardien 2 (homme), puis le CHEF (sans laisse).
     s = fight(reduce(s, engageGuardian("p1", 7, 7, "coalmine")));
-    expect(s.sites[siteKey(7, 7)].guardians).toBe(2);
+    expect(s.sites[KEY].guardians).toBe(2);
     s = reduce(s, engageGuardian("p1", 7, 7, "coalmine"));
-    expect(s.combat["p1"]?.enemyId).toBe("mine chief");
-    expect(reduce(s, flee("p1"))).toBe(s); // DERNIER gardien : pas de fuite (fidèle)
+    expect(s.encounters[KEY]?.enemyId).toBe("mine chief");
+    expect(s.encounters[KEY]?.noFlee).toBe(true);
+    // DERNIER gardien : même en s'éloignant longtemps, il ne décroche PAS (noFlee).
+    const ranAway = advanceTicks(standAt(s, "p1", CENTER.x + 100, CENTER.z), GRACE + 5);
+    expect(ranAway.encounters[KEY]).toBeTruthy();
     s = fight(s);
-    expect(s.sites[siteKey(7, 7)].guardians).toBe(3);
+    expect(s.sites[KEY].guardians).toBe(3);
     // Tous vaincus -> SECURE passe enfin.
     s = reduce(s, secureMine("p1", 7, 7, "coalmine"));
-    expect(s.sites[siteKey(7, 7)].secured).toBe(true);
+    expect(s.sites[KEY].secured).toBe(true);
     // Re-ENGAGE après nettoyage = no-op.
     expect(reduce(s, engageGuardian("p1", 7, 7, "coalmine"))).toBe(s);
   });
 
-  it("bestReadyWeapon : poings par défaut, lance si possédée, null si tout recharge", () => {
-    const s = inFight();
-    expect(bestReadyWeapon(s, "p1", s.combat["p1"])?.id).toBe("fists");
-    const armed: GameState = { ...s, carried: { p1: { "bone spear": 1 } } };
-    expect(bestReadyWeapon(armed, "p1", armed.combat["p1"])?.id).toBe("bone spear");
-    const afterBoth = reduce(reduce(armed, attack("p1", "bone spear")), attack("p1", "fists"));
-    if (afterBoth.combat["p1"]) {
-      expect(bestReadyWeapon(afterBoth, "p1", afterBoth.combat["p1"])).toBeNull(); // tout recharge
+  it("bestReadyWeapon : poings par défaut, lame si possédée, null si tout recharge", () => {
+    const s = inFight("snarling beast", 50);
+    const enc = encOf(s)!;
+    expect(bestReadyWeapon(s, "p1", enc)?.id).toBe("fists");
+    const armed = { ...s, carried: { p1: { "bone spear": 1 } } };
+    expect(bestReadyWeapon(armed, "p1", encOf(armed)!)?.id).toBe("bone spear");
+    const afterBoth = atk(atk(armed, "bone spear"), "fists");
+    if (encOf(afterBoth)) {
+      expect(bestReadyWeapon(afterBoth, "p1", encOf(afterBoth)!)).toBeNull(); // tout recharge
     }
   });
 
-  it("réseau-safe : ATTACK usurpé refusé ; DEBUG_START_ENCOUNTER refusé du réseau", () => {
-    expect(isNetworkSafeAction(attack("p1", "fists"), "p1")).toBe(true);
-    expect(isNetworkSafeAction(attack("p1", "fists"), "p2")).toBe(false);
+  it("réseau-safe : ATTACK/TAKE_DROP portent pid (usurpation refusée) ; DEBUG refusé du réseau", () => {
+    expect(isNetworkSafeAction(attack("p1", "fists", "1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(attack("p1", "fists", "1"), "p2")).toBe(false);
+    expect(isNetworkSafeAction(takeDrop("p1", "1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(takeDrop("p1", "1"), "p2")).toBe(false);
     expect(isNetworkSafeAction(debugStartEncounter("p1"), "p1")).toBe(false);
+    // SET_POSITIONS n'est PAS une PlayerAction (host-only) : structurellement absent du réseau.
   });
 
-  it("REPLAY complet : 2 joueurs en combat simultané (exerce le tri déterministe)", () => {
+  it("REPLAY complet : 2 joueurs sur UNE rencontre partagée (SET_POSITIONS fixes -> déterministe)", () => {
     const acts: GameAction[] = [
       setOutside("a", true, 2), setOutside("b", true, 3),
-      debugStartEncounter("a", "man-eater"), debugStartEncounter("b", "soldier"),
+      setPositions({ a: { x: 0, z: 0 }, b: { x: 1, z: 0 } }), // les deux à portée de l'origine
+      debugStartEncounter("a", "man-eater"), // naît en (0,0)
       ...Array.from({ length: 300 }, () => tick()),
-      attack("a", "fists"), attack("b", "fists"),
+      attack("a", "fists", "1"), attack("b", "fists", "1"), // les deux frappent LA MÊME rencontre
       ...Array.from({ length: 300 }, () => tick()),
     ];
     const s0 = createInitialState(config.rngSeed, 0);
     expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
+  });
+});
+
+describe("combat coopératif (M8.6) — helpers PURS de partage (engagement, poursuite)", () => {
+  /** Construit un état avec des positions de joueurs + une rencontre à (ex,ez). */
+  function scene(players: Record<string, { x: number; z: number; outside?: boolean; health?: number }>, ex = 0, ez = 0): { s: GameState; enc: GameState["encounters"][string] } {
+    let s = createInitialState(config.rngSeed, 0);
+    const positions: Record<string, { x: number; z: number }> = {};
+    const survival: GameState["survival"] = {};
+    for (const pid of Object.keys(players)) {
+      const p = players[pid];
+      positions[pid] = { x: p.x, z: p.z };
+      survival[pid] = { ...survivalOf(s, pid), outside: p.outside ?? true, health: p.health ?? 10 };
+    }
+    s = { ...s, survival, playerPos: positions };
+    const enc = { enemyId: "snarling beast", enemyHp: 5, x: ex, z: ez, enemyNextAt: 0, weaponReadyAt: {}, seq: 1 };
+    return { s, enc };
+  }
+
+  it("engagedPids : à portée, TRIÉS, exclut morts / au village / au-delà du rayon", () => {
+    const { s, enc } = scene({
+      p1: { x: 0, z: 0 }, // à portée
+      p3: { x: 2, z: 0 }, // à portée
+      p2: { x: 0, z: 0, health: 0 }, // mort -> exclu
+      inn: { x: 0, z: 0, outside: false }, // au village -> exclu
+      far: { x: 999, z: 0 }, // trop loin -> exclu
+    }, 0, 0);
+    expect(engagedPids(s, enc, 0)).toEqual(["p1", "p3"]); // triés, vivants, dehors, à portée
+    expect(engagedPids(s, enc, 0, LEASH_RADIUS)).toEqual(["p1", "p3"]); // (far est aussi > laisse)
+  });
+
+  it("stepEnemyToward : avance borné par CHASE_SPEED*dt, atteint la cible si proche", () => {
+    const enc = { enemyId: "x", enemyHp: 1, x: 0, z: 0, enemyNextAt: 0, weaponReadyAt: {}, seq: 1 };
+    const dt = 1; // 1 s -> au plus CHASE_SPEED unités
+    const a = stepEnemyToward(enc, 100, 0, dt);
+    expect(a.x).toBeCloseTo(CHASE_SPEED, 5); expect(a.z).toBe(0);
+    const b = stepEnemyToward(enc, 0.1, 0, dt); // cible proche -> on l'atteint exactement
+    expect(b).toEqual({ x: 0.1, z: 0 });
+  });
+
+  it("POURSUITE intégrée : l'ennemi se rapproche du joueur tenu en laisse (hors portée d'attaque)", () => {
+    let s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 1));
+    s = standAt(s, "p1", 0, 0);
+    s = reduce(s, debugStartEncounter("p1", "snarling beast")); // naît en (0,0)
+    s = standAt(s, "p1", LEASH_RADIUS - 2, 0); // dans la laisse mais hors ENGAGE_RADIUS
+    const x0 = encOf(s)!.x;
+    s = advanceTicks(s, 40); // 2 s de poursuite
+    expect(encOf(s)!.x).toBeGreaterThan(x0); // l'ennemi a avancé vers le joueur
   });
 });
 
@@ -1419,16 +1552,19 @@ describe("atelier, commerce & perks (M10) — fidèle ADR", () => {
 
   it("FUSIL : consomme 1 balle PAR TIR (touché ou non), no-op sans munition", () => {
     let s: GameState = { ...equipped(), carried: { p1: { rifle: 1, bullets: 2 } } };
-    s = reduce(s, debugStartEncounter("p1", "soldier"));
-    const s1 = reduce(s, attack("p1", "rifle"));
+    s = reduce(s, setOutside("p1", true, 3));
+    s = standAt(s, "p1", 0, 0);
+    s = reduce(s, debugStartEncounter("p1", "soldier")); // 50 PV -> survit aux 2 tirs
+    const id = firstEncId(s);
+    const s1 = reduce(s, attack("p1", "rifle", id));
     expect(carriedOf(s1, "p1", "bullets")).toBe(1); // balle consommée
     const s2 = advanceTicks(s1, 1 * HZ); // cooldown fusil : 1 s
-    const s3 = reduce(s2, attack("p1", "rifle"));
+    const s3 = reduce(s2, attack("p1", "rifle", id));
     expect(carriedOf(s3, "p1", "bullets")).toBe(0);
     const s4 = advanceTicks(s3, 1 * HZ);
-    expect(reduce(s4, attack("p1", "rifle"))).toBe(s4); // plus de balles -> no-op
-    if (s4.combat["p1"]) {
-      expect(bestReadyWeapon(s4, "p1", s4.combat["p1"])?.id).toBe("fists"); // le fusil est exclu sans munitions
+    expect(reduce(s4, attack("p1", "rifle", id))).toBe(s4); // plus de balles -> no-op
+    if (s4.encounters[id]) {
+      expect(bestReadyWeapon(s4, "p1", s4.encounters[id])?.id).toBe("fists"); // fusil exclu sans munitions
     }
   });
 
@@ -1549,7 +1685,7 @@ describe("fidélité M8.5/F4 — soin en marchant, mort 120 s, maisons & marais"
     expect(out.sites[siteKey(9, 9)].visited).toBe(true); // markVisited
     const gotMeds = (out.carried["p1"]?.["medicine"] ?? 0) > 0;
     const gotWater = survivalOf(out, "p1").water === SV.maxWater; // eau REMPLIE (issue vivres)
-    const gotFight = !!out.combat["p1"] && out.combat["p1"].enemyId === "squatter";
+    const gotFight = Object.values(out.encounters).some((e) => e.enemyId === "squatter"); // rencontre PARTAGÉE
     expect(gotMeds || gotWater || gotFight).toBe(true); // une des 3 issues
     expect(out).toEqual(reduce(s, visitHouse("p1", 9, 9))); // tirage reproductible
     expect(reduce(out, visitHouse("p1", 9, 9))).toBe(out); // one-shot
@@ -1616,12 +1752,17 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
   const seed = createInitialState(config.rngSeed, 0).worldSeed;
   const FISTS = 2 * HZ;
 
-  /** Combat l'ennemi courant aux poings jusqu'à la victoire/mort. */
-  function fightOut(s: GameState, pid = "p1"): GameState {
-    for (let i = 0; i < 60 && s.combat[pid]; i++) {
-      s = reduce(s, attack(pid, "fists"));
-      s = reduce(s, debugSetSurvival(pid, { health: 10 })); // anti-mort pour le test
-      if (s.combat[pid]) s = advanceTicks(s, FISTS);
+  /** Place p1 DEHORS, debout au cœur du site (ancre des gardiens partagés). */
+  function stand(s: GameState, cx: number, cz: number, pid = "p1"): GameState {
+    return standAt(reduce(s, setOutside(pid, true, 2)), pid, cx * CELL, cz * CELL);
+  }
+  /** Combat le gardien courant du site (id = siteKey) aux poings jusqu'à la victoire. */
+  function fightOut(s: GameState, cx: number, cz: number, pid = "p1"): GameState {
+    const key = siteKey(cx, cz);
+    for (let i = 0; i < 120 && s.encounters[key]; i++) {
+      s = reduce(s, debugSetSurvival(pid, { health: 9999 })); // anti-mort pour le test (reste engagé)
+      s = reduce(s, attack(pid, "fists", key));
+      if (s.encounters[key]) s = advanceTicks(s, FISTS);
     }
     return s;
   }
@@ -1646,20 +1787,20 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
       if (st.length > 0 && st.every((x) => x.kind === "fight")) { cx = i; break; }
     }
     expect(cx).toBeGreaterThan(0);
+    const KEY = siteKey(cx, 4);
     const steps = townSteps("town", cx, 4, seed);
-    let s: GameState = { ...createInitialState(config.rngSeed, 0) };
+    let s: GameState = stand(createInitialState(config.rngSeed, 0), cx, 4);
     // end gaté tant que la séquence n'est pas faite
     expect(reduce(s, takeLoot("p1", cx, 4, "town", "end"))).toBe(s);
     for (let i = 0; i < steps.length; i++) {
       s = reduce(s, engageGuardian("p1", cx, 4, "town"));
-      expect(s.combat["p1"]).toBeTruthy();
-      s = fightOut(s);
-      expect(s.sites[siteKey(cx, 4)].guardians).toBe(i + 1);
+      expect(s.encounters[KEY]).toBeTruthy();
+      s = fightOut(s, cx, 4);
+      expect(s.sites[KEY].guardians).toBe(i + 1);
     }
-    s = reduce(s, debugClear("p1", "self")); // vide le sac rempli par les combats (sinon "sac plein")
     const out = reduce(s, takeLoot("p1", cx, 4, "town", "end"));
-    expect(out).not.toBe(s); // la cache s'ouvre enfin
-    expect(out.sites[siteKey(cx, 4)].taken?.["end"]).toBe(true);
+    expect(out).not.toBe(s); // la cache s'ouvre enfin (le butin de combat tombe AU SOL, pas au sac)
+    expect(out.sites[KEY].taken?.["end"]).toBe(true);
   });
 
   it("les combats FORCÉS d'hôpital de cité refusent la fuite (noFlee)", () => {
@@ -1672,15 +1813,17 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
     }
     expect(found).toBeTruthy();
     const { cx, idx } = found!;
-    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { torch: 5 } } };
-    const steps = townSteps("city", cx, 7, seed);
+    const KEY = siteKey(cx, 7);
+    const GRACE = Math.round(config.combat.leashGraceSeconds * HZ);
+    let s: GameState = stand({ ...createInitialState(config.rngSeed, 0), carried: { p1: { torch: 5 } } }, cx, 7);
     for (let i = 0; i <= idx; i++) {
       s = reduce(s, engageGuardian("p1", cx, 7, "city"));
-      if (i < idx) s = fightOut(s); // franchit les étapes avant le combat forcé
+      if (i < idx) s = fightOut(s, cx, 7); // franchit les étapes avant le combat forcé
     }
-    // on est dans le combat FORCÉ : la fuite est refusée
-    expect(s.combat["p1"]?.noFlee).toBe(true);
-    expect(reduce(s, flee("p1"))).toBe(s);
+    // on est dans le combat FORCÉ (noFlee) : la LAISSE ne le fait PAS décrocher, même en s'enfuyant.
+    expect(s.encounters[KEY]?.noFlee).toBe(true);
+    const ranAway = advanceTicks(standAt(s, "p1", cx * CELL + LEASH_RADIUS + 50, 7 * CELL), GRACE + 5);
+    expect(ranAway.encounters[KEY]).toBeTruthy(); // il poursuit jusqu'à la mort ou la victoire
   });
 
   it("ville/cité ENTIÈREMENT vidée -> cleared (avant-poste + route, comme la grotte)", () => {
@@ -1692,9 +1835,9 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
     }
     expect(cx).toBeGreaterThan(0);
     const ids = lootNodeIds("town", cx, 9, seed);
-    let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } };
+    let s: GameState = stand({ ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } }, cx, 9);
     const steps = townSteps("town", cx, 9, seed);
-    for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 9, "town")); s = fightOut(s); }
+    for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 9, "town")); s = fightOut(s, cx, 9); }
     for (const id of ids) { s = reduce(s, debugClear("p1", "self")); s = reduce(s, takeLoot("p1", cx, 9, "town", id)); }
     expect(s.sites[siteKey(cx, 9)].cleared).toBe(true); // devient un avant-poste (clearDungeon)
   });
@@ -1706,9 +1849,9 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
       if (st.length > 0 && st.every((x) => x.kind === "fight")) { cx = i; break; }
     }
     const run = (): GameState => {
-      let s: GameState = { ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } };
+      let s: GameState = stand({ ...createInitialState(config.rngSeed, 0), carried: { p1: { "steel sword": 1 } } }, cx, 11);
       const steps = townSteps("town", cx, 11, seed);
-      for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 11, "town")); s = fightOut(s); }
+      for (let i = 0; i < steps.length; i++) { s = reduce(s, engageGuardian("p1", cx, 11, "town")); s = fightOut(s, cx, 11); }
       return s;
     };
     expect(run()).toEqual(run());

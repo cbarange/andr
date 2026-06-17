@@ -130,6 +130,12 @@ export const config = {
     eatMeatHeal: 8, // PV rendus par viande séchée (meatHeal de base d'ADR)
     medsCooldownSeconds: 7, // délai entre deux médecines (MEDS_COOLDOWN d'ADR)
     medsHeal: 20, // PV rendus par médecine (MEDS_HEAL d'ADR)
+    // --- M8.6 : COMBAT COOPÉRATIF (rencontres partagées, ennemis ancrés dans le monde) ---
+    engageRadius: 6, // (u) rayon d'ENGAGEMENT : à portée -> on peut frapper l'ennemi ET être ciblé
+    leashRadius: 22, // (u) au-delà, plus aucun joueur ne « tient » l'ennemi -> il décroche
+    chaseSpeed: 5, // (u/s) vitesse de POURSUITE de l'ennemi (> marche=6 ? non : on peut le semer en sprint)
+    leashGraceSeconds: 3, // (s) hors laisse pendant ce délai -> l'ennemi abandonne (despawn)
+    dropDespawnSeconds: 180, // (s) durée de vie d'une pile de butin tombée au sol avant disparition
   },
 } as const;
 

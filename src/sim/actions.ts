@@ -172,6 +172,22 @@ export type StepsAction = {
   tier: number;
   biome: string; // "forest" | "field" | "barrens" | "cave" | "swamp" | …
   onRoad: boolean;
+  x: number; // M8.6 : où ANCRER l'ennemi si une rencontre se déclenche (pos joueur, locale)
+  z: number;
+};
+
+/** M8.6 : positions des joueurs injectées dans la sim (l'hôte s'auto-applique depuis les transforms ;
+ *  pas réseau-safe — host-only, comme TICK). Sert à la poursuite & l'engagement (reducer pur). */
+export type SetPositionsAction = {
+  type: "SET_POSITIONS";
+  positions: Record<string, { x: number; z: number }>;
+};
+
+/** M8.6 : ramasse une pile de butin AU SOL (premier-servi). */
+export type TakeDropAction = {
+  type: "TAKE_DROP";
+  playerId: string;
+  dropId: string;
 };
 
 /** M8.5/F3.1 : provoque le combat contre le PROCHAIN gardien scripté d'une mine (setpiece). */
@@ -200,22 +216,18 @@ export type TalkSwampAction = {
   cz: number;
 };
 
-/** Frappe l'ennemi de SA rencontre avec une arme (cooldown PAR arme ; poings toujours dispo). */
+/** Frappe une rencontre PARTAGÉE (par son `encId`) avec une arme (cooldown par arme & par joueur ;
+ *  poings toujours dispo). Le joueur doit être ENGAGÉ (à portée — vérifié via `playerPos`). M8.6. */
 export type AttackAction = {
   type: "ATTACK";
   playerId: string;
   weapon: string;
+  encId: string;
 };
 
 /** Mange une viande séchée du SAC : +PV (cap), cooldown anti-spam. Utilisable en/hors combat. */
 export type EatMeatAction = {
   type: "EAT_MEAT";
-  playerId: string;
-};
-
-/** Fuit la rencontre en cours (la ferme, sans butin ni pénalité — fidèle ADR). */
-export type FleeAction = {
-  type: "FLEE";
   playerId: string;
 };
 
@@ -345,10 +357,11 @@ export type GameAction =
   | TalkSwampAction
   | AttackAction
   | EatMeatAction
-  | FleeAction
   | BuyAction
   | UseMedsAction
   | WithdrawAction
+  | SetPositionsAction
+  | TakeDropAction
   | TickAction
   | DebugTriggerEventAction
   | DebugGrantAction
@@ -392,10 +405,10 @@ export type PlayerAction =
   | TalkSwampAction
   | AttackAction
   | EatMeatAction
-  | FleeAction
   | BuyAction
   | UseMedsAction
   | WithdrawAction
+  | TakeDropAction
   | DebugGrantAction
   | DebugSetAction
   | DebugClearAction
@@ -492,8 +505,14 @@ export function craftItem(playerId: string, itemId: string): CraftItemAction {
 export function setOutside(playerId: string, outside: boolean, tier?: number, onRoad?: boolean): SetOutsideAction {
   return { type: "SET_OUTSIDE", playerId, outside, ...(tier !== undefined ? { tier } : {}), ...(onRoad !== undefined ? { onRoad } : {}) };
 }
-export function steps(playerId: string, n: number, tier: number, biome: string, onRoad: boolean): StepsAction {
-  return { type: "STEPS", playerId, n, tier, biome, onRoad };
+export function steps(playerId: string, n: number, tier: number, biome: string, onRoad: boolean, x: number, z: number): StepsAction {
+  return { type: "STEPS", playerId, n, tier, biome, onRoad, x, z };
+}
+export function setPositions(positions: Record<string, { x: number; z: number }>): SetPositionsAction {
+  return { type: "SET_POSITIONS", positions };
+}
+export function takeDrop(playerId: string, dropId: string): TakeDropAction {
+  return { type: "TAKE_DROP", playerId, dropId };
 }
 export function engageGuardian(playerId: string, cx: number, cz: number, siteType: string): EngageGuardianAction {
   return { type: "ENGAGE_GUARDIAN", playerId, cx, cz, siteType };
@@ -504,14 +523,11 @@ export function visitHouse(playerId: string, cx: number, cz: number): VisitHouse
 export function talkSwamp(playerId: string, cx: number, cz: number): TalkSwampAction {
   return { type: "TALK_SWAMP", playerId, cx, cz };
 }
-export function attack(playerId: string, weapon: string): AttackAction {
-  return { type: "ATTACK", playerId, weapon };
+export function attack(playerId: string, weapon: string, encId: string): AttackAction {
+  return { type: "ATTACK", playerId, weapon, encId };
 }
 export function eatMeat(playerId: string): EatMeatAction {
   return { type: "EAT_MEAT", playerId };
-}
-export function flee(playerId: string): FleeAction {
-  return { type: "FLEE", playerId };
 }
 export function buy(playerId: string, goodId: string): BuyAction {
   return { type: "BUY", playerId, goodId };

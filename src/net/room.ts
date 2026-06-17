@@ -11,7 +11,7 @@
 // ============================================================================
 
 import { joinRoom, selfId, type Room } from "trystero";
-import type { PlayerTransformMsg, GameActionMsg, StateSyncMsg } from "./messages";
+import type { PlayerTransformMsg, GameActionMsg, StateSyncMsg, EnemiesMsg } from "./messages";
 import { resolveSync, shouldTakeOver } from "./host";
 
 const APP_ID = "darkroom3d-poc-v1";
@@ -36,6 +36,7 @@ export interface RoomCallbacks {
   onPeerJoin?: (id: string) => void;
   onPeerLeave?: (id: string) => void;
   onTransform?: (id: string, t: PlayerTransformMsg) => void;
+  onEnemies?: (m: EnemiesMsg) => void; // positions d'ennemis partagés (flux rapide de l'hôte, M8.6)
   onGameAction?: (action: GameActionMsg, fromId: string) => void;
   onStateSync?: (s: StateSyncMsg) => void;
   onHostChange?: (isHost: boolean, hostId: string) => void;
@@ -61,6 +62,7 @@ export class NetRoom {
   private cb: RoomCallbacks = {};
   private senders?: {
     xform: (data: PlayerTransformMsg) => void;
+    enemies: (data: EnemiesMsg) => void;
     act: (data: GameActionMsg, target?: string) => void;
     sync: (data: StateSyncMsg) => void;
   };
@@ -127,16 +129,19 @@ export class NetRoom {
 
     // API Trystero v0.25 : makeAction renvoie { send, onMessage } (et non un tuple).
     const xform = room.makeAction("xform");
+    const enemies = room.makeAction("enemy"); // flux rapide de positions d'ennemis (hôte -> tous, M8.6)
     const act = room.makeAction("gameAct");
     const sync = room.makeAction("sync");
     this.senders = {
       xform: (d) => void xform.send(d),
+      enemies: (d) => void enemies.send(d as unknown as Parameters<typeof enemies.send>[0]),
       act: (d, target) => void act.send(d, target ? { target } : undefined),
       // L'état complet est JSON-sérialisable (invariant testé) ; on caste pour le typage Trystero.
       sync: (d) => void sync.send(d as unknown as Parameters<typeof sync.send>[0]),
     };
 
     xform.onMessage = (data, ctx) => this.cb.onTransform?.(ctx.peerId, data as PlayerTransformMsg);
+    enemies.onMessage = (data) => this.cb.onEnemies?.(data as unknown as EnemiesMsg);
     act.onMessage = (data, ctx) => this.cb.onGameAction?.(data as GameActionMsg, ctx.peerId);
     sync.onMessage = (data, ctx) => {
       const msg = data as unknown as StateSyncMsg;
@@ -223,6 +228,11 @@ export class NetRoom {
 
   broadcastTransform(t: PlayerTransformMsg): void {
     this.senders?.xform(t);
+  }
+
+  /** Diffuse les positions d'ennemis partagés (hôte -> tous) — flux rapide d'interpolation (M8.6). */
+  broadcastEnemies(m: EnemiesMsg): void {
+    this.senders?.enemies(m);
   }
 
   sendGameActionToHost(a: GameActionMsg): void {

@@ -18,6 +18,16 @@ export type PlayerTransformMsg = {
 export type GameActionMsg = PlayerAction;
 
 /**
+ * Positions des ENNEMIS partagés (M8.6), diffusées par l'HÔTE à `transformHz` (corps « rapide »,
+ * comme les avatars). La position autoritaire voyage AUSSI dans le snapshot (2 Hz) pour la
+ * correctness/migration ; ce flux ne sert qu'à l'INTERPOLATION fluide chez les clients (sinon un
+ * ennemi qui se téléporte à 2 Hz). Léger : quelques rencontres actives au plus.
+ */
+export type EnemiesMsg = {
+  e: Array<{ id: string; x: number; z: number }>;
+};
+
+/**
  * Snapshot de l'état AUTORITAIRE rediffusé par l'hôte. On transmet l'**état COMPLET**
  * (`GameState` est conçu pour être sérialisable, cf. `state.ts`) via un sérialiseur unique :
  *  - plus aucun champ oublié au fil des jalons (c'est ainsi que `cabinTier` avait été manqué) ;

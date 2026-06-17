@@ -6,7 +6,29 @@
 
 import { RngState, nextFloat, nextInt } from "./rng";
 import { config, enemiesForTier, weaponById, weapons, type EnemyDef, type WeaponDef } from "../../data/world";
-import { GameState, carriedOf, type Encounter } from "./state";
+import { GameState, carriedOf, survivalOf, type SharedEncounter } from "./state";
+
+/** Rayon (u) à partir duquel un joueur est ENGAGÉ dans une rencontre (peut frapper & être ciblé). */
+export const ENGAGE_RADIUS = config.combat.engageRadius;
+/** Rayon (u) de LAISSE : au-delà, plus aucun joueur « tient » l'ennemi -> il décroche (despawn). */
+export const LEASH_RADIUS = config.combat.leashRadius;
+/** Vitesse de POURSUITE de l'ennemi (u/s) — < sprint : on peut le semer. */
+export const CHASE_SPEED = config.combat.chaseSpeed;
+
+/**
+ * Joueurs ENGAGÉS dans une rencontre (M8.6) : DEHORS, vivants (PV > 0), hors grâce de respawn, et
+ * à ≤ `radius` de l'ennemi (via `state.playerPos`). PUR. Liste TRIÉE (ordre stable -> RNG porteur).
+ */
+export function engagedPids(state: GameState, enc: SharedEncounter, tick: number, radius: number = ENGAGE_RADIUS): string[] {
+  const out: string[] = [];
+  for (const pid of Object.keys(state.playerPos)) {
+    const p = state.playerPos[pid];
+    const sv = state.survival[pid];
+    if (!sv || !sv.outside || sv.health <= 0 || tick < sv.respawnReadyAt) continue;
+    if (Math.hypot(p.x - enc.x, p.z - enc.z) <= radius) out.push(pid);
+  }
+  return out.sort();
+}
 
 /**
  * Tirage de DÉCLENCHEMENT au PAS (M8.5/F1, fidèle `checkFight` d'ADR) : 20 % par pas (30 % en
@@ -74,19 +96,32 @@ export function enemyHit(enemyHitChance: number, perks: Record<string, true>): n
 }
 
 /**
- * Meilleure arme PRÊTE du joueur (plus gros dégâts d'abord, poings en dernier recours), ou
- * `null` si tout est en recharge / sans munitions. Sert au verbe « frapper » (UI) — PUR.
+ * Meilleure arme PRÊTE du joueur dans une rencontre (plus gros dégâts d'abord, poings en dernier
+ * recours), ou `null` si tout recharge / sans munitions. Cooldowns PAR JOUEUR (`enc.weaponReadyAt[pid]`).
+ * Sert au verbe « frapper » (UI) — PUR.
  */
-export function bestReadyWeapon(state: GameState, playerId: string, enc: Encounter): WeaponDef | null {
+export function bestReadyWeapon(state: GameState, playerId: string, enc: SharedEncounter): WeaponDef | null {
+  const ready = enc.weaponReadyAt[playerId] ?? {};
   let best: WeaponDef | null = null;
   for (const w of weapons) {
     if (!ownsWeapon(state, playerId, w.id)) continue;
     if (!hasAmmo(state, playerId, w)) continue;
-    if (state.tick < (enc.weaponReadyAt[w.id] ?? 0)) continue;
+    if (state.tick < (ready[w.id] ?? 0)) continue;
     if (!best || w.damage > best.damage) best = w;
   }
   return best;
 }
+
+/** Position après un pas de POURSUITE vers (tx,tz), borné par `CHASE_SPEED * dt`. PUR. */
+export function stepEnemyToward(enc: SharedEncounter, tx: number, tz: number, dtSec: number): { x: number; z: number } {
+  const dx = tx - enc.x, dz = tz - enc.z;
+  const dist = Math.hypot(dx, dz);
+  const step = CHASE_SPEED * dtSec;
+  if (dist <= step || dist < 1e-4) return { x: tx, z: tz };
+  return { x: enc.x + (dx / dist) * step, z: enc.z + (dz / dist) * step };
+}
+
+void survivalOf; // (réservé pour usages futurs ; engagedPids lit state.survival directement)
 
 /** Définition d'une arme par id (réexport pratique pour le rendu/HUD). */
 export { weaponById };

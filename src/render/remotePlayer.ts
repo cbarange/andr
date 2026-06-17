@@ -186,6 +186,16 @@ export class RemotePlayers {
     return out;
   }
 
+  /** Positions (x,z) interpolées INDEXÉES par id — pour alimenter `SET_POSITIONS` côté hôte (M8.6). */
+  entries(): Array<{ id: string; x: number; z: number }> {
+    const out: Array<{ id: string; x: number; z: number }> = [];
+    for (const [id, p] of this.players) {
+      const v = p.position;
+      out.push({ id, x: v.x, z: v.z });
+    }
+    return out;
+  }
+
   clear(): void {
     for (const p of this.players.values()) p.dispose();
     this.players.clear();

@@ -24,7 +24,7 @@ de traite, perks, outfitting). Manque surtout : **la fin de partie (M11)** — l
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 234 tests de sim/logique (rapide, sans navigateur)
+npm run test    # 239 tests de sim/logique (rapide, sans navigateur)
 npm run e2e     # 15 tests Playwright (boucle, P2P, save, perf, sites, survie, combat…) + capture
 npm run typecheck
 ```
@@ -98,21 +98,30 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
   fidèle ADR, partagé entre joueurs — premier-servi) ; remplit **eau + vivres** (PV = manger, M8) ; no-op si
   tout est plein ; verbe « se ravitailler » qui disparaît une fois l'avant-poste épuisé (`SiteProgress.used`).
 
-### Combat temps réel (M8 — récent) — ✅ FIDÈLE ADR
-- **Rencontre NON-SPATIALE par joueur** (duel abstrait 1v1, fidèle à l'écran de combat d'ADR) :
-  `combat[pid]` + déclenchement par TEMPS d'exposition dehors (FIGHT_CHANCE 0.20 d'ADR, tirages RNG
-  hôte), **tiers de danger par anneaux de distance** (1..3 + cavernes), **routes = rencontres
-  raréfiées** (×0.4 — livre R4 « route sécurisée »).
+### Combat COOPÉRATIF (M8 → M8.5 → M8.6 — récent) — ✅ FIDÈLE ADR + extension multijoueur
+- **Rencontres PARTAGÉES, ancrées dans le monde (M8.6)** : `encounters[id]` = un ennemi à **position
+  autoritaire** (host-simulée), **HP commun**, que **TOUS les joueurs voient et attaquent ENSEMBLE**.
+  Fini le duel privé `combat[pid]`. L'ennemi **POURSUIT** le joueur engagé le plus proche
+  (`CHASE_SPEED`), **frappe un engagé au hasard** (RNG à graine) et **décroche par LAISSE** quand plus
+  personne n'est à portée (il faut le SEMER au-delà de `LEASH_RADIUS`) — les boss (`noFlee`) jamais.
+- **Engagement = PROXIMITÉ** : être dehors, vivant, à ≤ `ENGAGE_RADIUS` de l'ennemi suffit pour le
+  frapper ET être ciblé. Les positions des joueurs entrent dans la sim via `SET_POSITIONS` que **l'hôte
+  s'auto-applique** (~10 Hz, depuis les transforms qu'il a déjà) → le reducer reste **pur**.
+- **Déclenchement PAR PAS** (M8.5/F1, fidèle `checkFight` d'ADR) : podomètre client → `STEPS` (qui porte
+  la position d'ancrage) ; FIGHT_DELAY 3 pas, FIGHT_CHANCE 0.20 ; **tiers par anneaux**, **routes = pool
+  vide**. Setpieces (mines/grottes/villes/cités) = rencontres partagées ancrées au centre du site.
 - **Tables d'ennemis du code source ADR, NON adoucies** : T1 bête grondante/homme décharné/oiseau
   étrange · T2 homme grelottant (→ **médecine**)/mangeur d'hommes/charognard/grand lézard · T3
-  terreur sauvage/soldat/sniper · cavernes : lézard/bête. **Tier 2/3 mortels sans armure (M10) —
-  design ADR : FUIR est la réponse.**
-- **Armes à COOLDOWN propre** : poings (1 dég/2 s) toujours ; **lance d'os** (2/2 s, recette ADR
-  100 bois + 5 dents, **atelier requis**). `ATTACK` (hit 0.8), `EAT_MEAT` (**F** : +8 PV, viande
-  séchée du sac, cooldown 5 s), `FLEE` sans pénalité ; mort = chemin unifié M7 (sac perdu, respawn).
-- **Rendu** : créatures low-poly (quadrupède/lézard/oiseau/humanoïde sombre) qui **rôdent, font
-  face, fentent** à chaque frappe (`render/encounter.ts`) ; panneau HUD (nom + PV + arme/recharge) ;
-  musique `encounter-tier-N` en overlay ; victoire = effondrement + butin (winSeq), observée par diff.
+  terreur sauvage/soldat/sniper · cavernes : lézard/bête. **Tier 2/3 mortels sans armure (M10).**
+- **Armes à COOLDOWN PAR JOUEUR** : poings (1 dég/2 s) toujours ; lames/fusils (atelier/troc). `ATTACK`
+  porte l'`encId` (hit 0.8), `EAT_MEAT` (**F** : +8 PV) ; mort = chemin unifié M7 (sac perdu, respawn) —
+  l'ennemi partagé SURVIT à la mort d'un joueur. Le désengagement passe par la **laisse** (plus de `FLEE`).
+- **BUTIN AU SOL (premier-servi)** : à la mort de l'ennemi, son butin tombe en **pile 3D ramassable**
+  (`drops[id]`, `TAKE_DROP`, verbe « ramasser ») — plus de butin auto-glissé dans le sac.
+- **Rendu** (`render/encounter.ts` réécrit + `render/drops.ts`) : **chaque** rencontre matérialisée à sa
+  position monde (co-op visible), **interpolée** vers un **flux rapide d'ennemis 15 Hz** (anti-saccade,
+  calque des avatars) ; fente à chaque frappe, recul « touché », effondrement à la mort, fondu au leash ;
+  panneau HUD (nom + PV + arme/recharge) ; musique `encounter-tier-N` en overlay.
 - **Fabrication DIÉGÉTIQUE enfin branchée** (trou M9 comblé) : « fabriquer un objet… » chez la
   constructrice (torche — room-craft ADR) + verbe **E « fabriquer »** sur l'atelier construit (tous
   les objets, dont la lance d'os).
@@ -146,7 +155,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **M6 (seuil) ✅ · M7 (survie) ✅** — rempart/porte/puits + survie par joueur (drain dehors, mort = perte
   du sac, recharge camp) + **ravitaillement aux avant-postes** (`USE_OUTPOST`, usage unique fidèle ADR).
   Reste : fog of war (différé), équilibrage (M12).
-- **M8 (combat) ✅ cœur** — temps réel fidèle ADR. Reste : rendu de l'ennemi d'un pair distant.
+- **M8 (combat) ✅ → M8.6 CO-OP ✅** — temps réel fidèle ADR, désormais **multijoueur** : ennemis
+  PARTAGÉS visibles de tous, attaquables ensemble (poursuite, frappe d'un engagé au hasard, butin au
+  sol). Reste : preview MULTI 2 onglets (manuel — la couverture co-op est testée en unitaire/replay).
 - **M10 (atelier/commerce/perks) ✅** — les 2 derniers bâtiments inertes (atelier, poste de traite)
   sont VIVANTS ; tiers 2/3 jouables avec armures ; outfitting au coffre. Reste : bolas (stun),
   boussole (décision ouverte), laser/plasma (butin de cité, M11).
@@ -174,28 +185,22 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
 - **Combat** : ✅ **décision ACTÉE (juin 2026)** — **temps réel fidèle ADR** (cf. `roadmap-v2.md` M8).
 
 ## Prochaine étape recommandée
-1. **M8.5 — FIDÉLITÉ combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) :
-   **F1-F2-F3.1-F3.3-F3.4-F4 ✅** — rencontres **PAR PAS** (immobile = rien, routes = zéro),
-   tables **exactes/biomes**, **mines gardées**, **maisons** 25/25/50 (médecine / vivres + eau /
-   squatteur), **marais → gastronome**, champ de bataille = **armes lourdes ADR**, forage =
-   **alliage garanti**, **viande soigne en voyage**, **mort = 120 s de repos**, **avant-postes par
-   expédition**, **désengagement physique** (poursuite bornée), avertissements de danger.
-   **Et F3.2 ✅ : GROTTES SCRIPTÉES** — le graphe ADR (30/30/40, combats a1/b3/b4/c1/c2, « la
-   torche s'éteint » consommant 1 torche, butins camp/cadavre/fins 1-3 exacts) tiré à la graine,
-   cache finale gatée par la séquence. **Et R3b ✅ : VILLES & CITÉS SCRIPTÉES** (branches seedées
-   d'ADR — voyous/justicier/fou en ville ; snipers/commandos/difformes/tentacules en cité avec
-   combats FORCÉS d'hôpital ; fins exactes, cache finale gatée, nettoyée ⇒ avant-poste). **Reste** :
-   écran de butin, F5 (perks d'usage), `cityCleared`→Raid militaire.
-2. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
+0. **M8.5 ✅ (FIDÉLITÉ) + M8.6 ✅ (CO-OP) LIVRÉS** — rencontres **PAR PAS**, tables exactes/biomes,
+   **mines/grottes/villes/cités SCRIPTÉES** (graphes ADR à la graine), maisons 25/25/50, marais →
+   gastronome, mort = 120 s, avant-postes par expédition. **M8.6 : combat COOPÉRATIF** — ennemis
+   PARTAGÉS ancrés dans le monde (poursuite, frappe d'un engagé au hasard, **butin au sol premier-servi**,
+   flux d'ennemis 15 Hz interpolé). **Reste** : preview MULTI 2 onglets (manuel), écran de butin,
+   F5 (perks d'usage), `cityCleared`→Raid militaire.
+1. **M11 (fin de partie)** : épave → réparer le vaisseau (alliage : source R3a + troc M10) →
    décollage → fin → prestige. Le DERNIER acte manquant.
-3. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
+2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
-4. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
+3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
    A6 (refactor main.ts — de plus en plus gros).
 
 ## Limitations connues / quirks (à savoir avant de coder)
-- **Fin de partie = absente** (M11 : seul acte manquant). Combat : l'ennemi d'un joueur DISTANT n'est
-  pas rendu (sim non-spatiale, v1) ; tier/onRoad déclarés par le client (même confiance que SET_OUTSIDE).
+- **Fin de partie = absente** (M11 : seul acte manquant). Combat : ennemis PARTAGÉS visibles de tous
+  (M8.6) ; tier/onRoad/positions déclarés par le client (même confiance que SET_OUTSIDE — host-feedé).
 - **Équipement & perks = au VILLAGE** (entrepôt partagé/perks communs — divergence coop assumée,
   fidèle aux *stores* d'ADR qui est solo) ; bolas/boussole différés.
 - **Sac & survie réinitialisés au rechargement** (`carried`/`survival` indexés par `selfId` aléatoire) ;

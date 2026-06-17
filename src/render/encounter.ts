@@ -1,11 +1,11 @@
 // ============================================================================
-//  RENCONTRE (M8) — rendu LOCAL de l'ennemi du duel du joueur. La sim est
-//  NON-SPATIALE (un combat = un état abstrait par joueur) : l'ennemi est donc
-//  matérialisé ICI, devant le joueur local — il rôde, fait face, et « fente »
-//  quand la sim enregistre une frappe (diff de `enemyNextAt`). Purement visuel
-//  & local : AUCUNE règle de jeu (dégâts/butin = reducer, hôte-autoritaire).
-//  ⚠️ v1 : seul l'ennemi du joueur LOCAL est rendu (celui d'un pair distant est
-//  invisible — la sim ne porte pas de position, assumé, cf. docs/roadmap-v2 M8).
+//  RENCONTRES (M8.6) — rendu des ennemis PARTAGÉS, ancrés dans le monde. La sim
+//  porte désormais une POSITION AUTORITAIRE par rencontre (`state.encounters`), si
+//  bien que TOUS les joueurs voient le même ennemi au même endroit et peuvent
+//  l'attaquer ensemble. Ce module matérialise CHAQUE rencontre (un mesh par id),
+//  INTERPOLE vers la dernière position connue (snapshot 2 Hz + flux rapide 15 Hz),
+//  « fente » à chaque frappe (diff `enemyNextAt`) et « recule » quand l'ennemi
+//  encaisse (HP en baisse). Purement visuel : AUCUNE règle (dégâts/butin = reducer).
 // ============================================================================
 
 import { Scene, TransformNode, Vector3 } from "@babylonjs/core";
@@ -13,125 +13,150 @@ import { terrainHeight, enemyById, type EnemyDef } from "../../data/world";
 import { makeKit, type Kit } from "./lowpoly";
 import { buildBeast, buildLizard, buildBird, buildHumanoid } from "./characters";
 import { P } from "./lowpoly";
-import type { Encounter as EncounterState } from "../sim/state";
 
-const STALK_DIST = 2.4; // distance de rôdaille (l'ennemi se tient là, face au joueur)
-const APPROACH = 3.5; // vitesse d'approche (lissage)
-const CHASE_MAX = 8; // u/s — vitesse de POURSUITE max (> marche 6, < sprint) : on PEUT le distancer (F4)
 const LUNGE_TIME = 0.35; // durée de la fente d'attaque (aller-retour)
 const DESPAWN_TIME = 0.6; // durée de l'effondrement / de la fuite
+const LERP_RATE = 12; // lissage de l'interpolation vers la position cible (réactif mais doux)
+
+/** Vue d'une rencontre pour le rendu (sous-ensemble sérialisable de `SharedEncounter`). */
+export interface EncView {
+  enemyId: string;
+  hp: number;
+  x: number;
+  z: number;
+  enemyNextAt: number;
+  seq: number;
+}
 
 interface ActiveEnemy {
   root: TransformNode;
   jaw: TransformNode | null;
   def: EnemyDef;
   seq: number;
-  prevNextAt: number; // pour détecter une frappe (ré-armement de l'échéance)
-  prevHp: number; // pour le feedback « touché » (recul)
+  tx: number; // position CIBLE (interpolée) — alimentée par le snapshot ET le flux rapide
+  tz: number;
+  prevNextAt: number; // détecte une frappe (ré-armement de l'échéance)
+  prevHp: number; // détecte « touché » (recul)
   lunge: number; // 0 = repos ; >0 = fente en cours (décompte)
   flinch: number; // >0 = recul « touché » en cours
 }
 
 export class EncounterFx {
   private readonly K: Kit;
-  private enemy: ActiveEnemy | null = null;
-  private dying: { root: TransformNode; t: number; mode: "win" | "flee" } | null = null;
+  private readonly enemies = new Map<string, ActiveEnemy>();
+  private readonly dying: Array<{ root: TransformNode; t: number; mode: "win" | "flee" }> = [];
 
   constructor(private readonly scene: Scene) {
     this.K = makeKit(scene);
   }
 
-  /** Position-monde de l'ennemi actif (pour le focus « frapper »), ou null. */
-  enemyWorldPos(): Vector3 | null {
-    return this.enemy ? this.enemy.root.position : null;
+  /** Positions-monde des ennemis actifs (id -> position rendue), pour le focus « frapper » + HUD. */
+  positions(): Map<string, { pos: Vector3; name: string }> {
+    const out = new Map<string, { pos: Vector3; name: string }>();
+    for (const [id, e] of this.enemies) out.set(id, { pos: e.root.position, name: e.def.name });
+    return out;
   }
 
-  /** Nom affichable de l'ennemi actif (HUD), ou null. */
-  enemyName(): string | null {
-    return this.enemy?.def.name ?? null;
+  /** Nom de l'ennemi d'une rencontre donnée (HUD), ou null. */
+  enemyName(id: string): string | null {
+    return this.enemies.get(id)?.def.name ?? null;
   }
 
   /**
-   * Reflète l'état sim : crée l'ennemi quand une rencontre (nouvelle `seq`) apparaît, le retire
-   * quand elle disparaît (`reason` venant des diffs observés par main : victoire / mort / fuite).
+   * Reflète l'état sim (snapshot) : crée les ennemis nouvellement apparus (par `id`/`seq`), met à
+   * jour PV/échéance/cible des existants, retire ceux disparus (effondrement si l'ennemi était
+   * presque mort — victoire ; sinon fondu — décrochage par la laisse).
    */
-  sync(enc: EncounterState | null, playerPos: Vector3, forward: { x: number; z: number }): void {
-    if (enc && (!this.enemy || this.enemy.seq !== enc.seq)) {
-      this.disposeEnemy(null); // remplace une éventuelle rencontre précédente (sécurité)
-      const def = enemyById[enc.enemyId];
-      if (!def) return;
-      const { root, jaw } = this.buildModel(def);
-      // Apparaît DEVANT le regard du joueur, posé au sol.
-      const d = 4.5;
-      const x = playerPos.x + forward.x * d;
-      const z = playerPos.z + forward.z * d;
-      root.position.set(x, terrainHeight(x, z), z);
-      this.enemy = { root, jaw, def, seq: enc.seq, prevNextAt: enc.enemyNextAt, prevHp: enc.enemyHp, lunge: 0, flinch: 0 };
-    } else if (!enc && this.enemy) {
-      this.disposeEnemy("flee"); // raison par défaut ; main appelle clear() AVANT pour victoire/mort
-    } else if (enc && this.enemy) {
-      // Frappe ennemie : l'échéance a été ré-armée -> fente. Touché : HP a baissé -> recul.
-      if (enc.enemyNextAt !== this.enemy.prevNextAt) { this.enemy.lunge = LUNGE_TIME; this.enemy.prevNextAt = enc.enemyNextAt; }
-      if (enc.enemyHp < this.enemy.prevHp) { this.enemy.flinch = 0.25; this.enemy.prevHp = enc.enemyHp; }
+  sync(encs: Record<string, EncView>): void {
+    // 1) Retraits : rencontres présentes en scène mais absentes du snapshot.
+    for (const id of [...this.enemies.keys()]) {
+      if (!encs[id]) {
+        const e = this.enemies.get(id)!;
+        this.dispose(id, e.prevHp <= e.def.hp * 0.34 ? "win" : "flee");
+      }
+    }
+    // 2) Ajouts / mises à jour.
+    for (const id of Object.keys(encs)) {
+      const v = encs[id];
+      const cur = this.enemies.get(id);
+      if (!cur || cur.seq !== v.seq) {
+        if (cur) this.dispose(id, "flee"); // un id réutilisé pour une NOUVELLE rencontre : on remplace
+        const def = enemyById[v.enemyId];
+        if (!def) continue;
+        const { root, jaw } = this.buildModel(def);
+        root.position.set(v.x, terrainHeight(v.x, v.z), v.z);
+        this.enemies.set(id, {
+          root, jaw, def, seq: v.seq, tx: v.x, tz: v.z,
+          prevNextAt: v.enemyNextAt, prevHp: v.hp, lunge: 0, flinch: 0,
+        });
+      } else {
+        if (v.enemyNextAt !== cur.prevNextAt) { cur.lunge = LUNGE_TIME; cur.prevNextAt = v.enemyNextAt; }
+        if (v.hp < cur.prevHp) cur.flinch = 0.25;
+        cur.prevHp = v.hp;
+        cur.tx = v.x; cur.tz = v.z; // le snapshot pose la cible ; le flux rapide l'affine entre deux
+      }
     }
   }
 
-  /** Retire l'ennemi avec la mise en scène adaptée (victoire = effondrement ; mort/fuite = retrait). */
-  clear(reason: "win" | "death" | "flee"): void {
-    if (!this.enemy) return;
-    if (reason === "death") this.disposeEnemy(null); // le joueur respawn au camp : retrait immédiat
-    else this.disposeEnemy(reason);
+  /** Flux RAPIDE (15 Hz) : positions cibles d'ennemis -> interpolation fluide (anti-saccade). */
+  setPositions(pos: Record<string, { x: number; z: number }>): void {
+    for (const id of Object.keys(pos)) {
+      const e = this.enemies.get(id);
+      if (e) { e.tx = pos[id].x; e.tz = pos[id].z; }
+    }
   }
 
-  /** À appeler chaque frame : rôde autour du joueur, fente, et anime les retraits. */
-  update(dtSec: number, playerPos: Vector3): void {
-    const e = this.enemy;
-    if (e) {
-      const dx = playerPos.x - e.root.position.x;
-      const dz = playerPos.z - e.root.position.z;
-      const dist = Math.hypot(dx, dz) || 1e-4;
-      // Cible : à STALK_DIST du joueur (la fente s'approche davantage).
-      const want = e.lunge > 0 ? 0.8 : STALK_DIST;
-      // Poursuite BORNÉE (CHASE_MAX) : sprinter/distancer l'ennemi est possible -> le client
-      // rompt la rencontre au-delà de 18 u (désengagement physique, M8.5/F4).
-      const move = Math.min((dist - want) * Math.min(1, dtSec * APPROACH), CHASE_MAX * dtSec);
-      e.root.position.x += (dx / dist) * move;
-      e.root.position.z += (dz / dist) * move;
-      // Recul « touché » (s'éloigne brièvement).
+  /** À appeler chaque frame : interpole vers la cible, oriente, anime fente/recul et retraits. */
+  update(dtSec: number): void {
+    const k = Math.min(1, dtSec * LERP_RATE);
+    for (const [, e] of this.enemies) {
+      const dx = e.tx - e.root.position.x;
+      const dz = e.tz - e.root.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 1e-3) {
+        e.root.position.x += dx * k;
+        e.root.position.z += dz * k;
+        e.root.rotation.y = Math.atan2(dx, dz); // face au déplacement (modèles face +Z)
+      }
+      // Recul « touché » : s'écarte brièvement de sa cible.
       if (e.flinch > 0) {
         e.flinch -= dtSec;
-        e.root.position.x -= (dx / dist) * dtSec * 3;
-        e.root.position.z -= (dz / dist) * dtSec * 3;
+        const inv = dist > 1e-4 ? 1 / dist : 0;
+        e.root.position.x -= dx * inv * dtSec * 3;
+        e.root.position.z -= dz * inv * dtSec * 3;
       }
       e.root.position.y = terrainHeight(e.root.position.x, e.root.position.z);
-      e.root.rotation.y = Math.atan2(dx, dz); // face au joueur (modèles face +Z)
-      // Fente : gueule ouverte + tangage avant.
+      // Fente : gueule ouverte + tangage avant ; sinon retour au repos + respiration.
       if (e.lunge > 0) {
         e.lunge -= dtSec;
-        const k = Math.sin((1 - Math.max(0, e.lunge) / LUNGE_TIME) * Math.PI);
-        e.root.rotation.x = -0.25 * k;
-        if (e.jaw) e.jaw.rotation.x = 0.7 * k;
+        const a = Math.sin((1 - Math.max(0, e.lunge) / LUNGE_TIME) * Math.PI);
+        e.root.rotation.x = -0.25 * a;
+        if (e.jaw) e.jaw.rotation.x = 0.7 * a;
       } else {
         e.root.rotation.x *= Math.max(0, 1 - dtSec * 8);
         if (e.jaw) e.jaw.rotation.x *= Math.max(0, 1 - dtSec * 8);
-        // Respiration/rôdaille légère (vie).
         e.root.position.y += Math.sin(performance.now() * 0.004) * 0.02;
       }
     }
-    // Retrait animé (effondrement de victoire / fuite).
-    const d = this.dying;
-    if (d) {
+    // Retraits animés (effondrement de victoire / fuite au décrochage).
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const d = this.dying[i];
       d.t -= dtSec;
-      const k = Math.max(0, d.t / DESPAWN_TIME);
+      const f = Math.max(0, d.t / DESPAWN_TIME);
       if (d.mode === "win") {
-        d.root.scaling.setAll(Math.max(0.01, k)); // s'effondre sur place
-        d.root.rotation.z = (1 - k) * 0.9;
+        d.root.scaling.setAll(Math.max(0.01, f)); // s'effondre sur place
+        d.root.rotation.z = (1 - f) * 0.9;
       } else {
-        d.root.position.z += dtSec * 8; // détale (direction approximative : peu importe, il disparaît)
-        d.root.scaling.setAll(Math.max(0.01, k));
+        d.root.position.z += dtSec * 8; // détale puis disparaît
+        d.root.scaling.setAll(Math.max(0.01, f));
       }
-      if (d.t <= 0) { d.root.dispose(false); this.dying = null; }
+      if (d.t <= 0) { d.root.dispose(false); this.dying.splice(i, 1); }
     }
+  }
+
+  /** Retire tous les ennemis (changement de partie / nettoyage). */
+  clearAll(): void {
+    for (const id of [...this.enemies.keys()]) this.dispose(id, null);
   }
 
   // --------------------------------------------------------------------------
@@ -148,11 +173,11 @@ export class EncounterFx {
     return { root, jaw: null };
   }
 
-  private disposeEnemy(anim: "win" | "flee" | null): void {
-    if (!this.enemy) return;
-    if (this.dying) { this.dying.root.dispose(false); this.dying = null; } // un seul retrait à la fois
-    if (anim) this.dying = { root: this.enemy.root, t: DESPAWN_TIME, mode: anim };
-    else this.enemy.root.dispose(false);
-    this.enemy = null;
+  private dispose(id: string, anim: "win" | "flee" | null): void {
+    const e = this.enemies.get(id);
+    if (!e) return;
+    this.enemies.delete(id);
+    if (anim) this.dying.push({ root: e.root, t: DESPAWN_TIME, mode: anim });
+    else e.root.dispose(false);
   }
 }

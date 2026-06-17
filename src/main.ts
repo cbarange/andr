@@ -39,7 +39,7 @@ import { NetRoom } from "./net/room";
 import type { StateSyncMsg } from "./net/messages";
 
 import {
-  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, maxWaterOf, maxHealthOf, stockOf, type GameState,
+  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, maxWaterOf, maxHealthOf, stockOf, type GameState, type SharedEncounter,
 } from "./sim/state";
 import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
@@ -47,13 +47,14 @@ import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, flee, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp,
+  attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
+  visitHouse, talkSwamp, setPositions, takeDrop,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
-import { bestReadyWeapon } from "./sim/combat";
+import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
 import { caveSteps, townSteps } from "./sim/dungeon";
-import { EncounterFx } from "./render/encounter";
+import { EncounterFx, type EncView } from "./render/encounter";
+import { GroundDrops } from "./render/drops";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
@@ -105,7 +106,8 @@ declare global {
       startEncounter?: (enemyId?: string, enemyHp?: number) => void;
       attack?: (weapon?: string) => void;
       eatMeat?: () => void;
-      flee?: () => void;
+      getDrops?: () => Array<{ id: string; loot: Record<string, number> }>;
+      takeDrop?: (id?: string) => void;
       pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
@@ -337,7 +339,7 @@ async function boot(): Promise<void> {
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
-    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, combat: {} }
+    ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {} }
     : createInitialState(config.rngSeed, 0);
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
@@ -379,8 +381,36 @@ async function boot(): Promise<void> {
   // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
   const siteLoot = new SiteLoot(scene);
   siteLoot.setMap(worldMap);
-  // RENCONTRES (M8) : l'ennemi du duel LOCAL est matérialisé devant le joueur (sim non-spatiale).
+  // RENCONTRES (M8.6) : ennemis PARTAGÉS ancrés dans le monde — chacun rendu à sa position
+  // autoritaire (visible de tous), interpolé vers le flux rapide de l'hôte. + BUTIN AU SOL (drops).
   const encounterFx = new EncounterFx(scene);
+  const groundDrops = new GroundDrops(scene);
+  // Vue sérialisable des rencontres pour le rendu (snapshot 2 Hz : positions/PV/échéances/seq).
+  const toEncViews = (encs: Record<string, SharedEncounter>): Record<string, EncView> => {
+    const out: Record<string, EncView> = {};
+    for (const id of Object.keys(encs)) {
+      const e = encs[id];
+      out[id] = { enemyId: e.enemyId, hp: e.enemyHp, x: e.x, z: e.z, enemyNextAt: e.enemyNextAt, seq: e.seq };
+    }
+    return out;
+  };
+  // Rencontre où le joueur LOCAL est ENGAGÉ (à portée) — la plus proche s'il y en a plusieurs.
+  // Sert au focus « frapper », au HUD de combat et au gel du podomètre. Calque `engagedPids` (sim) :
+  // il faut être DEHORS et hors grâce de respawn, sinon le HUD/focus offriraient un combat que la
+  // sim refuserait (ennemi venu rôder au bord du village, joueur fraîchement réapparu).
+  const selfEngagedEnc = (): { id: string; enc: SharedEncounter } | null => {
+    const sv = survivalOf(state, self());
+    if (!sv.outside || sv.health <= 0 || state.tick < sv.respawnReadyAt) return null;
+    const p = player.position;
+    let best: { id: string; enc: SharedEncounter } | null = null;
+    let bestD = Infinity;
+    for (const id of Object.keys(state.encounters)) {
+      const e = state.encounters[id];
+      const d = Math.hypot(e.x - p.x, e.z - p.z);
+      if (d <= ENGAGE_RADIUS && d < bestD) { bestD = d; best = { id, enc: e }; }
+    }
+    return best;
+  };
   let prevBlockedNoTorch = false; // front montant -> un seul toast « il fait trop noir »
   const EMPTY_KEYS = new Set<string>(); // (réutilisé : pas d'alloc/frame quand aucun intérieur actif)
   // Switches dev (HUD debug, F3) : texture du sol + brouillard.
@@ -443,6 +473,8 @@ async function boot(): Promise<void> {
       sites.placeAll(worldMap, entities);
       interiors.setMap(worldMap);
       siteLoot.setMap(worldMap);
+      encounterFx.clearAll(); // M8.6 : les ennemis du monde précédent n'ont plus lieu d'être
+      groundDrops.clearAll();
     }
   }
 
@@ -906,18 +938,19 @@ async function boot(): Promise<void> {
   function computeFocus(): Focus | null {
     const p = player.position;
 
-    // M8 — COMBAT : la rencontre DOMINE le contexte (E = frapper avec la meilleure arme PRÊTE ;
-    // « frapper… » pendant la recharge, calque du « coupe… » des arbres). Court-circuite tout focus.
-    const enc = state.combat[self()] ?? null;
-    if (enc) {
-      const ep = encounterFx.enemyWorldPos();
+    // M8.6 — COMBAT : si le joueur est ENGAGÉ dans une rencontre partagée (à portée), elle DOMINE le
+    // contexte (E = frapper avec la meilleure arme PRÊTE ; « frapper… » pendant la recharge, calque du
+    // « coupe… » des arbres). Court-circuite tout autre focus. L'ennemi est ancré dans le monde.
+    const engaged = selfEngagedEnc();
+    if (engaged) {
+      const { id, enc } = engaged;
       const w = bestReadyWeapon(state, self(), enc);
       return {
-        world: ep ? new Vector3(ep.x, ep.y + 1.7, ep.z) : new Vector3(p.x, p.y + 1.6, p.z),
+        world: new Vector3(enc.x, terrainHeight(enc.x, enc.z) + 1.7, enc.z),
         verb: w ? "frapper" : "frapper…",
         act: w
           ? () => {
-              emit(attack(self(), w.id));
+              emit(attack(self(), w.id, id));
               audio.playSfx(w.id === "fists" ? "weaponUnarmed" : "weaponMelee");
             }
           : () => {},
@@ -1127,6 +1160,19 @@ async function boot(): Promise<void> {
       }));
     }
 
+    // M8.6 — BUTIN AU SOL : à la mort d'un ennemi, son butin tombe en pile ramassable (premier-servi).
+    for (const t of groundDrops.targets()) {
+      consider(Math.hypot(t.x - p.x, t.z - p.z), 3.2, () => ({
+        world: new Vector3(t.x, t.y + 0.4, t.z),
+        verb: "ramasser le butin",
+        act: () => {
+          emit(takeDrop(self(), t.dropId));
+          audio.playSfx("checkTraps");
+          hud.toast("butin ramassé.");
+        },
+      }));
+    }
+
     return best;
   }
 
@@ -1198,6 +1244,9 @@ async function boot(): Promise<void> {
       onPeerJoin: () => { if (net.isHost) net.broadcastStateSync(snapshot()); },
       onPeerLeave: (id) => remotes.remove(id),
       onTransform: (id, t) => remotes.setTransform(id, t),
+      // M8.6 — flux rapide d'ennemis (hôte -> tous) : on alimente les cibles d'interpolation. Les
+      // CLIENTS s'en servent ; l'hôte ignore (il simule lui-même les positions autoritaires).
+      onEnemies: (m) => { if (!net.isHost) { const pos: Record<string, { x: number; z: number }> = {}; for (const e of m.e) pos[e.id] = { x: e.x, z: e.z }; encounterFx.setPositions(pos); } },
       // L'hôte n'applique QUE les actions réseau sûres (ni `DEBUG_*`, ni usurpation d'identité).
       onGameAction: (action, fromId) => { if (net.isHost && isNetworkSafeAction(action, fromId)) applyAuthoritative(action); },
       onStateSync: (s) => { if (!net.isHost) adoptSnapshot(s); },
@@ -1234,7 +1283,7 @@ async function boot(): Promise<void> {
   let prevInVillage: boolean | null = null; // null -> 1ère frame force l'état initial du HUD contextuel
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
-  let lastEncSeen: GameState["combat"][string] | null = null; // dernière rencontre vue (toast gardien)
+  let lastEncSeen: SharedEncounter | null = null; // dernière rencontre où l'on était engagé (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
   let prevOnRoad: boolean | null = null;
   let prevDangerWarn = 0; // niveau d'avertissement checkDanger déjà signalé (0/1/2)
@@ -1289,7 +1338,8 @@ async function boot(): Promise<void> {
     ); // F : manger / se soigner (M8/M10)
     if (sv.deathSeq !== prevDeathSeq) {
       prevDeathSeq = sv.deathSeq;
-      encounterFx.clear("death"); // si on est tombé au combat, l'ennemi disparaît
+      // M8.6 : l'ennemi est PARTAGÉ (il survit à notre mort et continue contre les autres) — on ne le
+      // retire plus ici ; on quitte simplement l'engagement en réapparaissant au camp (hors de portée).
       audio.playSfx("death");
       player.teleport(cabin.center.x + 1, cabin.center.z + 0.5); // réveil au camp (à côté de la cabane)
       hud.toast("vous vous effondrez — réveil au camp, le sac vidé.");
@@ -1462,16 +1512,17 @@ async function boot(): Promise<void> {
       if (sig !== prevEventSig) { refreshDialogue(); prevEventSig = sig; }
     }
 
-    // M8 — RENCONTRE : reflète le duel LOCAL (ennemi 3D + panneau + musique). Placé APRÈS le bloc
-    // d'événement M5 : la musique de combat (overlay, idempotente) garde la priorité sur celle d'un
-    // événement non-modal survenu dehors. La victoire est observée par diff de `winSeq` (robuste à
-    // la coalescence de snapshots), AVANT le sync (l'effondrement remplace la fuite par défaut).
-    const enc = state.combat[self()] ?? null;
-    if (enc) lastEncSeen = enc; // mémo : sert au toast de victoire (gardien de mine ou non)
+    // M8.6 — RENCONTRES PARTAGÉES : matérialise TOUS les ennemis + le butin au sol (état autoritaire),
+    // et reflète le combat où le joueur LOCAL est engagé (panneau + musique). Placé APRÈS le bloc M5 :
+    // la musique de combat (overlay, idempotente) garde la priorité. La victoire (coup fatal porté par
+    // CE joueur) est observée par diff de `winSeq`, robuste à la coalescence de snapshots.
+    encounterFx.sync(toEncViews(state.encounters)); // ajoute/retire/anime les ennemis du monde
+    groundDrops.sync(state.drops); // piles de butin tombées
+    const engagedNow = selfEngagedEnc();
+    if (engagedNow) lastEncSeen = engagedNow.enc; // mémo : toast de victoire (gardien de site ou non)
     if (sv.winSeq !== prevWinSeq) {
       prevWinSeq = sv.winSeq;
-      encounterFx.clear("win");
-      // M8.5/F3.1 : message dédié pour la séquence des gardiens de mine.
+      // M8.5/F3.1 : message dédié pour la séquence des gardiens de site (mine/grotte).
       if (lastEncSeen?.guardianIdx !== undefined && lastEncSeen.siteType) {
         const isCave = lastEncSeen.siteType === "cave";
         const total = isCave && lastEncSeen.siteKey
@@ -1483,13 +1534,12 @@ async function boot(): Promise<void> {
           hud.toast(isCave ? "la bête tombe — quelque chose remue encore plus loin." : "le gardien tombe — d'autres défendent encore les lieux.");
         }
       } else {
-        hud.toast("l'ennemi s'effondre — son butin est dans votre sac.");
+        hud.toast("l'ennemi s'effondre — son butin gît au sol, à ramasser.");
       }
-      audio.playSfx("checkTraps"); // ramassage du butin
+      audio.playSfx("checkTraps");
     }
-    const camYaw = cameraYaw(camera);
-    encounterFx.sync(enc, player.position, { x: Math.sin(camYaw), z: Math.cos(camYaw) });
-    if (enc) {
+    if (engagedNow) {
+      const enc = engagedNow.enc;
       const def = enemyById[enc.enemyId];
       const w = bestReadyWeapon(state, self(), enc);
       hud.setCombat({
@@ -1525,9 +1575,10 @@ async function boot(): Promise<void> {
   let encountersPaused = false; // DEBUG (e2e) : bloque l'émission de STEPS (podomètre)
   let pedoPrev: { x: number; z: number } | null = null; // podomètre (M8.5/F1)
   let pedoAcc = 0; // distance accumulée vers le prochain « pas » (12 u)
-  let disengageAcc = 0; // secondes passées hors de portée de l'ennemi (désengagement physique, F4)
   let lastDeathGateToast = 0; // throttle du toast « trop faible pour repartir »
   let transformAcc = 0;
+  let posFeedAcc = 0; // M8.6 : cadence d'injection des positions dans la sim (SET_POSITIONS, hôte)
+  const POS_FEED_MS = 100; // ~10 Hz : assez pour une poursuite fluide, sans surcharger la sim
   let snapshotAcc = 0;
   let saveAcc = 0;
   let saveToastAcc = SAVE_TOAST_MS; // 1ʳᵉ sauvegarde notifiée
@@ -1560,6 +1611,17 @@ async function boot(): Promise<void> {
     // 1) Simulation à pas fixe — uniquement côté autorité (hôte/hors-ligne).
     const authoritative = !net.connected || net.isHost;
     if (authoritative) {
+      // M8.6 — POSITIONS DANS LA SIM : injecte (~10 Hz) les positions des joueurs depuis les transforms
+      // qu'on a DÉJÀ (la nôtre + les avatars distants) AVANT les tics -> le reducer PUR fait poursuivre
+      // & engager les ennemis. Appliqué EN DIRECT (pas de broadcast : les positions voyagent dans le
+      // snapshot 2 Hz ; l'ennemi a son propre flux rapide). Host-local : zéro trafic client->hôte ajouté.
+      posFeedAcc += dtMs;
+      if (posFeedAcc >= POS_FEED_MS) {
+        posFeedAcc = 0;
+        const positions: Record<string, { x: number; z: number }> = { [self()]: { x: player.position.x, z: player.position.z } };
+        for (const e of remotes.entries()) positions[e.id] = { x: e.x, z: e.z };
+        state = reduce(state, setPositions(positions));
+      }
       simAcc += dtMs;
       let ticksDone = 0;
       while (simAcc >= tickMs && ticksDone < 5) {
@@ -1719,20 +1781,22 @@ async function boot(): Promise<void> {
     interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
-    encounterFx.update(dtSec, player.position); // M8 : l'ennemi rôde / fente / retraits animés
+    encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
+    groundDrops.update(dtSec); // piles de butin au sol (flottement + rotation)
     // M8.5/F1 — PODOMÈTRE : les rencontres se déclenchent PAR PAS de déplacement (1 pas = 1 cellule
     // = 12 u), fidèle au `checkFight` d'ADR. Immobile = rien ; téléport (saut > 3 u/frame) ignoré.
+    // Gelé tant qu'on est déjà ENGAGÉ (M8.6) : on n'empile pas une 2ᵉ rencontre sous ses pieds.
     {
       const px = player.position.x, pz = player.position.z;
       if (pedoPrev) {
         const d = Math.hypot(px - pedoPrev.x, pz - pedoPrev.z);
         const outsideNow = Math.hypot(px, pz) > VILLAGE_RADIUS;
-        if (d < 3 && outsideNow && !encountersPaused && !state.combat[self()]) {
+        if (d < 3 && outsideNow && !encountersPaused && !selfEngagedEnc()) {
           pedoAcc += d;
           if (pedoAcc >= config.combat.stepUnits) {
             const n = Math.min(config.combat.maxStepsPerAction, Math.floor(pedoAcc / config.combat.stepUnits));
             pedoAcc -= n * config.combat.stepUnits;
-            emit(steps(self(), n, dangerTier(), biomeStr(), onRoadCell()));
+            emit(steps(self(), n, dangerTier(), biomeStr(), onRoadCell(), px, pz));
           }
         } else if (d >= 3) {
           pedoAcc = 0; // téléport : on repart proprement
@@ -1740,24 +1804,9 @@ async function boot(): Promise<void> {
       }
       pedoPrev = { x: px, z: pz };
     }
-    // M8.5/F4 — DÉSENGAGEMENT PHYSIQUE : distancer l'ennemi (> 18 u) rompt la rencontre (adaptation
-    // monde continu du « pas de bouton fuir » d'ADR) ; les DERNIERS gardiens de mine sont incassables
-    // (la sim refuse le flee) -> ils poursuivent jusqu'à la mort ou la victoire.
-    {
-      const encNow = state.combat[self()];
-      const ep = encNow ? encounterFx.enemyWorldPos() : null;
-      if (encNow && ep) {
-        const d = Math.hypot(ep.x - player.position.x, ep.z - player.position.z);
-        disengageAcc = d > 18 ? disengageAcc + dtSec : 0;
-        if (disengageAcc > 1.2) { // > 18 u pendant ~1 s : l'ennemi décroche
-          disengageAcc = 0;
-          emit(flee(self()));
-          hud.toast("vous le distancez — la bête abandonne.");
-        }
-      } else {
-        disengageAcc = 0;
-      }
-    }
+    // M8.6 — DÉSENGAGEMENT : plus de bouton/flux client. L'ennemi POURSUIT (sim) et DÉCROCHE de lui-même
+    // (laisse) quand plus aucun joueur n'est à portée — il faut le SEMER (sprint au-delà du rayon de
+    // laisse). Les boss (`noFlee`) ne lâchent jamais. Tout est host-autoritaire (cf. reducer TICK 8b).
     // M8.5/F4 — COOLDOWN DE MORT (120 s, fidèle DEATH_COOLDOWN) : trop faible pour repartir — le
     // franchissement de la porte est refusé (retour au camp + toast).
     {
@@ -1785,10 +1834,17 @@ async function boot(): Promise<void> {
     // En édition du spawn, on fige (le village est masqué et le joueur ne bouge pas).
     if (!(spawnEditor?.active)) entities.update(player.position.x, player.position.z, dtSec);
 
-    // 5) Diffusion réseau de notre position.
+    // 5) Diffusion réseau de notre position (+ les positions d'ennemis si l'on est hôte, M8.6).
     if (net.connected) {
       transformAcc += dtMs;
-      if (transformAcc >= transformMs) { transformAcc = 0; net.broadcastTransform(player.getTransform()); }
+      if (transformAcc >= transformMs) {
+        transformAcc = 0;
+        net.broadcastTransform(player.getTransform());
+        if (net.isHost) {
+          const ids = Object.keys(state.encounters);
+          if (ids.length) net.broadcastEnemies({ e: ids.map((id) => ({ id, x: state.encounters[id].x, z: state.encounters[id].z })) });
+        }
+      }
     }
 
     // 5b) PERF ADAPTATIVE (P6) : ajuste la résolution interne vers le FPS cible (~1 Hz).
@@ -1866,16 +1922,17 @@ async function boot(): Promise<void> {
     getCabinTier: () => state.cabinTier,
     getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq, winSeq: s.winSeq, tier: s.tier }; },
     setSurvival: (vals: { water?: number; food?: number; health?: number }) => emit(debugSetSurvival(self(), vals)),
-    getCombat: () => { const c = state.combat[self()]; return c ? { enemyId: c.enemyId, enemyHp: c.enemyHp, seq: c.seq } : null; },
+    getCombat: () => { const e = selfEngagedEnc(); return e ? { enemyId: e.enc.enemyId, enemyHp: e.enc.enemyHp, seq: e.enc.seq } : null; },
     getMaxes: () => ({ water: maxWaterOf(state), health: maxHealthOf(state), carry: carryCapacity(state) }),
     craft: (itemId: string) => emit(craftItem(self(), itemId)),
     buy: (goodId: string) => emit(buy(self(), goodId)),
     useMeds: () => emit(useMeds(self())),
     withdraw: (resource: string, amount = 1) => emit(withdraw(self(), resource, amount)),
     startEncounter: (enemyId?: string, enemyHp?: number) => emit(debugStartEncounter(self(), enemyId, enemyHp)),
-    attack: (weapon = "fists") => emit(attack(self(), weapon)),
+    attack: (weapon = "fists") => { const e = selfEngagedEnc(); if (e) emit(attack(self(), weapon, e.id)); },
     eatMeat: () => emit(eatMeat(self())),
-    flee: () => emit(flee(self())),
+    getDrops: () => Object.keys(state.drops).map((id) => ({ id, loot: { ...state.drops[id].loot } })),
+    takeDrop: (id?: string) => { const d = id ?? Object.keys(state.drops)[0]; if (d) emit(takeDrop(self(), d)); },
     pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)
