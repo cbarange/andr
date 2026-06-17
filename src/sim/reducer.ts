@@ -24,7 +24,7 @@ import {
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD,
+  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -507,6 +507,29 @@ export function reduce(state: GameState, action: GameAction): GameState {
         perks: { ...state.perks, executioner_cleared: true, ship_revealed: true },
         rng: cloneRng(state.rng),
       };
+    }
+
+    case "REINFORCE_SHIP": {
+      // M11/E2 — renforce la COQUE : 1 alliage de l'ENTREPÔT -> +1 coque (fidèle ADR : possession du
+      // village). Gaté : le vaisseau doit être RÉVÉLÉ (cuirassé nettoyé), coque < max, alliage en stock.
+      if (!state.perks["ship_revealed"]) return state;
+      if (state.ship.hull >= SHIP.hullMax) return state;
+      if (stockOf(state, "alien alloy") < SHIP.alloyPerHull) return state;
+      const resources = { ...state.resources };
+      resources["alien alloy"] = stockOf(state, "alien alloy") - SHIP.alloyPerHull;
+      if (resources["alien alloy"] <= 0) delete resources["alien alloy"];
+      return { ...state, resources, ship: { ...state.ship, hull: state.ship.hull + 1 }, rng: cloneRng(state.rng) };
+    }
+
+    case "UPGRADE_ENGINE": {
+      // M11/E2 — améliore le MOTEUR : 1 alliage -> +1 cran (ascension plus sûre en E3). Mêmes gardes.
+      if (!state.perks["ship_revealed"]) return state;
+      if (state.ship.engine >= SHIP.engineMax) return state;
+      if (stockOf(state, "alien alloy") < SHIP.alloyPerEngine) return state;
+      const resources = { ...state.resources };
+      resources["alien alloy"] = stockOf(state, "alien alloy") - SHIP.alloyPerEngine;
+      if (resources["alien alloy"] <= 0) delete resources["alien alloy"];
+      return { ...state, resources, ship: { ...state.ship, engine: state.ship.engine + 1 }, rng: cloneRng(state.rng) };
     }
 
     case "CRAFT_ITEM": {
@@ -1153,6 +1176,11 @@ export function reduce(state: GameState, action: GameAction): GameState {
       // Fixe le palier (0/1/5/10) ; `cabinRepaired` est dérivé (>= 1). Console dev.
       const tier = action.tier;
       return { ...state, cabinTier: tier, cabinRepaired: tier >= 1, rng: cloneRng(state.rng) };
+    }
+
+    case "DEBUG_GRANT_PERK": {
+      // Accorde un perk/drapeau du village (perk de combat ou flag de progression M11). Console dev / e2e.
+      return { ...state, perks: { ...state.perks, [action.perk]: true }, rng: cloneRng(state.rng) };
     }
 
     case "DEBUG_SET_SURVIVAL": {

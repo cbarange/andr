@@ -333,6 +333,17 @@ export const mineGuardians: Record<string, string[]> = {
 /** M11/E1 — butin d'alliage de la soute du cuirassé une fois TOUS ses gardiens vaincus (CLEAR_EXECUTIONER). */
 export const EXECUTIONER_ALLOY_REWARD = 5;
 
+/** M11/E2 — RÉPARATION DU VAISSEAU (fidèle à l'écran Ship d'ADR : renforcer la coque / améliorer le
+ *  moteur avec de l'alliage). `hull` = PV de coque à l'ascension (E3) ; `engine` réduit la difficulté
+ *  du décollage. `liftoffHullMin` = coque minimale pour armer le décollage. 1 alliage par cran. */
+export const SHIP = {
+  hullMax: 20,        // coque maximale (chaque renfort = +1, fidèle ADR)
+  engineMax: 3,       // niveaux de moteur (chaque cran = ascension plus rapide / moins d'astéroïdes)
+  liftoffHullMin: 5,  // coque minimale pour pouvoir décoller (E3)
+  alloyPerHull: 1,    // alliage par renfort de coque
+  alloyPerEngine: 1,  // alliage par cran de moteur
+} as const;
+
 export const resources = {
   wood: { id: "wood", label: "Bois", initial: 0 },
 } as const;

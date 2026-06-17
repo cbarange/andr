@@ -48,7 +48,7 @@ import {
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner,
+  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -59,7 +59,7 @@ import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
   craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
   configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
-  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods, mineGuardians, Biome,
+  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods, mineGuardians, Biome, SHIP,
 } from "../data/world";
 import { createOcean } from "./render/ocean";
 
@@ -108,6 +108,10 @@ declare global {
       eatMeat?: () => void;
       getDrops?: () => Array<{ id: string; loot: Record<string, number> }>;
       takeDrop?: (id?: string) => void;
+      getShip?: () => { hull: number; engine: number };
+      reinforceShip?: () => void;
+      upgradeEngine?: () => void;
+      grantPerk?: (perk: string) => void;
       pauseEncounters?: () => void;
       getPlayer?: () => { x: number; y: number; z: number };
       getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
@@ -782,6 +786,36 @@ async function boot(): Promise<void> {
   }
   const chestViewRef = (): DialogueView => chestView();
 
+  // M11/E2 — LE VAISSEAU : réparer l'épave avec l'alliage (l'écran Ship d'ADR). Renforcer la coque
+  // (PV de l'ascension) / calibrer le moteur (réduit la difficulté du décollage). Le décollage (E3)
+  // s'arme une fois la coque minimale atteinte — annoncé ici pour donner le cap.
+  function shipView(): DialogueView {
+    const alloy = Math.floor(stockOf(state, "alien alloy"));
+    const { hull, engine } = state.ship;
+    const ready = hull >= SHIP.liftoffHullMin;
+    return {
+      speaker: "le vaisseau",
+      text: `coque ${hull}/${SHIP.hullMax} · moteur ${engine}/${SHIP.engineMax} · alliage en réserve : ${alloy}. `
+        + (ready ? "la coque tiendra l'ascension. (décollage : bientôt)" : `il faut au moins ${SHIP.liftoffHullMin} de coque pour décoller.`),
+      choices: [
+        {
+          label: "renforcer la coque", sublabel: `${SHIP.alloyPerHull} alliage → +1 coque`,
+          tooltip: hull >= SHIP.hullMax ? "coque au maximum" : (alloy < SHIP.alloyPerHull ? "pas assez d'alliage" : undefined),
+          enabled: hull < SHIP.hullMax && alloy >= SHIP.alloyPerHull,
+          onSelect: () => { emit(reinforceShip(self())); audio.playSfx("build"); refreshDialogue(); },
+        },
+        {
+          label: "calibrer le moteur", sublabel: `${SHIP.alloyPerEngine} alliage → +1 poussée`,
+          tooltip: engine >= SHIP.engineMax ? "moteur au maximum" : (alloy < SHIP.alloyPerEngine ? "pas assez d'alliage" : undefined),
+          enabled: engine < SHIP.engineMax && alloy >= SHIP.alloyPerEngine,
+          onSelect: () => { emit(upgradeEngine(self())); audio.playSfx("build"); refreshDialogue(); },
+        },
+        { label: "(fermer)", enabled: true, onSelect: closeInteractive },
+      ],
+    };
+  }
+  const shipViewRef = (): DialogueView => shipView();
+
   function formatStores(stores: Record<string, number>): string {
     return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
   }
@@ -1167,6 +1201,19 @@ async function boot(): Promise<void> {
             hud.toast("la soute du cuirassé s'ouvre — un éclat d'alliage, et au loin, le vaisseau s'éveille.");
             audio.playSfx("checkTraps");
           },
+        }));
+      }
+    }
+
+    // M11/E2 — LE VAISSEAU : une fois le cuirassé nettoyé (`ship_revealed`), l'épave devient réparable.
+    if (state.perks["ship_revealed"]) {
+      for (const st of worldMap.sites) {
+        if (st.type !== "ship") continue;
+        const w = worldMap.cellToWorldCenter(st.cx, st.cz);
+        consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z),
+          verb: "examiner le vaisseau",
+          act: () => showDialogue(shipViewRef),
         }));
       }
     }
@@ -1964,6 +2011,10 @@ async function boot(): Promise<void> {
     eatMeat: () => emit(eatMeat(self())),
     getDrops: () => Object.keys(state.drops).map((id) => ({ id, loot: { ...state.drops[id].loot } })),
     takeDrop: (id?: string) => { const d = id ?? Object.keys(state.drops)[0]; if (d) emit(takeDrop(self(), d)); },
+    getShip: () => ({ ...state.ship }),
+    reinforceShip: () => emit(reinforceShip(self())),
+    upgradeEngine: () => emit(upgradeEngine(self())),
+    grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
     pauseEncounters: () => { encountersPaused = true; },
     getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)

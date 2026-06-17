@@ -134,6 +134,18 @@ export type ClearExecutionerAction = {
   cz: number;
 };
 
+/** M11/E2 : renforce la COQUE du vaisseau (1 alliage de l'entrepôt -> +1 coque, fidèle ADR). */
+export type ReinforceShipAction = {
+  type: "REINFORCE_SHIP";
+  playerId: string;
+};
+
+/** M11/E2 : améliore le MOTEUR du vaisseau (1 alliage -> +1 cran de poussée ; ascension plus sûre). */
+export type UpgradeEngineAction = {
+  type: "UPGRADE_ENGINE";
+  playerId: string;
+};
+
 /**
  * Se RAVITAILLER à un avant-poste (grotte nettoyée) : remplit l'eau + les vivres du joueur.
  * USAGE UNIQUE fidèle ADR, partagé entre joueurs (premier-servi : l'hôte arbitre). Reste M7.
@@ -339,6 +351,12 @@ export type DebugStartEncounterAction = {
   enemyHp?: number;
 };
 
+/** Accorde un PERK/drapeau du village (perk de combat ou flag de progression M11). Console dev / e2e. */
+export type DebugGrantPerkAction = {
+  type: "DEBUG_GRANT_PERK";
+  perk: string;
+};
+
 export type GameAction =
   | GatherWoodAction
   | LightFireAction
@@ -357,6 +375,8 @@ export type GameAction =
   | SecureMineAction
   | ClearCaveAction
   | ClearExecutionerAction
+  | ReinforceShipAction
+  | UpgradeEngineAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -384,7 +404,8 @@ export type GameAction =
   | DebugSetSeedAction
   | DebugSetCabinTierAction
   | DebugSetSurvivalAction
-  | DebugStartEncounterAction;
+  | DebugStartEncounterAction
+  | DebugGrantPerkAction;
 
 /** Actions émises par un joueur (vs TICK, émise par la boucle) — ce qui circule sur le réseau.
  *  (Les `DEBUG_*` y figurent pour passer par `emit` -> hôte-autoritaire ; console dev uniquement.) */
@@ -406,6 +427,8 @@ export type PlayerAction =
   | SecureMineAction
   | ClearCaveAction
   | ClearExecutionerAction
+  | ReinforceShipAction
+  | UpgradeEngineAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -430,7 +453,8 @@ export type PlayerAction =
   | DebugSetSeedAction
   | DebugSetCabinTierAction
   | DebugSetSurvivalAction
-  | DebugStartEncounterAction;
+  | DebugStartEncounterAction
+  | DebugGrantPerkAction;
 
 /**
  * Une action REÇUE DU RÉSEAU est-elle acceptable par l'hôte ? (anti-triche / anti-usurpation)
@@ -508,6 +532,12 @@ export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAc
 }
 export function clearExecutioner(playerId: string, cx: number, cz: number): ClearExecutionerAction {
   return { type: "CLEAR_EXECUTIONER", playerId, cx, cz };
+}
+export function reinforceShip(playerId: string): ReinforceShipAction {
+  return { type: "REINFORCE_SHIP", playerId };
+}
+export function upgradeEngine(playerId: string): UpgradeEngineAction {
+  return { type: "UPGRADE_ENGINE", playerId };
 }
 export function useOutpost(playerId: string, cx: number, cz: number): UseOutpostAction {
   return { type: "USE_OUTPOST", playerId, cx, cz };
@@ -596,4 +626,7 @@ export function debugSetSurvival(
 }
 export function debugStartEncounter(playerId: string, enemyId?: string, enemyHp?: number): DebugStartEncounterAction {
   return { type: "DEBUG_START_ENCOUNTER", playerId, ...(enemyId ? { enemyId } : {}), ...(enemyHp !== undefined ? { enemyHp } : {}) };
+}
+export function debugGrantPerk(perk: string): DebugGrantPerkAction {
+  return { type: "DEBUG_GRANT_PERK", perk };
 }

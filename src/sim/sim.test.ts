@@ -16,13 +16,13 @@ import {
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner,
+  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
   engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS, CHASE_SPEED,
 } from "./combat";
-import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD } from "../../data/world";
+import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP } from "../../data/world";
 import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -1927,5 +1927,55 @@ describe("fin de partie (M11/E1) — le cuirassé scripté & le signal", () => {
     expect(signal.isAvailable(withAlloy)).toBe(true); // alliage en stock -> la lueur pulse
     const seen: GameState = { ...withAlloy, perks: { signal_seen: true } };
     expect(signal.isAvailable(seen)).toBe(false); // déjà vu -> ONE-SHOT
+  });
+});
+
+describe("fin de partie (M11/E2) — réparer le vaisseau", () => {
+  /** État avec le vaisseau RÉVÉLÉ (ou non) et de l'alliage en réserve. cabinTier 10 = plafonds larges. */
+  function shipState(alloy = 10, revealed = true): GameState {
+    return {
+      ...createInitialState(config.rngSeed, 0),
+      cabinTier: 10,
+      perks: revealed ? { ship_revealed: true } : {},
+      resources: { "alien alloy": alloy },
+    };
+  }
+
+  it("REINFORCE_SHIP : gaté sur la révélation + l'alliage ; +1 coque par alliage ; plafonné", () => {
+    const hidden = shipState(10, false);
+    expect(reduce(hidden, reinforceShip("p1"))).toBe(hidden); // vaisseau pas révélé -> no-op
+    let s = reduce(shipState(10), reinforceShip("p1"));
+    expect(s.ship.hull).toBe(1);
+    expect(s.resources["alien alloy"]).toBe(9); // 1 alliage consommé (entrepôt)
+    let full = shipState(100);
+    for (let i = 0; i < SHIP.hullMax + 5; i++) full = reduce(full, reinforceShip("p1"));
+    expect(full.ship.hull).toBe(SHIP.hullMax); // plafonné
+    const broke = shipState(0);
+    expect(reduce(broke, reinforceShip("p1"))).toBe(broke); // sans alliage -> no-op
+  });
+
+  it("UPGRADE_ENGINE : +1 poussée par alliage, plafonné, gaté sur la révélation", () => {
+    expect(reduce(shipState(10, false), upgradeEngine("p1"))).toEqual(shipState(10, false)); // pas révélé
+    let s = reduce(shipState(10), upgradeEngine("p1"));
+    expect(s.ship.engine).toBe(1);
+    expect(s.resources["alien alloy"]).toBe(9);
+    let full = shipState(100);
+    for (let i = 0; i < SHIP.engineMax + 3; i++) full = reduce(full, upgradeEngine("p1"));
+    expect(full.ship.engine).toBe(SHIP.engineMax); // plafonné
+    const broke = shipState(0);
+    expect(reduce(broke, upgradeEngine("p1"))).toBe(broke); // sans alliage -> no-op
+  });
+
+  it("réseau-safe : REINFORCE/UPGRADE portent playerId ; DEBUG_GRANT_PERK refusé du réseau", () => {
+    expect(isNetworkSafeAction(reinforceShip("p1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(reinforceShip("p1"), "p2")).toBe(false); // usurpation refusée
+    expect(isNetworkSafeAction(upgradeEngine("p1"), "p1")).toBe(true);
+    expect(isNetworkSafeAction(debugGrantPerk("ship_revealed"), "p1")).toBe(false);
+  });
+
+  it("REPLAY : réparer le vaisseau est déterministe", () => {
+    const acts: GameAction[] = [debugGrantPerk("ship_revealed"), reinforceShip("p1"), reinforceShip("p1"), upgradeEngine("p1")];
+    const s0: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 10 } };
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
 });

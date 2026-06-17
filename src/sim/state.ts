@@ -137,8 +137,15 @@ export interface GameState {
 
   // --- M10 : PERKS du VILLAGE (clés de PERKS, accordés par l'événement « le Maître »). Partagés
   //     entre joueurs (divergence coop assumée — ADR est solo ; un perk par-joueur serait perdu au
-  //     reload, selfId volatile). ADDITIF, autoritaire, et PERSISTÉ (contrairement au sac/survie). ---
+  //     reload, selfId volatile). ADDITIF, autoritaire, et PERSISTÉ (contrairement au sac/survie).
+  //     Porte AUSSI les drapeaux de progression de fin de partie (M11 : `signal_seen`,
+  //     `executioner_cleared`, `ship_revealed`) — booléens persistés, jamais affichés en UI. ---
   perks: Record<string, true>;
+
+  // --- M11 : LE VAISSEAU (réparation de l'épave avec l'alliage — E2). `hull` = PV de coque pour
+  //     l'ascension (E3) ; `engine` = poussée (réduit la difficulté du décollage). ADDITIF (back-fillé
+  //     au boot), PERSISTÉ (possession du village, comme les upgrades d'entrepôt). Voyage au snapshot. ---
+  ship: { hull: number; engine: number };
 }
 
 /**
@@ -369,5 +376,6 @@ export function createInitialState(seed: number, initialWood: number): GameState
     playerPos: {},
     drops: {},
     perks: {},
+    ship: { hull: 0, engine: 0 },
   };
 }
