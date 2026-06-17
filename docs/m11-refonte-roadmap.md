@@ -126,15 +126,34 @@ Best-practice « arène » (résout le *Door Problem*) :
 
 ---
 
-## 3. Minimap & orientation (à créer)
+## 3. Minimap UNIFIÉE & CONTEXTUELLE — à l'échelle du monde entier (à créer)
 
-- **Minimap schématique** dessinée à partir du **graphe de salles** (intérieur) et des **sites**
-  (extérieur) — **pas** une caméra ortho temps réel (coûteuse). On a déjà la donnée (graphe dungeon, sites).
-- **Fog-of-war** : salles/sites révélés à la première visite, **partagé en co-op** (vu par un = vu par tous).
-- **Marqueur d'objectif** + **boussole/edge-pointer** diégétique (chevron vers l'épave / le cuirassé /
-  l'objectif courant) — minimaliste, monochrome (ton ADR).
-- **Coéquipiers** sur la minimap (couleur par joueur, « à terre » clignotant). Positions diffusées par
-  l'hôte à **basse fréquence** (~5-10 Hz), interpolées.
+> **Exigence porteur** : UNE SEULE minimap, **toujours présente**, qui couvre **tout le jeu** et se
+> **CONTEXTUALISE selon l'emplacement du joueur** — village, exploration du monde, grotte/mine,
+> intérieur du vaisseau. Pas une minimap « intérieur » + une « monde » séparées : **le même widget**
+> bascule de représentation selon le contexte. (Ce n'est donc PAS une décision optionnelle — c'est le but.)
+
+- **Une machine à 3 LAYERS, sélectionnée automatiquement par le contexte du joueur :**
+  - **CAMP** (dans le périmètre du village) : plan rapproché du campement (cabane, bâtiments, feu, porte).
+    Source : `campLayout` / positions des bâtiments.
+  - **MONDE** (en exploration dehors) : plan à **l'échelle du monde entier** — camp au centre, **sites
+    découverts** (grottes, mines, villes, cités, forages, champs, **épave**, **cuirassé**), **routes**
+    tracées, anneaux de distance. Source : `worldMap.sites` + `state.roads` + worldgen.
+  - **INTÉRIEUR** (sous terre / dans une structure : grotte, mine, **cuirassé**) : plan **schématique des
+    salles** de la structure courante (salles + portes/sas + butin). Source : le **graphe de donjon**
+    (`dungeon.ts`) de la structure active.
+- **Transition fluide** quand on change de contexte (entrer dans une grotte/vaisseau → bascule MONDE→INTÉRIEUR ;
+  ressortir → INTÉRIEUR→MONDE ; rentrer au camp → MONDE→CAMP). Un fondu/zoom doux, pas un swap brutal.
+- **Rendu** : dessin **2D schématique** (Babylon GUI / canvas) à partir des données ci-dessus — **JAMAIS**
+  une caméra ortho temps réel (coûteuse). On a déjà toute la donnée (sites, routes, graphes de donjon,
+  campLayout). Style **minimaliste, monochrome** (ton ADR). Coin d'écran + **carte plein écran** (touche
+  dédiée) pour la vue MONDE et INTÉRIEUR détaillées.
+- **Fog-of-war PARTAGÉ co-op** : cellules/sites/salles révélés à la première visite **par n'importe quel
+  joueur** (vu par un = vu par tous), persisté/sync par l'hôte (réutilise le seam `visited` déjà prévu).
+- **Le joueur (orientation/flèche) + les COÉQUIPIERS** (couleur par joueur, « à terre » clignotant) sur
+  tous les layers. Positions diffusées par l'hôte à **basse fréquence** (~5-10 Hz), interpolées.
+- **Marqueur d'objectif** (chevron vers l'épave / le cuirassé / l'objectif courant) sur le layer pertinent
+  + **edge-pointer** quand la cible est hors-cadre. Minimaliste, monochrome.
 
 ---
 
@@ -199,9 +218,17 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 - Modéliser 3-4 archétypes aliens (kit low-poly + `characters.ts`), table d'ennemis dédiée, télégraphie
   *wind-up* émissive. **Accept.** : silhouettes lisibles, distinctes de la faune terrestre.
 
-### **RF4 — Minimap & orientation** *(M)*
-- Minimap schématique (salles + sites), fog-of-war partagé, marqueur d'objectif + boussole, coéquipiers.
-- **Accept.** : on s'oriente dans le cuirassé et vers l'épave sans se perdre ; co-op visible.
+### **RF4 — Minimap UNIFIÉE & CONTEXTUELLE (échelle monde)** *(M/L)*
+- **Un seul widget minimap**, toujours présent, à **3 layers auto-sélectionnés** (CAMP / MONDE / INTÉRIEUR)
+  selon le contexte du joueur ; transition fluide à chaque changement ; dessin 2D schématique (pas de
+  caméra ortho) ; fog-of-war **partagé co-op** ; joueur + coéquipiers + marqueur d'objectif/edge-pointer ;
+  carte plein écran sur touche dédiée. (cf. §3 pour le détail des sources de données par layer.)
+- **Phasage interne suggéré** (sans casser l'unité visée) : (a) layer MONDE (sites/routes/fog) → (b) layer
+  INTÉRIEUR (graphe de salles, utile dès RF2 pour ne pas se perdre dans le cuirassé) → (c) layer CAMP →
+  (d) coéquipiers + carte plein écran. Mais l'**objectif final = le widget contextuel unique**.
+- **Accept.** : la MÊME minimap me situe et m'oriente **partout** — au village, en exploration (monde
+  entier, sites/routes), en grotte/mine, et dans le cuirassé — en se contextualisant automatiquement ;
+  fog-of-war et coéquipiers visibles en co-op.
 
 ### **RF5 — Caméra intérieur** *(S/M)*
 - Spring-arm sphere-cast + auto-FPV couloir + fade des murs + transition amortie. **Accept.** : combat
@@ -228,8 +255,9 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
    le rendre obligatoire ? *(reco : optionnel mais très récompensant — fidèle ET satisfaisant.)*
 4. **Ampleur des salles du cuirassé** : reproduire les 3 ailes + pont d'ADR, ou une version condensée
    (1 hub + 2-3 salles + pont) pour un premier jet jouable ? *(reco : version condensée d'abord, extensible.)*
-5. **Minimap intérieur seulement, ou aussi extérieur (monde) ?** *(reco : commencer par l'intérieur du
-   cuirassé + un marqueur d'objectif extérieur ; minimap-monde plus tard.)*
+5. **Minimap** : ✅ **TRANCHÉ (porteur)** — minimap **UNIFIÉE & CONTEXTUELLE à l'échelle du monde
+   entier**, toujours présente, qui se contextualise (camp / exploration-monde / grotte-mine / vaisseau).
+   Cf. §3 et RF4. (Seul reste un choix de *phasage* interne, pas de périmètre.)
 
 ---
 
