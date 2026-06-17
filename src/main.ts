@@ -49,7 +49,7 @@ import {
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige,
+  liftOff, flightFire, endFlight, prestige, discoverShip,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -353,6 +353,9 @@ async function boot(): Promise<void> {
   let state: GameState = loaded
     ? { ...createInitialState(config.rngSeed, 0), ...loaded, carried: {}, survival: {}, encounters: {}, playerPos: {}, drops: {}, flight: null }
     : createInitialState(config.rngSeed, 0);
+  // M11/RF1 — compat save : les vieilles parties révélaient le vaisseau via le cuirassé (`ship_revealed`).
+  // Désormais le flag est `ship_found` (indépendant). Back-fill : si révélé jadis, considéré trouvé.
+  if (state.perks["ship_revealed"] && !state.perks["ship_found"]) state = { ...state, perks: { ...state.perks, ship_found: true } };
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
   //      pairs) + sol STREAMÉ par chunks autour du joueur. Chargé d'emblée autour du centre
@@ -1256,36 +1259,29 @@ async function boot(): Promise<void> {
           verb: "piller le cuirassé",
           act: () => {
             emit(clearExecutioner(self(), st.cx, st.cz));
-            hud.toast("la soute du cuirassé s'ouvre — un éclat d'alliage, et au loin, le vaisseau s'éveille.");
+            hud.toast("la soute du cuirassé s'ouvre — un cache d'alliage extraterrestre, et l'étrange dispositif que la constructrice saura reconnaître.");
             audio.playSfx("checkTraps");
           },
         }));
       }
     }
 
-    // M11/E2 — LE VAISSEAU : réparable une fois le cuirassé nettoyé (`ship_revealed`). AVANT ça, l'épave
-    // est inerte : on affiche tout de même un prompt qui ORIENTE le joueur vers le cuirassé (sinon il
-    // reste planté devant sans indice — l'alliage en poche ne débloque rien, c'est le cuirassé qui compte).
+    // M11/RF1 — L'ÉPAVE (au bord du monde) : la TROUVER suffit (fidèle ADR : indépendant du cuirassé).
+    // Tant qu'on ne l'a pas trouvée -> « découvrir l'épave » (DISCOVER_SHIP, pose `ship_found`). Une fois
+    // trouvée -> « examiner le vaisseau » (réparer/décoller). (RF1b déplacera l'interaction AU CAMP.)
     for (const st of worldMap.sites) {
       if (st.type !== "ship") continue;
       const w = worldMap.cellToWorldCenter(st.cx, st.cz);
       const world = new Vector3(w.x, terrainHeight(w.x, w.z) + 3.2, w.z);
-      if (state.perks["ship_revealed"]) {
+      if (state.perks["ship_found"]) {
         consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({ world, verb: "examiner le vaisseau", act: () => showDialogue(shipViewRef) }));
       } else {
         consider(Math.hypot(w.x - p.x, w.z - p.z), 8.0, () => ({
-          world, verb: "examiner l'épave",
+          world, verb: "découvrir l'épave",
           act: () => {
-            const ex = worldMap.sites.find((s) => s.type === "executioner");
-            if (ex) {
-              const ew = worldMap.cellToWorldCenter(ex.cx, ex.cz);
-              const dirs = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"];
-              const dir = dirs[((Math.round(Math.atan2(ew.x - p.x, ew.z - p.z) / (Math.PI / 4)) % 8) + 8) % 8];
-              const dist = Math.round(Math.hypot(ew.x - p.x, ew.z - p.z));
-              hud.toast(`l'appareil est mort, mais quelque chose l'alimente au loin : un CUIRASSÉ alien (~${dist} m, vers le ${dir}). réduisez-le au silence pour réveiller ce vaisseau.`);
-            } else {
-              hud.toast("l'appareil est mort — quelque chose l'alimente encore au loin. trouvez le CUIRASSÉ et réduisez-le au silence.");
-            }
+            emit(discoverShip(self(), st.cx, st.cz));
+            hud.toast("les courbes familières d'un vaisseau wanderer émergent de la cendre. avec un peu d'alliage, il pourrait voler.");
+            audio.playSfx("checkTraps");
           },
         }));
       }

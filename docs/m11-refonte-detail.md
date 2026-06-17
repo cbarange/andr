@@ -808,17 +808,11 @@ RF6 + RF7 + polish/audio**. Chaque jalon laisse l'arbre **VERT** (roadmap §7).
 - **[DP-RF6]** Beacon = ressource (`state.resources`), drop garanti du pont, entrepôt, non-prestige.
 - **[DP-RF7]** Réutiliser `CRAFT_ITEM` + `item.requiresPerk`. Gating `executioner_cleared`.
 
-### Questions au porteur (vrais arbitrages restants)
-- **[Q-1]** Format du décollage : garder l'« extraction allégée » co-op (recommandé) ou se rapprocher du
-  dodge-shooter solo d'ADR ? (roadmap §8.1 — non tranché, mais reco = garder.)
-- **[Q-2]** Caps hull/moteur (20/3) : conserver pour l'équilibre (reco) ou lever pour fidélité stricte ?
-  (exposés en config dans tous les cas.)
-- **[Q-3]** Cuirassé fortement incitatif mais non obligatoire : niveau d'incitation exact (combien
-  d'alliage par aile vs. autres sources) à équilibrer en playtest.
-- **[Q-4-RF2]** Délai de grâce d'entrée co-op avant de sceller **visuellement** la porte d'entrée d'arène
-  (ex. 3 s) — recommandé, purement rendu, mais à valider.
-- **[Q-5-RF7]** Quels objets Fabricator au **premier jet** (reco : stim, plasma rifle, kinetic armour) ?
-- **[Q-6-RF2]** Ampleur définitive des salles (condensé d'abord ; quand passer aux ailes multi-salles
-  complètes d'ADR ?).
-- **[Q-7-RF5]** Touche de skip + touche carte plein écran (reco `M`) — à confirmer avec le mapping clavier
-  existant.
+### Questions au porteur — ✅ TRANCHÉES (porteur, juin 2026 : « recos OK »)
+- **[Q-1]** Décollage → **garder l'« extraction allégée » co-op** (pas le dodge-shooter solo).
+- **[Q-2]** Caps hull/moteur (20/3) → **conserver** (exposés en config).
+- **[Q-3]** Incitation du cuirassé → **à doser en playtest** (cuirassé très récompensant mais non requis).
+- **[Q-4]** Grâce d'entrée d'arène co-op → **~3 s** (purement rendu).
+- **[Q-5]** Objets Fabricator du 1er jet → **stim, plasma rifle, kinetic armour**.
+- **[Q-6]** Ampleur du cuirassé → **condensé d'abord** (hub + 3 ailes 1-salle + pont), ailes multi-salles plus tard.
+- **[Q-7]** Touches → **carte plein écran = `M`**, skip de cinématique = touche d'interaction/Échap (à finaliser au câblage).

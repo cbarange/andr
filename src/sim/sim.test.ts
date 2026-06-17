@@ -17,7 +17,7 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige,
+  liftOff, flightFire, endFlight, prestige, discoverShip,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
@@ -1894,11 +1894,13 @@ describe("fin de partie (M11/E1) — le cuirassé scripté & le signal", () => {
       // CLEAR reste gaté jusqu'au dernier.
       if (i < guardians.length - 1) expect(reduce(s, clearExecutioner("p1", CX, CZ))).toBe(s);
     }
-    // Tous vaincus -> piller : alliage en soute + RÉVÈLE le vaisseau, route tracée, idempotent.
+    // Tous vaincus -> piller : alliage en soute + `executioner_cleared`. RF1/FIDÉLITÉ : le cuirassé ne
+    // RÉVÈLE PLUS le vaisseau (sources d'alliage parallèles, indépendant du petit vaisseau).
     const out = reduce(s, clearExecutioner("p1", CX, CZ));
     expect(out.sites[KEY].cleared).toBe(true);
     expect(out.perks["executioner_cleared"]).toBe(true);
-    expect(out.perks["ship_revealed"]).toBe(true);
+    expect(out.perks["ship_found"]).toBeUndefined(); // le cuirassé ne débloque PAS le vaisseau (fidèle ADR)
+    expect(out.perks["ship_revealed"]).toBeUndefined();
     expect(out.resources["alien alloy"]).toBe(EXECUTIONER_ALLOY_REWARD); // cabinTier 10 -> plafond généreux
     expect(Object.keys(out.roads).length).toBeGreaterThan(0); // une route est tracée vers le cuirassé (fusion)
     expect(reduce(out, clearExecutioner("p1", CX, CZ))).toBe(out); // one-shot / idempotent
@@ -1937,7 +1939,7 @@ describe("fin de partie (M11/E2) — réparer le vaisseau", () => {
     return {
       ...createInitialState(config.rngSeed, 0),
       cabinTier: 10,
-      perks: revealed ? { ship_revealed: true } : {},
+      perks: revealed ? { ship_found: true } : {},
       resources: { "alien alloy": alloy },
     };
   }
@@ -1971,11 +1973,11 @@ describe("fin de partie (M11/E2) — réparer le vaisseau", () => {
     expect(isNetworkSafeAction(reinforceShip("p1"), "p1")).toBe(true);
     expect(isNetworkSafeAction(reinforceShip("p1"), "p2")).toBe(false); // usurpation refusée
     expect(isNetworkSafeAction(upgradeEngine("p1"), "p1")).toBe(true);
-    expect(isNetworkSafeAction(debugGrantPerk("ship_revealed"), "p1")).toBe(false);
+    expect(isNetworkSafeAction(debugGrantPerk("ship_found"), "p1")).toBe(false);
   });
 
   it("REPLAY : réparer le vaisseau est déterministe", () => {
-    const acts: GameAction[] = [debugGrantPerk("ship_revealed"), reinforceShip("p1"), reinforceShip("p1"), upgradeEngine("p1")];
+    const acts: GameAction[] = [debugGrantPerk("ship_found"), reinforceShip("p1"), reinforceShip("p1"), upgradeEngine("p1")];
     const s0: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 10 } };
     expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
@@ -1986,7 +1988,7 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
 
   /** État : vaisseau RÉVÉLÉ + coque réparée, p1 DEHORS et à la position du vaisseau. */
   function ready(hull = 20, engine = 0): GameState {
-    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull, engine } };
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull, engine } };
     s = reduce(s, setOutside("p1", true, 3));
     s = reduce(s, setPositions({ p1: { x: SX, z: SZ } }));
     return s;
@@ -2011,7 +2013,7 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
   });
 
   it("le vaisseau ATTEND TOUT LE MONDE : un joueur dehors mais loin retarde le décollage", () => {
-    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull: 20, engine: 0 } };
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull: 20, engine: 0 } };
     s = reduce(s, setOutside("p1", true, 3));
     s = reduce(s, setOutside("p2", true, 3));
     s = reduce(s, setPositions({ p1: { x: SX, z: SZ }, p2: { x: SX + 500, z: SZ } })); // p2 au loin
@@ -2025,7 +2027,7 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
   });
 
   it("compte à rebours : décolle même si un retardataire ne vient pas", () => {
-    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_revealed: true }, ship: { hull: 20, engine: 0 } };
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull: 20, engine: 0 } };
     s = reduce(s, setOutside("p1", true, 3));
     s = reduce(s, setOutside("p2", true, 3));
     s = reduce(s, setPositions({ p1: { x: SX, z: SZ }, p2: { x: SX + 500, z: SZ } }));
@@ -2077,7 +2079,7 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
   it("REPLAY : un décollage (embarquement + ascension + tirs) est déterministe", () => {
     const s0: GameState = { ...createInitialState(config.rngSeed, 0), ship: { hull: 20, engine: 1 } };
     const acts: GameAction[] = [
-      debugGrantPerk("ship_revealed"),
+      debugGrantPerk("ship_found"),
       setOutside("p1", true, 3),
       setPositions({ p1: { x: SX, z: SZ } }),
       liftOff("p1", SX, SZ),
@@ -2092,7 +2094,7 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
   function escaped(): GameState {
     return {
       ...createInitialState(config.rngSeed, 0),
-      perks: { precise: true, gastronome: true, ship_revealed: true, executioner_cleared: true, signal_seen: true },
+      perks: { precise: true, gastronome: true, ship_found: true, ship_revealed: true, executioner_cleared: true, signal_seen: true },
       prestige: 2,
       resources: { wood: 50, "alien alloy": 3 },
       sites: { "1,1": { discovered: true, cleared: true } },
@@ -2112,7 +2114,8 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
     expect(s.prestige).toBe(3); // compteur d'évasions ++
     expect(s.perks["precise"]).toBe(true); // perks de combat REPORTÉS (NG+)
     expect(s.perks["gastronome"]).toBe(true);
-    expect(s.perks["ship_revealed"]).toBeUndefined(); // flags de progression LARGUÉS
+    expect(s.perks["ship_found"]).toBeUndefined(); // flags de progression LARGUÉS
+    expect(s.perks["ship_revealed"]).toBeUndefined();
     expect(s.perks["executioner_cleared"]).toBeUndefined();
     expect(s.perks["signal_seen"]).toBeUndefined();
     expect(s.flight).toBeNull(); // plus de vol
@@ -2128,5 +2131,52 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
     expect(isNetworkSafeAction(prestige("p1"), "p2")).toBe(false);
     const s0 = escaped();
     expect(reduce(s0, prestige("p1"))).toEqual(reduce(s0, prestige("p1")));
+  });
+});
+
+describe("fin de partie (M11/RF1) — fidélité : vaisseau dé-gaté du cuirassé", () => {
+  const CX = 58, CZ = 0; // une épave au bord du monde (peu importe la position exacte)
+
+  it("DISCOVER_SHIP pose ship_found (+ alias ship_revealed), marque le site, idempotent", () => {
+    const base = createInitialState(config.rngSeed, 0);
+    const s = reduce(base, discoverShip("p1", CX, CZ));
+    expect(s.perks["ship_found"]).toBe(true);
+    expect(s.perks["ship_revealed"]).toBe(true); // alias compat (lecture legacy)
+    expect(s.sites[siteKey(CX, CZ)].type).toBe("ship");
+    expect(s.sites[siteKey(CX, CZ)].discovered).toBe(true);
+    expect(reduce(s, discoverShip("p1", CX, CZ))).toBe(s); // idempotent
+  });
+
+  it("réparer/décoller dépend de ship_found, PAS du cuirassé", () => {
+    const base: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 10 } };
+    // Sans avoir trouvé le vaisseau : reinforce/upgrade/liftoff refusés.
+    expect(reduce(base, reinforceShip("p1"))).toBe(base);
+    expect(reduce(base, upgradeEngine("p1"))).toBe(base);
+    expect(reduce(base, liftOff("p1", 0, 0)).flight).toBeNull();
+    // Après DISCOVER_SHIP (sans jamais toucher le cuirassé) : tout marche.
+    let s = reduce(base, discoverShip("p1", CX, CZ));
+    s = reduce(s, reinforceShip("p1"));
+    expect(s.ship.hull).toBe(1); // 1 alliage -> +1 coque
+    expect(s.perks["executioner_cleared"]).toBeUndefined(); // cuirassé jamais nettoyé
+    // coque suffisante -> décollage armé
+    let armed = { ...createInitialState(config.rngSeed, 0), perks: { ship_found: true }, ship: { hull: 5, engine: 0 } } as GameState;
+    armed = reduce(armed, liftOff("p1", 0, 0));
+    expect(armed.flight?.status).toBe("boarding");
+  });
+
+  it("DISCOVER_SHIP est réseau-safe (porte playerId)", () => {
+    expect(isNetworkSafeAction(discoverShip("p1", CX, CZ), "p1")).toBe(true);
+    expect(isNetworkSafeAction(discoverShip("p1", CX, CZ), "p2")).toBe(false);
+  });
+
+  it("REPLAY déterministe : trouver -> réparer -> décoller", () => {
+    const s0: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 10 } };
+    const acts: GameAction[] = [
+      discoverShip("p1", CX, CZ),
+      reinforceShip("p1"), reinforceShip("p1"), reinforceShip("p1"), reinforceShip("p1"), reinforceShip("p1"),
+      liftOff("p1", 0, 0),
+      ...Array.from({ length: 40 }, () => tick()),
+    ];
+    expect(reduceAll(s0, acts)).toEqual(reduceAll(s0, acts));
   });
 });

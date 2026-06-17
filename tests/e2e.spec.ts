@@ -630,19 +630,24 @@ test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)"
   await page.evaluate(() => window.__game?.pauseEventScheduler?.());
   await page.waitForTimeout(600);
 
-  // Révéler le vaisseau + alliage (raccourci dev) ; moteur au max + coque au max (ascension courte & sûre).
+  // RF1/FIDÉLITÉ : à l'épave, SANS avoir touché au cuirassé, l'interaction est « découvrir l'épave »
+  // (le vaisseau n'est PAS gaté derrière le cuirassé).
+  await page.evaluate(() => window.__game?.cmd?.("/tp ship"));
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(500);
+  await expect.poll(() => page.evaluate(() => window.__game?.getFocusVerb?.())).toBe("découvrir l'épave");
+
+  // « Trouver » le vaisseau (raccourci dev = ce que pose DISCOVER_SHIP) + alliage ; moteur/coque au max.
   await page.evaluate(() => {
     const g = window.__game;
-    g?.grantPerk?.("ship_revealed"); g?.setCabinTier?.(10); g?.fillStorage?.(0.6);
+    g?.grantPerk?.("ship_found"); g?.setCabinTier?.(10); g?.fillStorage?.(0.6);
     for (let i = 0; i < 3; i++) g?.upgradeEngine?.();
     for (let i = 0; i < 20; i++) g?.reinforceShip?.();
   });
   await expect.poll(() => page.evaluate(() => window.__game?.getShip?.()?.hull ?? 0)).toBeGreaterThanOrEqual(5);
-
-  // Aller à l'épave (dehors), puis DÉCOLLER.
-  await page.evaluate(() => window.__game?.cmd?.("/tp ship"));
-  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
-  await page.waitForTimeout(400);
+  // Une fois trouvé : l'épave devient « examiner le vaisseau ».
+  await expect.poll(() => page.evaluate(() => window.__game?.getFocusVerb?.())).toBe("examiner le vaisseau");
+  await page.waitForTimeout(200);
   await page.evaluate(() => window.__game?.liftOff?.());
   await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null), { timeout: 10_000 }).toBe("ascending");
 

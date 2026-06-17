@@ -126,9 +126,18 @@ export type ClearCaveAction = {
   cz: number;
 };
 
-/** M11/E1 : pille le CUIRASSÉ une fois tous ses gardiens vaincus ⇒ cache d'alliage + RÉVÈLE le vaisseau. */
+/** M11/E1 : pille le CUIRASSÉ une fois tous ses gardiens vaincus ⇒ cache d'alliage (+ Fabricator, RF7). */
 export type ClearExecutionerAction = {
   type: "CLEAR_EXECUTIONER";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
+/** M11/RF1 : atteindre l'ÉPAVE (au bord du monde) la « trouve » ⇒ le vaisseau devient gérable AU CAMP
+ *  (pose le flag `ship_found`). Fidèle ADR (`World.state.ship`) : indépendant du cuirassé. */
+export type DiscoverShipAction = {
+  type: "DISCOVER_SHIP";
   playerId: string;
   cx: number;
   cz: number;
@@ -403,6 +412,7 @@ export type GameAction =
   | SecureMineAction
   | ClearCaveAction
   | ClearExecutionerAction
+  | DiscoverShipAction
   | ReinforceShipAction
   | UpgradeEngineAction
   | LiftOffAction
@@ -459,6 +469,7 @@ export type PlayerAction =
   | SecureMineAction
   | ClearCaveAction
   | ClearExecutionerAction
+  | DiscoverShipAction
   | ReinforceShipAction
   | UpgradeEngineAction
   | LiftOffAction
@@ -568,6 +579,9 @@ export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAc
 }
 export function clearExecutioner(playerId: string, cx: number, cz: number): ClearExecutionerAction {
   return { type: "CLEAR_EXECUTIONER", playerId, cx, cz };
+}
+export function discoverShip(playerId: string, cx: number, cz: number): DiscoverShipAction {
+  return { type: "DISCOVER_SHIP", playerId, cx, cz };
 }
 export function reinforceShip(playerId: string): ReinforceShipAction {
   return { type: "REINFORCE_SHIP", playerId };

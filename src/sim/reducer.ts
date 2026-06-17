@@ -397,6 +397,21 @@ export function reduce(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case "DISCOVER_SHIP": {
+      // M11/RF1 — atteindre l'ÉPAVE la « trouve » : le vaisseau d'évasion devient gérable AU CAMP
+      // (flag `ship_found`). Fidèle ADR (`World.state.ship`) : INDÉPENDANT du cuirassé. Idempotent.
+      // `ship_revealed` est posé en ALIAS (compat lecture des vieilles parties / gardes legacy).
+      if (state.perks["ship_found"]) return state;
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      return {
+        ...state,
+        sites: { ...state.sites, [key]: { ...prog, type: prog.type ?? "ship", discovered: true } },
+        perks: { ...state.perks, ship_found: true, ship_revealed: true },
+        rng: cloneRng(state.rng),
+      };
+    }
+
     case "TAKE_LOOT": {
       // Butin COMMUN à toute la carte : premier-servi. Si ce nœud est déjà pris -> no-op (l'hôte
       // arbitre l'ordre). Sinon, le contenu (dérivé de la graine) va dans le SAC, borné par la capacité.
@@ -488,9 +503,10 @@ export function reduce(state: GameState, action: GameAction): GameState {
     }
 
     case "CLEAR_EXECUTIONER": {
-      // M11/E1 — le CUIRASSÉ est tombé : il faut avoir vaincu TOUS ses gardiens scriptés (comme une
-      // mine). Sa soute livre un gros cache d'alliage (borné au plafond) et RÉVÈLE le vaisseau (perks
-      // `executioner_cleared`/`ship_revealed`, persistés). Idempotent ; trace une route (fusion).
+      // M11/E1+RF1 — le CUIRASSÉ est tombé : avoir vaincu TOUS ses gardiens scriptés (comme une mine).
+      // Sa soute livre un gros cache d'alliage (borné). RF1/FIDÉLITÉ : le cuirassé ne RÉVÈLE PLUS le
+      // vaisseau (sources d'alliage parallèles, fidèle ADR) — il pose juste `executioner_cleared`
+      // (débloque le Fabricator, RF7) + l'alliage. Idempotent ; trace une route (fusion).
       const key = siteKey(action.cx, action.cz);
       const prog = (state.sites ?? {})[key] ?? {};
       if (prog.cleared) return state;
@@ -505,7 +521,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         resources,
         sites,
         roads: drawRoad(state.roads, sites, action.cx, action.cz),
-        perks: { ...state.perks, executioner_cleared: true, ship_revealed: true },
+        perks: { ...state.perks, executioner_cleared: true },
         rng: cloneRng(state.rng),
       };
     }
@@ -513,7 +529,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
     case "REINFORCE_SHIP": {
       // M11/E2 — renforce la COQUE : 1 alliage de l'ENTREPÔT -> +1 coque (fidèle ADR : possession du
       // village). Gaté : le vaisseau doit être RÉVÉLÉ (cuirassé nettoyé), coque < max, alliage en stock.
-      if (!state.perks["ship_revealed"]) return state;
+      if (!state.perks["ship_found"]) return state;
       if (state.ship.hull >= SHIP.hullMax) return state;
       if (stockOf(state, "alien alloy") < SHIP.alloyPerHull) return state;
       const resources = { ...state.resources };
@@ -524,7 +540,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
 
     case "UPGRADE_ENGINE": {
       // M11/E2 — améliore le MOTEUR : 1 alliage -> +1 cran (ascension plus sûre en E3). Mêmes gardes.
-      if (!state.perks["ship_revealed"]) return state;
+      if (!state.perks["ship_found"]) return state;
       if (state.ship.engine >= SHIP.engineMax) return state;
       if (stockOf(state, "alien alloy") < SHIP.alloyPerEngine) return state;
       const resources = { ...state.resources };
@@ -536,7 +552,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
     case "LIFT_OFF": {
       // M11/E3 — arme le DÉCOLLAGE : le vaisseau passe en EMBARQUEMENT (attend l'équipage à `boardRadius`
       // ou le compte à rebours), puis monte (cf. TICK 9). Gaté : révélé, coque >= seuil, pas de vol en cours.
-      if (!state.perks["ship_revealed"] || state.flight) return state;
+      if (!state.perks["ship_found"] || state.flight) return state;
       if (state.ship.hull < SHIP.liftoffHullMin) return state;
       const flight: SharedFlight = {
         status: "boarding",
