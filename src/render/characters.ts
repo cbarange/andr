@@ -222,6 +222,85 @@ export function buildBird(K: Kit, parent: TransformNode | null, s = 1): { root: 
   return { root, jaw };
 }
 
+// ============================================================================
+//  M11/RF3b — ENNEMIS ALIENS DU CUIRASSÉ : silhouettes DISTINCTES de la faune terrestre
+//  (forme = fonction), carapace/métal sombres + ACCENTS ÉMISSIFS (cyan = standard, magenta =
+//  boss/danger élevé). Tous renvoient `{ root, jaw }` (jaw = pivot animé sur la fente d'attaque,
+//  comme la faune) pour réutiliser tel quel l'animation de combat d'`encounter.ts`.
+// ============================================================================
+
+/** Chitinide (horreur chitineuse / expérience difforme) : quadrupède bas et large, carapace
+ *  facettée, mandibules, grappe d'yeux cyan — la « nuée » qui se rue. `jaw` = mandibules. */
+export function buildChitinid(K: Kit, parent: TransformNode | null, s = 1): { root: TransformNode; jaw: TransformNode } {
+  const root = K.node(parent);
+  const sh = P.alienChitin, shDk = sh.map((v) => v * 0.6);
+  K.ico(root, sh, { d: 1.2, sub: 1 }, [0, 0.62, -0.1], { scale: [1.0, 0.62, 1.25] }); // carapace facettée
+  K.ico(root, shDk, { d: 0.7, sub: 1 }, [0, 0.84, -0.5], { scale: [1.0, 0.7, 1.0] }); // bosse dorsale
+  for (const sx of [-1, 1]) for (const z of [0.36, -0.05, -0.5]) { // 6 pattes insectoïdes
+    K.cyl(root, shDk, { h: 0.6, dt: 0.05, db: 0.1, t: 5 }, [sx * 0.46, 0.24, z], { rot: [0, 0, sx * 0.7] });
+  }
+  K.box(root, shDk, [0.42, 0.26, 0.34], [0, 0.5, 0.6]); // tête basse
+  const jaw = K.node(root, [0, 0.42, 0.72]);
+  for (const sx of [-1, 1]) K.cone(jaw, sh, { h: 0.3, d: 0.1, t: 5 }, [sx * 0.12, 0, 0.06], { rot: [Math.PI / 2, 0, sx * 0.3] }); // mandibules
+  for (const sx of [-1, 1]) for (const y of [0.56, 0.46]) K.ico(root, P.alienGlow, { d: 0.07, sub: 1 }, [sx * 0.12, y, 0.62], { emi: 1.6, unlit: true }); // grappe d'yeux
+  root.scaling.setAll(s);
+  return { root, jaw };
+}
+
+/** Tourelle (automatisée / défensive) : STATIQUE — socle large, fût pivotant, 2 canons, cœur cyan
+ *  vif. `jaw` = bloc des canons (léger recul sur le tir). Pas de membres (elle ne marche pas). */
+export function buildTurret(K: Kit, parent: TransformNode | null, s = 1): { root: TransformNode; jaw: TransformNode } {
+  const root = K.node(parent);
+  const m = P.metalDark, mAlloy = P.alienAlloy;
+  K.cyl(root, m, { h: 0.35, dt: 0.62, db: 0.78, t: 8 }, [0, 0.18, 0]); // socle
+  K.cyl(root, mAlloy, { h: 0.5, dt: 0.34, db: 0.4, t: 8 }, [0, 0.55, 0]); // fût
+  K.ico(root, P.alienHot, { d: 0.34, sub: 1 }, [0, 0.78, 0.1], { emi: 1.8, unlit: true }); // cœur émissif
+  const jaw = K.node(root, [0, 0.78, 0]); // bloc des canons (recul = « fente »)
+  K.box(jaw, m, [0.5, 0.26, 0.3], [0, 0, 0.18]); // tête de tir
+  for (const sx of [-1, 1]) K.cyl(jaw, m, { h: 0.7, d: 0.1, t: 6 }, [sx * 0.18, 0, 0.5], { rot: [Math.PI / 2, 0, 0] }); // 2 canons
+  for (const sx of [-1, 1]) K.ico(jaw, P.alienGlow, { d: 0.06, sub: 1 }, [sx * 0.18, 0, 0.84], { emi: 1.5, unlit: true }); // bouches lumineuses
+  root.scaling.setAll(s);
+  return { root, jaw };
+}
+
+/** Robot (soudeur / automate / prototype / robot meurtrier) : humanoïde RIGIDE, métal sombre,
+ *  articulations en alliage, visière émissive. `jaw` = visière (flash sur l'attaque). */
+export function buildRobot(K: Kit, parent: TransformNode | null, s = 1): { root: TransformNode; jaw: TransformNode } {
+  const root = K.node(parent);
+  const m = P.metal, mDk = P.metalDark, al = P.alienAlloy;
+  K.box(root, mDk, [0.5, 0.62, 0.34], [0, 1.06, 0]); // torse
+  K.box(root, m, [0.56, 0.18, 0.4], [0, 1.42, 0]); // épaulière
+  for (const sx of [-1, 1]) {
+    K.ico(root, al, { d: 0.2, sub: 1 }, [sx * 0.34, 1.4, 0]); // épaule (joint alliage)
+    K.box(root, m, [0.16, 0.6, 0.16], [sx * 0.36, 1.04, 0.02]); // bras rigide
+    K.ico(root, al, { d: 0.18, sub: 1 }, [sx * 0.18, 0.66, 0.02]); // hanche
+    K.box(root, m, [0.18, 0.66, 0.2], [sx * 0.16, 0.36, 0]); // jambe
+  }
+  K.box(root, mDk, [0.3, 0.3, 0.3], [0, 1.58, 0]); // tête cubique
+  const jaw = K.node(root, [0, 1.58, 0.15]); // visière
+  K.box(jaw, P.alienHot, [0.26, 0.07, 0.06], [0, 0.02, 0.02], { emi: 1.7, unlit: true }); // bandeau optique
+  root.scaling.setAll(s);
+  return { root, jaw };
+}
+
+/** Vagabond immortel (BOSS du pont) : silhouette FLOTTANTE encapuchonnée, cœur magenta pulsant,
+ *  bras décharnés. Pas de jambes (lévite). `jaw` = capuche (s'avance à l'attaque). */
+export function buildWanderer(K: Kit, parent: TransformNode | null, s = 1): { root: TransformNode; jaw: TransformNode } {
+  const root = K.node(parent);
+  const robe = [0.18, 0.14, 0.24], robeDk = robe.map((v) => v * 0.6); // violet sombre (lisible même en intérieur noir)
+  K.cone(root, robe, { h: 1.5, d: 1.2, t: 8 }, [0, 0.75, 0]); // manteau (jupe lévitante)
+  K.ico(root, P.alienBoss, { d: 0.36, sub: 1 }, [0, 1.55, 0.22], { emi: 2.2, unlit: true }); // cœur magenta exposé (poitrine)
+  K.cyl(root, robeDk, { h: 0.7, dt: 0.28, db: 0.42, t: 8 }, [0, 1.55, 0]); // buste
+  // Liserés émissifs verticaux (visibles sous tous les angles -> « menace » lisible de dos comme de face).
+  for (const sx of [-1, 1]) K.box(root, P.alienBoss, [0.05, 1.3, 0.05], [sx * 0.5, 0.95, 0], { rot: [0, 0, sx * 0.16], emi: 1.4, unlit: true });
+  for (const sx of [-1, 1]) K.box(root, robeDk, [0.1, 0.7, 0.1], [sx * 0.34, 1.5, 0.06], { rot: [0, 0, sx * 0.45] }); // bras décharnés
+  const jaw = K.node(root, [0, 2.0, 0.04]);
+  K.sph(jaw, robe, { d: 0.42, seg: 8 }, [0, 0, 0], { scale: [0.9, 1.1, 0.95] }); // capuche
+  for (const sx of [-1, 1]) K.ico(jaw, P.alienBoss, { d: 0.08, sub: 1 }, [sx * 0.1, -0.02, 0.19], { emi: 2.0, unlit: true }); // yeux magenta
+  root.scaling.setAll(s);
+  return { root, jaw };
+}
+
 // Variantes de villageois (cosmétique stable par index).
 export const VILLAGER_SPECS: HumanoidSpec[] = [
   { tunic: P.tunicA, hat: "cap", h: 1.0, hair: [0.3, 0.2, 0.13] },

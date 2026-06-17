@@ -11,7 +11,7 @@
 import { Scene, TransformNode, Vector3 } from "@babylonjs/core";
 import { terrainHeight, enemyById, type EnemyDef } from "../../data/world";
 import { makeKit, type Kit } from "./lowpoly";
-import { buildBeast, buildLizard, buildBird, buildHumanoid } from "./characters";
+import { buildBeast, buildLizard, buildBird, buildHumanoid, buildChitinid, buildTurret, buildRobot, buildWanderer } from "./characters";
 import { P } from "./lowpoly";
 
 const LUNGE_TIME = 0.35; // durée de la fente d'attaque (aller-retour)
@@ -167,6 +167,11 @@ export class EncounterFx {
     if (def.model === "beast") return buildBeast(this.K, null, s);
     if (def.model === "lizard") return buildLizard(this.K, null, s);
     if (def.model === "bird") return buildBird(this.K, null, s);
+    // M11/RF3b — aliens du cuirassé (silhouettes émissives distinctes) :
+    if (def.model === "chitinid") return buildChitinid(this.K, null, s);
+    if (def.model === "turret") return buildTurret(this.K, null, s);
+    if (def.model === "robot") return buildRobot(this.K, null, s);
+    if (def.model === "wanderer") return buildWanderer(this.K, null, s);
     // Humanoïde hostile : silhouette sombre (haillons), tête nue.
     const { root, rig } = buildHumanoid(this.K, null, { tunic: P.armorDk, legs: P.dark, hat: "none", h: s });
     void rig;

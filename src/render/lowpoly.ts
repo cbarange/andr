@@ -43,6 +43,8 @@ export const P: Record<string, number[]> = {
   water: [0.13, 0.19, 0.23], armor: [0.21, 0.23, 0.27], armorDk: [0.14, 0.15, 0.18], banner: [0.6, 0.22, 0.22], dark: [0.03, 0.03, 0.04],
   // Vaisseaux alien (épave/cuirassé — cf. lab « wanderer ») :
   alienHull: [0.27, 0.31, 0.36], alienAlloy: [0.42, 0.47, 0.52], alienGlow: [0.35, 0.85, 0.82], scorch: [0.1, 0.1, 0.11],
+  // Ennemis aliens (M11/RF3b) : carapace sombre + lueur cyan (standard) ou magenta (boss/danger élevé).
+  alienChitin: [0.16, 0.2, 0.19], alienBoss: [0.88, 0.32, 0.86], alienHot: [0.55, 1.0, 0.95],
 };
 
 export interface Opt {
