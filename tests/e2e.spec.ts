@@ -672,3 +672,43 @@ test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)"
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
+
+// M11/RF2b — LE CUIRASSÉ EXPLORABLE : pénétrer dans une AILE verrouille l'arène (spawn d'aliens,
+// PAS de clear fantôme) ; le PONT reste gaté tant que les 3 ailes ne sont pas faites. Env propre
+// (localStorage neuf) -> pas d'artefact de save (contrairement à la preview). Le clear complet
+// salle→aile→pont est prouvé par le test pur « RAID COMPLET ».
+test("M11/RF2b — cuirassé explorable : entrer verrouille l'arène, le pont est gaté", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(600);
+
+  // Au centre de l'aile ingénierie (DEHORS, loin), survie au max pour ne pas mourir de faim.
+  const eng = await page.evaluate(() => window.__game?.shipRoomWorld?.("engineering"));
+  expect(eng, "position monde de l'aile ingénierie").toBeTruthy();
+  await page.evaluate((p) => { const g = window.__game; g?.setSurvival?.({ water: 9999, food: 9999, health: 9999 }); g?.teleport?.(p!.x, p!.z); }, eng);
+  await expect.poll(() => page.evaluate(() => window.__game?.shipInteriorStats?.()?.built ?? false), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__game?.getSurvival?.()?.outside ?? false), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(400); // laisse l'hôte injecter notre position (SET_POSITIONS) pour l'engagement
+
+  // ENTRER dans l'aile -> ARÈNE VERROUILLÉE (et surtout : PAS de clear instantané).
+  await page.evaluate(() => window.__game?.enterRoom?.("engineering"));
+  await expect.poll(() => page.evaluate(() => window.__game?.getRooms?.()?.engineering ?? null)).toBe("locked");
+  // Des aliens ont SPAWNÉ et nous engagent (spawn + portée + rendu).
+  await expect.poll(() => page.evaluate(() => window.__game?.getCombat?.()?.enemyId ?? null), { timeout: 10_000 }).not.toBeNull();
+  // Tant qu'on ne nettoie pas, la salle RESTE verrouillée (anti-clear fantôme).
+  await page.evaluate(() => window.__game?.setSurvival?.({ water: 9999, food: 9999, health: 9999 }));
+  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => window.__game?.getRooms?.()?.engineering ?? null)).toBe("locked");
+
+  // PONT GATÉ : tenter d'entrer sur le pont sans les 3 ailes -> NO-OP (aucune salle « bridge »).
+  await page.evaluate(() => window.__game?.enterRoom?.("bridge"));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__game?.getRooms?.()?.bridge ?? null)).toBeNull();
+  expect(await page.evaluate(() => window.__game?.getWings?.()?.engineering ?? false)).toBe(false); // aile pas encore nettoyée
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});

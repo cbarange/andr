@@ -23,6 +23,7 @@ import { Sites } from "./render/sites";
 import { Forest } from "./render/forest";
 import { Cabin } from "./render/cabin";
 import { Interiors } from "./render/interior";
+import { ShipInterior } from "./render/shipInterior";
 import { SiteLoot } from "./render/siteLoot";
 import { Player } from "./render/player";
 import { createCamera, cameraYaw } from "./render/camera";
@@ -47,13 +48,13 @@ import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
+  attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
+  visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine, debugGrantPerk,
   liftOff, flightFire, endFlight, prestige, discoverShip,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
-import { caveSteps, townSteps } from "./sim/dungeon";
+import { caveSteps, townSteps, executionerDungeon } from "./sim/dungeon";
 import { EncounterFx, type EncView } from "./render/encounter";
 import { GroundDrops } from "./render/drops";
 import { Liftoff } from "./render/liftoff";
@@ -112,6 +113,11 @@ declare global {
       getDrops?: () => Array<{ id: string; loot: Record<string, number> }>;
       takeDrop?: (id?: string) => void;
       getShip?: () => { hull: number; engine: number };
+      enterRoom?: (room: string, cx?: number, cz?: number) => void;
+      getRooms?: () => Record<string, string>;
+      getWings?: () => Record<string, boolean>;
+      shipRoomWorld?: (room: string) => { x: number; z: number } | null;
+      shipInteriorStats?: () => { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number };
       reinforceShip?: () => void;
       upgradeEngine?: () => void;
       grantPerk?: (perk: string) => void;
@@ -357,6 +363,29 @@ async function boot(): Promise<void> {
   // M11/RF1 — compat save : les vieilles parties révélaient le vaisseau via le cuirassé (`ship_revealed`).
   // Désormais le flag est `ship_found` (indépendant). Back-fill : si révélé jadis, considéré trouvé.
   if (state.perks["ship_revealed"] && !state.perks["ship_found"]) state = { ...state, perks: { ...state.perks, ship_found: true } };
+  // M11/RF2b — compat save : un cuirassé nettoyé via le vieux gantelet (`cleared` mais sans `rooms`)
+  // est considéré comme un donjon entièrement vidé (toutes salles cleared + 3 ailes) -> pas de re-spawn.
+  {
+    let sitesPatched: GameState["sites"] | null = null;
+    for (const k of Object.keys(state.sites ?? {})) {
+      const pr = state.sites[k];
+      if (pr.type !== "executioner") continue;
+      if (pr.cleared && !pr.rooms) {
+        // Vieux gantelet nettoyé -> donjon entièrement vidé (pas de re-spawn).
+        sitesPatched = sitesPatched ?? { ...state.sites };
+        sitesPatched[k] = { ...pr, rooms: { antechamber: "cleared", engineering: "cleared", martial: "cleared", medical: "cleared", bridge: "cleared" }, wings: { engineering: true, martial: true, medical: true } };
+      } else if (pr.rooms && Object.values(pr.rooms).includes("locked")) {
+        // Save prise EN PLEINE ARÈNE : les rencontres sont volatiles (strippées) -> une salle « locked »
+        // rechargée n'a plus d'ennemis et serait auto-nettoyée (8e) = aile gratuite. On la REMET à
+        // « non entrée » : on devra y re-rentrer (re-combat). Fidèle (ADR ne sauvegarde pas en plein combat).
+        const rooms: Record<string, "locked" | "cleared"> = {};
+        for (const [rid, st] of Object.entries(pr.rooms)) if (st === "cleared") rooms[rid] = "cleared";
+        sitesPatched = sitesPatched ?? { ...state.sites };
+        sitesPatched[k] = { ...pr, rooms };
+      }
+    }
+    if (sitesPatched) state = { ...state, sites: sitesPatched };
+  }
 
   // ---- LE MONDE (M7) : carte logique dérivée de worldSeed (pure, identique chez tous les
   //      pairs) + sol STREAMÉ par chunks autour du joueur. Chargé d'emblée autour du centre
@@ -368,8 +397,9 @@ async function boot(): Promise<void> {
     cave: { ri: 20, ro: 32 }, ironmine: { ri: 16, ro: 27 }, coalmine: { ri: 16, ro: 27 }, sulphurmine: { ri: 16, ro: 27 },
     // Ruines (maison/grappe/cité) : fondations plates -> on aplanit le sol sous leur emprise.
     house: { ri: 5, ro: 11 }, town: { ri: 8, ro: 16 }, city: { ri: 11, ro: 21 },
-    // Cuirassé (dreadnought écrasé, unique & colossal) : grand champ de crash aplani.
-    executioner: { ri: 22, ro: 36 },
+    // Cuirassé (dreadnought écrasé, unique & colossal) : grand champ de crash aplani — assez large
+    // pour porter TOUT l'intérieur explorable (antichambre → ailes → pont, ~55 u de profondeur).
+    executioner: { ri: 60, ro: 78 },
   };
   function registerPlateaus(map: typeof worldMap): void {
     const plateaus: TerrainPlateau[] = [];
@@ -394,6 +424,10 @@ async function boot(): Promise<void> {
   // quand on s'en approche (mesh + colliders localisés), + obscurité locale sous plafond. Aucune transition.
   const interiors = new Interiors(scene);
   interiors.setMap(worldMap);
+  // INTÉRIEUR DU CUIRASSÉ (M11/RF2b) : donjon de salles explorable (antichambre → ailes → pont),
+  // portes télégraphiées, culling par salle, obscurité locale — bâti à l'approche du site `executioner`.
+  const shipInterior = new ShipInterior(scene);
+  shipInterior.setMap(worldMap);
   // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
   const siteLoot = new SiteLoot(scene);
   siteLoot.setMap(worldMap);
@@ -492,6 +526,7 @@ async function boot(): Promise<void> {
     terrain.regenerate(worldMap, player.position);
     sites.placeAll(worldMap, entities);
     interiors.setMap(worldMap);
+    shipInterior.setMap(worldMap);
     siteLoot.setMap(worldMap);
     encounterFx.clearAll(); // les ennemis du monde précédent n'ont plus lieu d'être
     groundDrops.clearAll();
@@ -1239,35 +1274,21 @@ async function boot(): Promise<void> {
       }
     }
 
-    // M11/E1 — LE CUIRASSÉ (executioner) : gantelet scripté défendant l'épave. Tant que des gardiens
-    // vivent -> « forcer le cuirassé » (ENGAGE_GUARDIAN, combat PARTAGÉ M8.6 -> le focus « frapper »
-    // prend le relais une fois engagé) ; TOUS vaincus -> « piller le cuirassé » (CLEAR_EXECUTIONER ->
-    // cache d'alliage + révèle le vaisseau). L'interaction disparaît une fois le cuirassé pillé.
-    for (const st of worldMap.sites) {
-      if (st.type !== "executioner") continue;
-      const k = st.cx + "," + st.cz;
-      if (state.sites?.[k]?.cleared) continue; // déjà pillé
-      const steps = mineGuardians["executioner"] ?? [];
-      const done = state.sites?.[k]?.guardians ?? 0;
-      const w = worldMap.cellToWorldCenter(st.cx, st.cz);
-      const d = Math.hypot(w.x - p.x, w.z - p.z);
-      if (done < steps.length) {
-        consider(d, 7.0, () => ({
-          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.0, w.z),
-          verb: "forcer le cuirassé",
-          act: () => { emit(engageGuardian(self(), st.cx, st.cz, "executioner")); audio.playSfx("weaponMelee"); },
-        }));
-      } else {
-        consider(d, 7.0, () => ({
-          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.0, w.z),
-          verb: "piller le cuirassé",
-          act: () => {
-            emit(clearExecutioner(self(), st.cx, st.cz));
-            hud.toast("la soute du cuirassé s'ouvre — un cache d'alliage extraterrestre, et l'étrange dispositif que la constructrice saura reconnaître.");
-            audio.playSfx("checkTraps");
-          },
-        }));
-      }
+    // M11/RF2b — LE CUIRASSÉ EXPLORABLE : on PÉNÈTRE par l'antichambre puis on ENTRE salle par salle
+    // (ENTER_ROOM -> verrou d'arène + spawn de la vague, combat PARTAGÉ M8.6 ; le focus « frapper »
+    // prend le relais). Le pont est SCELLÉ tant que les 3 ailes ne sont pas nettoyées. Le combat est
+    // émergent (clear de salle host) — pas de « piller » : la dernière salle (pont) finit le cuirassé.
+    for (const et of shipInterior.enterTargets(player.position, state)) {
+      const d = Math.hypot(et.world.x - p.x, et.world.z - p.z);
+      consider(d, 7.0, () => ({
+        world: et.world,
+        verb: et.verb,
+        act: () => {
+          if (et.sealed) { hud.toast("le pont reste scellé — il faut d'abord nettoyer les trois ailes du cuirassé."); return; }
+          emit(enterRoom(self(), et.cx, et.cz, et.room));
+          audio.playSfx(et.room === "antechamber" ? "checkTraps" : "weaponMelee");
+        },
+      }));
     }
 
     // M11/RF1 — L'ÉPAVE (au bord du monde) : la TROUVER suffit (fidèle ADR : indépendant du cuirassé).
@@ -1451,7 +1472,7 @@ async function boot(): Promise<void> {
 
   /** Tier de DANGER local (0 = zone sûre, 1..3 = anneaux de distance ADR ×2, 4 = caverne). */
   function dangerTier(): number {
-    if (interiors.isLocalPlayerInside()) return 4;
+    if (interiors.isLocalPlayerInside() || shipInterior.isLocalPlayerInside()) return 4;
     const rCells = Math.hypot(player.position.x, player.position.z) / worldgen.cellSize;
     if (rCells <= worldgen.safeRadiusCells) return 0;
     return rCells <= 16 ? 1 : rCells <= 38 ? 2 : 3;
@@ -1464,7 +1485,7 @@ async function boot(): Promise<void> {
   }
   /** Biome du terrain courant (gating des rencontres, fidèle ADR) ; « cave » sous terre. */
   function biomeStr(): string {
-    if (interiors.isLocalPlayerInside()) return "cave";
+    if (interiors.isLocalPlayerInside() || shipInterior.isLocalPlayerInside()) return "cave"; // pas de rencontre aléatoire dans le cuirassé (arènes scriptées)
     const cx = Math.round(player.position.x / worldgen.cellSize);
     const cz = Math.round(player.position.z / worldgen.cellSize);
     const b = worldMap.biomeAt(cx, cz);
@@ -1892,7 +1913,7 @@ async function boot(): Promise<void> {
       if (insideCabin) { if (distCabin > cabin.footprintRadius + 0.8) insideCabin = false; }
       else if (distCabin < cabin.footprintRadius - 0.3) insideCabin = true;
       // 1ʳᵉ personne aussi SOUS TERRE (grottes/mines) : on réutilise toute la machinerie FPV (§8).
-      const wantFpv = forceFpv || insideCabin || interiors.isLocalPlayerInside();
+      const wantFpv = forceFpv || insideCabin || interiors.isLocalPlayerInside() || shipInterior.isLocalPlayerInside();
       fpv += ((wantFpv ? 1 : 0) - fpv) * Math.min(1, dtSec * FPV_SPEED);
 
       // Fondu du toit : transparent en 3PV quand on approche/est sous l'emprise (on voit l'intérieur),
@@ -1976,6 +1997,7 @@ async function boot(): Promise<void> {
     const hasTorch = carriedOf(state, self(), "torch") > 0;
     interiors.update(player.position, dtSec, hasTorch);
     interiors.applyProgress(state.sites ?? {}); // masque les caches/filons déjà pris (premier-servi)
+    shipInterior.update(player.position, dtSec, state); // M11/RF2b : cuirassé explorable (APRÈS interiors -> l'obscurité du vaisseau l'emporte)
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
     encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
@@ -2023,8 +2045,13 @@ async function boot(): Promise<void> {
         }
       }
     }
-    const activeSite = interiors.activeSiteKey(); // masque le modèle décoratif du site dont l'intérieur est actif
-    sites.setSuppressed(activeSite ? new Set([activeSite]) : EMPTY_KEYS);
+    // Masque le modèle décoratif du site dont l'intérieur est actif (grotte/mine OU cuirassé RF2b).
+    const suppressed = new Set<string>();
+    const activeSite = interiors.activeSiteKey();
+    if (activeSite) suppressed.add(activeSite);
+    const activeShip = shipInterior.activeSiteKey();
+    if (activeShip) suppressed.add(activeShip);
+    sites.setSuppressed(suppressed.size ? suppressed : EMPTY_KEYS);
     player.setTorch(hasTorch, interiors.isLocalPlayerInside());
     const blockedNow = interiors.isBlockedNoTorch();
     if (blockedNow && !prevBlockedNoTorch) hud.toast("il fait trop noir — il te faut une torche.");
@@ -2136,6 +2163,13 @@ async function boot(): Promise<void> {
     getDrops: () => Object.keys(state.drops).map((id) => ({ id, loot: { ...state.drops[id].loot } })),
     takeDrop: (id?: string) => { const d = id ?? Object.keys(state.drops)[0]; if (d) emit(takeDrop(self(), d)); },
     getShip: () => ({ ...state.ship }),
+    enterRoom: (room: string, cx?: number, cz?: number) => {
+      let ecx = cx, ecz = cz;
+      if (ecx === undefined || ecz === undefined) { const s = worldMap.sites.find((s) => s.type === "executioner"); if (s) { ecx = s.cx; ecz = s.cz; } }
+      if (ecx !== undefined && ecz !== undefined) emit(enterRoom(self(), ecx, ecz, room));
+    },
+    getRooms: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state.sites?.[k]?.rooms ?? {}) } : {}; },
+    getWings: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state.sites?.[k]?.wings ?? {}) } : {}; },
     reinforceShip: () => emit(reinforceShip(self())),
     upgradeEngine: () => emit(upgradeEngine(self())),
     grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
@@ -2301,6 +2335,14 @@ async function boot(): Promise<void> {
       dbg.fpv = (): number => fpv; // facteur 1ʳᵉ personne lissé (0 = 3PV, 1 = FPV)
       dbg.th = (x: number, z: number): number => terrainHeight(x, z); // hauteur terrain (aplanie aux sites)
       dbg.interiorSites = (): Array<{ type: string; cx: number; cz: number; x: number; z: number }> => interiors.debugSites();
+      dbg.shipSite = (): { cx: number; cz: number; x: number; z: number } | null => { const s = worldMap.sites.find((s) => s.type === "executioner"); if (!s) return null; const w = worldMap.cellToWorldCenter(s.cx, s.cz); return { cx: s.cx, cz: s.cz, x: w.x, z: w.z }; };
+      dbg.shipInteriorStats = (): { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number } => shipInterior.stats;
+      dbg.shipRoomWorld = (room: string): { x: number; z: number } | null => {
+        const s = worldMap.sites.find((s) => s.type === "executioner"); if (!s) return null;
+        const w = worldMap.cellToWorldCenter(s.cx, s.cz);
+        const r = executionerDungeon(s.cx, s.cz, worldMap.seed).rooms.find((x) => x.id === room); if (!r) return null;
+        return { x: w.x + r.pos.x, z: w.z + r.pos.z }; // axis-aligned (cf. ShipInterior : yaw=0, aligné sur la sim)
+      };
       dbg.inspect = (cx: number, cz: number, top = false, dist = 19): void => {
         cameraFollow = false;
         scene.fogMode = Scene.FOGMODE_NONE;

@@ -253,10 +253,15 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   global + route + drop de fin). Tourelles `static` ne poursuivent pas. Compat : `ENGAGE_GUARDIAN`/
   `CLEAR_EXECUTIONER` gardés (dormants jusqu'à RF2b). **8 tests purs** (déterminisme, spawn, gate pont,
   clear émergent, raid complet, replay, réseau-safe, static).
-- ⏳ **RF2b (rendu — prochain)** : `render/shipInterior.ts` (salles distinctes + sas, portes télégraphiées
-  rouge/vert/bleu, culling par salle) ; wiring `main.ts` (focus `pénétrer`/`entrer dans l'aile`/`monter sur
-  le pont` → `ENTER_ROOM` ; retrait du gantelet `ENGAGE_GUARDIAN`/`CLEAR_EXECUTIONER` du flux + back-fill
-  vieilles saves). Couplé à RF5 (cinématique de seuil) et RF3b (modèles).
+- ✅ **RF2b FAIT (rendu + wiring)** : `render/shipInterior.ts` (salles boîte sol/parois/plafond + sas,
+  **portes télégraphiées** rouge=arène/vert=franchissable/bleu=pont scellé+collider, **culling par salle**,
+  obscurité locale, accents émissifs « vaisseau alimenté »). `main.ts` : focus `pénétrer`/`entrer — <aile>`/
+  `prendre le pont` → `ENTER_ROOM` ; gantelet `ENGAGE_GUARDIAN`/`CLEAR_EXECUTIONER` **retiré du flux** ;
+  FPV intérieur ; plateau d'aplanissement élargi ; **back-fill** (vieux gantelet → donjon vidé ; save en
+  pleine arène → salle remise à « non entrée »). Aligné sim/rendu (**yaw=0** : les aliens spawnent dans les
+  salles). Vérifié : e2e clean (`entrer verrouille l'arène + aliens engagés + pont gaté`) + preview
+  (intérieur bâti, FPV, portes, zéro erreur). **263→271 tests, 16→17 e2e.**
+- ⏳ **Reste : RF5 (cinématique de seuil)** + le pulse de wind-up émissif (RF3b) — prochain incrément.
 - **Accept.** : on explore le cuirassé salle par salle ; entrer dans une salle déclenche un combat
   verrouillé ; le pont s'ouvre une fois les 3 ailes faites ; co-op cohérent. Replay déterministe.
 

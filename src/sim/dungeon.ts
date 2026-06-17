@@ -371,15 +371,17 @@ export function executionerDungeon(cx: number, cz: number, worldSeed: number): S
   const marLoot = alloy();
   const medLoot = alloy();
   const briLoot: Record<string, number> = { "alien alloy": 3 + nextInt(rng, 3) }; // 3..5 (RF6 ajoutera le beacon)
+  // Layout AXIS-ALIGNED & salles ADJACENTES (parois mitoyennes -> sas franc, rendu RF2b simple) :
+  // antichambre au centre ; ingénierie/martiale à l'ouest/est ; médicale au nord ; pont au-delà.
   const rooms: DungeonRoom[] = [
     { id: "antechamber", pos: { x: 0, z: 0 }, size: { w: 20, d: 22 }, isHub: true, enemies: [], loot: {} },
-    { id: "engineering", pos: { x: -26, z: 14 }, size: { w: 20, d: 22 }, wing: "engineering", loot: engLoot,
+    { id: "engineering", pos: { x: -20, z: 0 }, size: { w: 20, d: 22 }, wing: "engineering", loot: engLoot,
       enemies: [{ enemyId: "unruly welder", count: 2 }, { enemyId: "automated turret", count: 1 }, { enemyId: "unstable prototype", count: 1 }] },
-    { id: "martial", pos: { x: 26, z: 14 }, size: { w: 20, d: 22 }, wing: "martial", loot: marLoot,
+    { id: "martial", pos: { x: 20, z: 0 }, size: { w: 20, d: 22 }, wing: "martial", loot: marLoot,
       enemies: [{ enemyId: "alien guard", count: 2 }, { enemyId: "defence turret", count: 1 }, { enemyId: "chitinous horror", count: 1 }, { enemyId: "murderous robot", count: 1 }] },
-    { id: "medical", pos: { x: 0, z: 30 }, size: { w: 20, d: 22 }, wing: "medical", loot: medLoot,
+    { id: "medical", pos: { x: 0, z: 22 }, size: { w: 20, d: 22 }, wing: "medical", loot: medLoot,
       enemies: [{ enemyId: "defence turret", count: 1 }, { enemyId: "unstable automaton", count: 1 }, { enemyId: "malformed experiment", count: 1 }] },
-    { id: "bridge", pos: { x: 0, z: 56 }, size: { w: 22, d: 24 }, isBridge: true, loot: briLoot,
+    { id: "bridge", pos: { x: 0, z: 44 }, size: { w: 22, d: 22 }, isBridge: true, loot: briLoot,
       enemies: [{ enemyId: "operative", count: 2 }, { enemyId: "immortal wanderer", count: 1 }] },
   ];
   const doors: DungeonDoor[] = [
