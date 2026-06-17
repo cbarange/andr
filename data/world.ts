@@ -324,7 +324,14 @@ export const mineGuardians: Record<string, string[]> = {
   ironmine: ["beastly matriarch"],
   coalmine: ["mine man", "mine man", "mine chief"],
   sulphurmine: ["soldier", "soldier", "veteran"], // soldats = la table tier 3 (mêmes stats/loot, fidèle)
+  // M11/E1 — LE CUIRASSÉ (executioner) : gantelet de fin de partie défendant l'épave alien. Combats
+  //   scriptés via `siteSteps` (le DERNIER est sans laisse — fidèle au boss d'ADR). En co-op = un RAID.
+  //   La progression (`guardians`) persiste par site : une mort ne remet pas le gantelet à zéro.
+  executioner: ["commando", "deformed", "tentacles", "soldier", "veteran"],
 };
+
+/** M11/E1 — butin d'alliage de la soute du cuirassé une fois TOUS ses gardiens vaincus (CLEAR_EXECUTIONER). */
+export const EXECUTIONER_ALLOY_REWARD = 5;
 
 export const resources = {
   wood: { id: "wood", label: "Bois", initial: 0 },
@@ -1128,6 +1135,24 @@ export const events: GameEvent[] = [
       nothing: {
         text: ["il avale le remède et disparaît dans la nuit sans un mot."],
         choices: [{ id: "leave", text: "rentrer", next: "end" }],
+      },
+    },
+  },
+  { // M11/E1 — LE SIGNAL (foreshadowing) : dès qu'un fragment d'alliage est en stock, une lueur pulse
+    //  au loin. Pose le cap de la fin de partie. ONE-SHOT (perk `signal_seen`, jamais affiché en UI).
+    id: "signal",
+    title: "une lueur à l'horizon",
+    isAvailable: (g) => stock(g, "alien alloy") > 0 && !g.perks["signal_seen"],
+    scenes: {
+      start: {
+        text: [
+          "une nuit, loin au-delà des terres mortes, une lueur métallique se met à pulser — lente, régulière.",
+          "le fragment d'alliage dans l'entrepôt vibre faiblement, comme s'il répondait à l'appel.",
+          "quelque chose, là-bas, n'est pas tout à fait éteint.",
+        ],
+        notification: "une lueur pulse à l'horizon.",
+        onLoad: { grantPerk: "signal_seen" },
+        choices: [{ id: "leave", text: "fixer l'horizon, longtemps", next: "end" }],
       },
     },
   },

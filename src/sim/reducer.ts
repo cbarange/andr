@@ -24,7 +24,7 @@ import {
 import {
   config, craftables, craftableById, craftableCost, buildSecondsFor, trapDrops, jobs, jobById,
   craftableItemById, events, eventById, type EventEffect, storageCap, nextCabinTier, cabinUpgradeCost,
-  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen,
+  weaponById, enemyById, tradeGoodById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD,
 } from "../../data/world";
 
 // Conversions secondes -> tics (une seule fois, à partir des données).
@@ -482,6 +482,29 @@ export function reduce(state: GameState, action: GameAction): GameState {
         ...state,
         sites: caveSites,
         roads: drawRoad(state.roads, caveSites, action.cx, action.cz), // avant-poste -> route (fusion)
+        rng: cloneRng(state.rng),
+      };
+    }
+
+    case "CLEAR_EXECUTIONER": {
+      // M11/E1 — le CUIRASSÉ est tombé : il faut avoir vaincu TOUS ses gardiens scriptés (comme une
+      // mine). Sa soute livre un gros cache d'alliage (borné au plafond) et RÉVÈLE le vaisseau (perks
+      // `executioner_cleared`/`ship_revealed`, persistés). Idempotent ; trace une route (fusion).
+      const key = siteKey(action.cx, action.cz);
+      const prog = (state.sites ?? {})[key] ?? {};
+      if (prog.cleared) return state;
+      const guardians = mineGuardians["executioner"] ?? [];
+      if ((prog.guardians ?? 0) < guardians.length) return state; // gardiens restants
+      const resources = { ...state.resources };
+      const cap = storageCap(state.cabinTier, "alien alloy");
+      resources["alien alloy"] = Math.min(cap, (resources["alien alloy"] ?? 0) + EXECUTIONER_ALLOY_REWARD);
+      const sites = { ...state.sites, [key]: { ...prog, type: prog.type ?? "executioner", discovered: true, cleared: true } };
+      return {
+        ...state,
+        resources,
+        sites,
+        roads: drawRoad(state.roads, sites, action.cx, action.cz),
+        perks: { ...state.perks, executioner_cleared: true, ship_revealed: true },
         rng: cloneRng(state.rng),
       };
     }

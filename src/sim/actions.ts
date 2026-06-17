@@ -126,6 +126,14 @@ export type ClearCaveAction = {
   cz: number;
 };
 
+/** M11/E1 : pille le CUIRASSÉ une fois tous ses gardiens vaincus ⇒ cache d'alliage + RÉVÈLE le vaisseau. */
+export type ClearExecutionerAction = {
+  type: "CLEAR_EXECUTIONER";
+  playerId: string;
+  cx: number;
+  cz: number;
+};
+
 /**
  * Se RAVITAILLER à un avant-poste (grotte nettoyée) : remplit l'eau + les vivres du joueur.
  * USAGE UNIQUE fidèle ADR, partagé entre joueurs (premier-servi : l'hôte arbitre). Reste M7.
@@ -348,6 +356,7 @@ export type GameAction =
   | ClearHazardAction
   | SecureMineAction
   | ClearCaveAction
+  | ClearExecutionerAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -396,6 +405,7 @@ export type PlayerAction =
   | ClearHazardAction
   | SecureMineAction
   | ClearCaveAction
+  | ClearExecutionerAction
   | UseOutpostAction
   | CraftItemAction
   | SetOutsideAction
@@ -495,6 +505,9 @@ export function secureMine(playerId: string, cx: number, cz: number, siteType: s
 }
 export function clearCave(playerId: string, cx: number, cz: number): ClearCaveAction {
   return { type: "CLEAR_CAVE", playerId, cx, cz };
+}
+export function clearExecutioner(playerId: string, cx: number, cz: number): ClearExecutionerAction {
+  return { type: "CLEAR_EXECUTIONER", playerId, cx, cz };
 }
 export function useOutpost(playerId: string, cx: number, cz: number): UseOutpostAction {
   return { type: "USE_OUTPOST", playerId, cx, cz };

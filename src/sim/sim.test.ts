@@ -16,13 +16,13 @@ import {
   debugGrant, debugSet, debugClear, debugAddPop, debugBuild, debugUnlockAll, debugSetFire, debugSetSeed,
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp, setPositions, takeDrop,
+  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
   engagedPids, stepEnemyToward, ENGAGE_RADIUS, LEASH_RADIUS, CHASE_SPEED,
 } from "./combat";
-import { enemyById, weaponById, mineGuardians, worldgen } from "../../data/world";
+import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD } from "../../data/world";
 import { dungeonFor, lootNodeIds, caveSteps, townSteps } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
 import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
@@ -1855,5 +1855,77 @@ describe("villes & cités scriptées (M8.5/R3b) — fidèles aux setpieces d'ADR
       return s;
     };
     expect(run()).toEqual(run());
+  });
+});
+
+describe("fin de partie (M11/E1) — le cuirassé scripté & le signal", () => {
+  const CX = 40, CZ = 40, KEY = siteKey(CX, CZ);
+  const CD = 2 * HZ; // cooldown baïonnette (2 s)
+
+  /** Place p1 DEHORS, debout au cœur du cuirassé (ancre des gardiens partagés). */
+  function stand(s: GameState): GameState {
+    return standAt(reduce(s, setOutside("p1", true, 3)), "p1", CX * CELL, CZ * CELL);
+  }
+  /** Combat le gardien courant (id = siteKey) à la baïonnette jusqu'à la victoire (anti-mort pour le test). */
+  function fightGuardian(s: GameState): GameState {
+    for (let i = 0; i < 200 && s.encounters[KEY]; i++) {
+      s = reduce(s, debugSetSurvival("p1", { health: 9999 }));
+      s = reduce(s, attack("p1", "bayonet", KEY));
+      if (s.encounters[KEY]) s = advanceTicks(s, CD);
+    }
+    return s;
+  }
+
+  it("GANTELET : 5 gardiens scriptés, le dernier SANS LAISSE ; CLEAR gaté ; puis alliage + révèle le vaisseau", () => {
+    const guardians = mineGuardians["executioner"];
+    expect(guardians.length).toBe(5);
+    let s = stand({ ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "s armour": 1 }, carried: { p1: { bayonet: 1 } } });
+    // CLEAR refusé tant que des gardiens vivent.
+    expect(reduce(s, clearExecutioner("p1", CX, CZ))).toBe(s);
+    for (let i = 0; i < guardians.length; i++) {
+      s = reduce(s, engageGuardian("p1", CX, CZ, "executioner"));
+      expect(s.encounters[KEY]?.enemyId).toBe(guardians[i]);
+      // Seul le DERNIER gardien est sans laisse (boss — fidèle ADR « no run button »).
+      if (i === guardians.length - 1) expect(s.encounters[KEY]?.noFlee).toBe(true);
+      else expect(s.encounters[KEY]?.noFlee).toBeUndefined();
+      s = fightGuardian(s);
+      expect(s.sites[KEY].guardians).toBe(i + 1);
+      // CLEAR reste gaté jusqu'au dernier.
+      if (i < guardians.length - 1) expect(reduce(s, clearExecutioner("p1", CX, CZ))).toBe(s);
+    }
+    // Tous vaincus -> piller : alliage en soute + RÉVÈLE le vaisseau, route tracée, idempotent.
+    const out = reduce(s, clearExecutioner("p1", CX, CZ));
+    expect(out.sites[KEY].cleared).toBe(true);
+    expect(out.perks["executioner_cleared"]).toBe(true);
+    expect(out.perks["ship_revealed"]).toBe(true);
+    expect(out.resources["alien alloy"]).toBe(EXECUTIONER_ALLOY_REWARD); // cabinTier 10 -> plafond généreux
+    expect(Object.keys(out.roads).length).toBeGreaterThan(0); // une route est tracée vers le cuirassé (fusion)
+    expect(reduce(out, clearExecutioner("p1", CX, CZ))).toBe(out); // one-shot / idempotent
+  });
+
+  it("CLEAR_EXECUTIONER est réseau-safe (porte playerId)", () => {
+    expect(isNetworkSafeAction(clearExecutioner("p1", CX, CZ), "p1")).toBe(true);
+    expect(isNetworkSafeAction(clearExecutioner("p1", CX, CZ), "p2")).toBe(false); // usurpation refusée
+  });
+
+  it("REPLAY : engager/nettoyer le cuirassé est déterministe", () => {
+    const run = (): GameState => {
+      let s = stand({ ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "s armour": 1 }, carried: { p1: { bayonet: 1 } } });
+      const guardians = mineGuardians["executioner"];
+      for (let i = 0; i < guardians.length; i++) { s = reduce(s, engageGuardian("p1", CX, CZ, "executioner")); s = fightGuardian(s); }
+      return reduce(s, clearExecutioner("p1", CX, CZ));
+    };
+    expect(run()).toEqual(run());
+  });
+
+  it("LE SIGNAL : événement one-shot gaté sur l'alliage (foreshadowing de la fin)", () => {
+    const signal = eventById["signal"];
+    expect(signal).toBeTruthy();
+    const base = createInitialState(config.rngSeed, 0);
+    expect(signal.isAvailable(base)).toBe(false); // pas d'alliage -> pas de signal
+    const withAlloy: GameState = { ...base, resources: { "alien alloy": 1 } };
+    expect(signal.isAvailable(withAlloy)).toBe(true); // alliage en stock -> la lueur pulse
+    const seen: GameState = { ...withAlloy, perks: { signal_seen: true } };
+    expect(signal.isAvailable(seen)).toBe(false); // déjà vu -> ONE-SHOT
   });
 });

@@ -48,7 +48,7 @@ import {
   deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian,
-  visitHouse, talkSwamp, setPositions, takeDrop,
+  visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -1135,6 +1135,37 @@ async function boot(): Promise<void> {
             if (carriedOf(state, self(), "charm") < 1) { hud.toast("le vieil ermite veut un charme (les pièges en attrapent, rarement)."); return; }
             emit(talkSwamp(self(), st.cx, st.cz));
             hud.toast("l'ermite parle longtemps. la viande nourrira deux fois mieux — gastronome.");
+          },
+        }));
+      }
+    }
+
+    // M11/E1 — LE CUIRASSÉ (executioner) : gantelet scripté défendant l'épave. Tant que des gardiens
+    // vivent -> « forcer le cuirassé » (ENGAGE_GUARDIAN, combat PARTAGÉ M8.6 -> le focus « frapper »
+    // prend le relais une fois engagé) ; TOUS vaincus -> « piller le cuirassé » (CLEAR_EXECUTIONER ->
+    // cache d'alliage + révèle le vaisseau). L'interaction disparaît une fois le cuirassé pillé.
+    for (const st of worldMap.sites) {
+      if (st.type !== "executioner") continue;
+      const k = st.cx + "," + st.cz;
+      if (state.sites?.[k]?.cleared) continue; // déjà pillé
+      const steps = mineGuardians["executioner"] ?? [];
+      const done = state.sites?.[k]?.guardians ?? 0;
+      const w = worldMap.cellToWorldCenter(st.cx, st.cz);
+      const d = Math.hypot(w.x - p.x, w.z - p.z);
+      if (done < steps.length) {
+        consider(d, 7.0, () => ({
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.0, w.z),
+          verb: "forcer le cuirassé",
+          act: () => { emit(engageGuardian(self(), st.cx, st.cz, "executioner")); audio.playSfx("weaponMelee"); },
+        }));
+      } else {
+        consider(d, 7.0, () => ({
+          world: new Vector3(w.x, terrainHeight(w.x, w.z) + 3.0, w.z),
+          verb: "piller le cuirassé",
+          act: () => {
+            emit(clearExecutioner(self(), st.cx, st.cz));
+            hud.toast("la soute du cuirassé s'ouvre — un éclat d'alliage, et au loin, le vaisseau s'éveille.");
+            audio.playSfx("checkTraps");
           },
         }));
       }
