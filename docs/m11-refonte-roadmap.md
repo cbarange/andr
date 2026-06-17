@@ -288,15 +288,20 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   entier, sites/routes), en grotte/mine, et dans le cuirassé — en se contextualisant automatiquement ;
   fog-of-war et coéquipiers visibles en co-op.
 
-### **RF5 — Caméra intérieur & TRANSITIONS CINÉMATIQUES de seuil** *(M)*
-- **Caméra** : spring-arm sphere-cast + auto-FPV couloir + fade des murs (§2.4).
-- **Transitions de seuil** (§2.5) : composant « seuil animé » (portillon bois / faille / porte futuriste
-  iris) + orchestrateur de cinématique (verrouillage input → ouverture porte → marche scriptée →
-  dolly + mi-fondu → 1re personne dedans / 3e personne dehors → rendu des commandes). Entrée ET sortie.
-  Build de l'intérieur déclenché pendant le creux au noir. Skippable après la 1re fois.
-- **S'applique aux grottes/mines EXISTANTES** (gain immédiat) **et** au cuirassé (RF2). **Exception : cabane.**
-- **Accept.** : entrer/sortir d'une grotte/mine/du vaisseau joue une mini-cinématique fluide (porte qui
-  s'ouvre, travelling, passage 3e↔1re personne) ; combat intérieur lisible ; aucune coupe sèche ; 100 % local (pas de désync).
+### **RF5 — TRANSITIONS CINÉMATIQUES de seuil** *(M — partiellement fait)*
+- ✅ **Infrastructure FAITE** (`render/threshold.ts`) : `ThresholdCine` (machine d'état PURE & testable :
+  `opening→walking→dip→settling`, **timeout-safe** = input jamais perdu) + `AnimatedDoor` (portillon bois /
+  herse de grotte / **iris alien coulissant**) + `DipOverlay` (fondu au noir DOM). 100 % LOCAL (zéro désync).
+  **4 tests purs** (progression des phases, marche entrée/sortie, timeout, skip).
+- ✅ **ENTRÉE DU CUIRASSÉ FAITE** (`main.ts`) : la porte alien s'ouvre → pas franchi (marche scriptée,
+  réutilise le mouvement normal — zéro reprise de caméra = faible risque) → **fondu au noir** PILE au seuil
+  (qui émet `ENTER_ROOM(antichambre)`) → FPV dedans. Input neutralisé pendant, restauré à la fin. Vérifié
+  preview (joue, revient à idle, input rendu, zéro erreur). Hooks debug `testThresholdCine`/`cineActive`.
+- ⏳ **Reste** : étendre aux **grottes/mines** (entrée) + la **SORTIE** (« ressortir »), via des verbes de
+  seuil ; **caméra serrée** (spring-arm sphere-cast) ; **réglage du FEEL** (durées, choré, esthétique de la
+  porte) — à affiner via **playtest** (le ressenti se juge en interactif, pas en headless).
+- **Exception : cabane** (garde son fondu 3PV↔1PV). **Accept.** : entrer joue une mini-cinématique fluide,
+  aucune coupe sèche, 100 % local.
 
 ### **RF6 — Beacon & fins** *(S)*
 - `fleet beacon` = drop du boss final du cuirassé ; à l'évasion, **fin étendue** si possédé. **Accept.** :

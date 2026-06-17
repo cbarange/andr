@@ -24,6 +24,7 @@ import { Forest } from "./render/forest";
 import { Cabin } from "./render/cabin";
 import { Interiors } from "./render/interior";
 import { ShipInterior } from "./render/shipInterior";
+import { ThresholdCine, AnimatedDoor, DipOverlay } from "./render/threshold";
 import { SiteLoot } from "./render/siteLoot";
 import { Player } from "./render/player";
 import { createCamera, cameraYaw } from "./render/camera";
@@ -428,6 +429,13 @@ async function boot(): Promise<void> {
   // portes télégraphiées, culling par salle, obscurité locale — bâti à l'approche du site `executioner`.
   const shipInterior = new ShipInterior(scene);
   shipInterior.setMap(worldMap);
+  // CINÉMATIQUE DE SEUIL (M11/RF5) : à l'entrée du cuirassé, une mini-cinématique LOCALE (porte iris
+  // qui s'ouvre → pas franchi → bref fondu au noir qui masque le passage → FPV dedans). 100 % local,
+  // timeout-safe (l'input est toujours rendu). Voir render/threshold.ts.
+  const cine = new ThresholdCine();
+  const cineDoor = new AnimatedDoor(scene);
+  const dipOverlay = new DipOverlay();
+  let cineCommit: (() => void) | null = null;
   // FOUILLE DE SURFACE (R3) : butin 3D posé autour des forages/champs de bataille (alliage…).
   const siteLoot = new SiteLoot(scene);
   siteLoot.setMap(worldMap);
@@ -1285,8 +1293,21 @@ async function boot(): Promise<void> {
         verb: et.verb,
         act: () => {
           if (et.sealed) { hud.toast("le pont reste scellé — il faut d'abord nettoyer les trois ailes du cuirassé."); return; }
-          emit(enterRoom(self(), et.cx, et.cz, et.room));
-          audio.playSfx(et.room === "antechamber" ? "checkTraps" : "weaponMelee");
+          if (et.room === "antechamber" && !cine.active) {
+            // RF5 — pénétrer par le SAS : cinématique de seuil (porte alien + pas franchi + fondu),
+            // ENTER_ROOM(antichambre) émis AU FONDU (chargement masqué). 100 % local, timeout-safe.
+            const yaw = cameraYaw(camera);
+            const fx = Math.sin(yaw), fz = Math.cos(yaw);
+            const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
+            cineDoor.place("ship", dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
+            cineDoor.setEnabled(true);
+            cineCommit = () => emit(enterRoom(self(), et.cx, et.cz, "antechamber"));
+            cine.start("in", "ship");
+            audio.playSfx("checkTraps");
+          } else {
+            emit(enterRoom(self(), et.cx, et.cz, et.room));
+            audio.playSfx("weaponMelee");
+          }
         },
       }));
     }
@@ -1862,8 +1883,22 @@ async function boot(): Promise<void> {
     // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
     // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
     const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending" || state.flight.status === "escaped");
+    // M11/RF5 — CINÉMATIQUE DE SEUIL : si active, on avance la machine d'état, on pilote la porte/le
+    // fondu, on émet le commit (ENTER_ROOM) au fondu max, et l'input est neutralisé (pas scripté pendant
+    // la phase « walking »). Timeout-safe : la machine revient toujours à `idle` (jamais coincé).
+    const cineFrame = cine.active ? cine.advance(dtSec) : null;
+    const cineActive = cine.active;
+    if (cineFrame) {
+      cineDoor.setOpen(cineFrame.doorOpen);
+      dipOverlay.set(cineFrame.dip);
+      if (cineFrame.commit && cineCommit) { cineCommit(); cineCommit = null; }
+      if (!cine.active) { cineDoor.setEnabled(false); dipOverlay.set(0); } // cinématique terminée
+    }
     const raw = input.getIntent(); // consomme aussi le front du saut
-    const intent = (uiOpen || flying) ? { forward: 0, strafe: 0, jump: false, vertical: 0 } : raw;
+    const cineWalk = cineActive && cineFrame?.phase === "walking";
+    const intent = (uiOpen || flying || cineActive)
+      ? { forward: cineWalk ? 0.7 : 0, strafe: 0, jump: false, vertical: 0 } // pas scripté pendant le franchissement
+      : raw;
     player.update(dtSec, intent, cameraYaw(camera));
     // Footsteps (A3) : pas réguliers tant qu'on se déplace au sol (cosmétique, variante au hasard).
     const walking = !player.isFlying && (Math.abs(intent.forward) > 0.05 || Math.abs(intent.strafe) > 0.05);
@@ -1875,17 +1910,17 @@ async function boot(): Promise<void> {
     }
     // Doubles-appuis (consommés chaque frame) : Z×2 = +vitesse, S×2 = −vitesse, Espace×2 = vol.
     const taps = input.consumeDoubleTaps();
-    if (!uiOpen) {
+    if (!uiOpen && !cineActive) {
       if (taps.forward) hud.toast(`vitesse ×${player.adjustSpeed(1).toFixed(1)}`);
       if (taps.back) hud.toast(`vitesse ×${player.adjustSpeed(-1).toFixed(1)}`);
       if (taps.jump) { player.setFly(!player.isFlying); hud.toast(player.isFlying ? "vol ON (Espace ↑ / Maj ↓)" : "vol OFF"); }
     }
-    currentFocus = (uiOpen || flying) ? null : computeFocus();
+    currentFocus = (uiOpen || flying || cineActive) ? null : computeFocus();
     const interacted = input.consumeInteract();
     if (flying) {
       // E = TIRER sur le débris le plus urgent (la sim borne via le cooldown par joueur).
       if (interacted && state.flight?.status === "ascending") { emit(flightFire(self())); audio.playSfx("weaponRanged"); }
-    } else if (!uiOpen && interacted) {
+    } else if (!uiOpen && !cineActive && interacted) {
       // Avec focus (village/camp) -> action ciblée (tooltip). Sinon, en exploration ->
       // on coupe l'arbre sauvage le plus proche (sans tooltip).
       if (currentFocus) currentFocus.act();
@@ -2337,6 +2372,16 @@ async function boot(): Promise<void> {
       dbg.interiorSites = (): Array<{ type: string; cx: number; cz: number; x: number; z: number }> => interiors.debugSites();
       dbg.shipSite = (): { cx: number; cz: number; x: number; z: number } | null => { const s = worldMap.sites.find((s) => s.type === "executioner"); if (!s) return null; const w = worldMap.cellToWorldCenter(s.cx, s.cz); return { cx: s.cx, cz: s.cz, x: w.x, z: w.z }; };
       dbg.shipInteriorStats = (): { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number } => shipInterior.stats;
+      dbg.testThresholdCine = (site: "cave" | "mine" | "ship" = "ship"): void => {
+        if (cine.active) return;
+        const yaw = cameraYaw(camera), fx = Math.sin(yaw), fz = Math.cos(yaw);
+        const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
+        cineDoor.place(site, dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
+        cineDoor.setEnabled(true);
+        cineCommit = null;
+        cine.start("in", site);
+      };
+      dbg.cineActive = (): boolean => cine.active;
       dbg.shipRoomWorld = (room: string): { x: number; z: number } | null => {
         const s = worldMap.sites.find((s) => s.type === "executioner"); if (!s) return null;
         const w = worldMap.cellToWorldCenter(s.cx, s.cz);
