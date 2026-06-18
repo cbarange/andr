@@ -330,7 +330,7 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   de l'antichambre) + e2e (gaté → grantPerk → craft → au sac). **281 tests, 18 e2e.**
 - ⏳ *Reste optionnel* : autres recettes ADR (stim/disruptor/cargo drone…), audio de fin/espace dédié.
 
-### **RF8 — DÉCOLLAGE immersif : pilotage d'esquive 3D** *(L — playtest)* — 📐 **DESIGNÉ** → voir [`m11-flight-refonte.md`](m11-flight-refonte.md)
+### **RF8 — DÉCOLLAGE immersif : pilotage d'esquive 3D** *(L — playtest)* — 🛠️ **RF8a+b LIVRÉS** (reste RF8c co-op/feel) → voir [`m11-flight-refonte.md`](m11-flight-refonte.md)
 - **Constat playtest** : le décollage actuel (M11/E3 « extraction allégée ») est on-rails passif (on
   *tire* sur les débris, sans bouger). Le joueur veut **PILOTER** : se déplacer gauche/droite (et
   haut/bas) pour **ESQUIVER** — fidèle au mini-jeu spatial d'ADR (`space.js` : dodge 2D libre, horloge
@@ -339,10 +339,18 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   (vaisseau déplacé dans le plan X/Y, astéroïdes seedés qui foncent en +Z, collision par position, 1
   coque/hit + i-frames), tir **support** (`FLIGHT_FIRE` conservé), caméra de poursuite, moteur = esquive
   plus vive. 100 % host-autoritaire & déterministe (étend `SharedFlight`/`stepFlight`, action `STEER`).
-- **Phasage** : RF8a sim (STEER + `stepFlight` révisé + tests purs) → RF8b rendu/caméra/input → RF8c
+- **Phasage** : RF8a sim (STEER + `stepFlight` révisé + tests purs) ✅ → RF8b rendu/caméra/input ✅ → RF8c
   co-op (modèle de pilotage) + audio + tuning du *feel* en playtest.
-- **À trancher** (cf. doc §10) : pilotage co-op (esquive sommée vs pilote unique+support) · axes (g/d +
-  h/b ou g/d seul) · garder le tir support.
+- **Tranché** (cf. doc §10) : esquive co-op **sommée** (consensus des pilotes à bord) · axes **g/d + h/b**
+  (ZQSD) · **tir support conservé** ([E]).
+- **RF8a (livré)** — `SharedFlight` étendu (`shipX/shipY/steer/lastHitAt` + voies `x/y` des astéroïdes),
+  action `STEER`, `stepFlight` réécrit (intégration du pilotage clampée au tube, spawns seedés à densité
+  croissante, collision PAR POSITION + i-frames), tir support inchangé. Bloc de tests RF8 (collision
+  touché/esquivé, i-frames, STEER, replay seedé). Déterministe & host-autoritaire.
+- **RF8b (livré)** — `liftoff.ts` refait : le vaisseau MONTE (+Y), caméra en **contre-plongée** (sol
+  hors-champ, étoiles + pluie de débris), vaisseau piloté qui **s'incline** (roll/pitch) ; entrée ZQSD →
+  `STEER` (émis au changement, réseau-safe), [E] → tir support ; flash rouge à l'impact. Autopilote
+  d'esquive (`__game.autoDodge`) pour la démo/e2e. Vérifié preview (esquive g/d/h/b non-miroir) + e2e.
 
 ---
 

@@ -654,12 +654,13 @@ test("M11 — réparer le vaisseau, décoller, s'évader, prestige (monde neuf)"
   await page.evaluate(() => window.__game?.liftOff?.());
   await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null), { timeout: 10_000 }).toBe("ascending");
 
-  // Abattre les débris (FLIGHT_FIRE) jusqu'à l'évasion — la coque tient si l'on tire assez.
-  for (let i = 0; i < 220; i++) {
+  // RF8 — ESQUIVER les débris (autopilote STEER) tout en tirant en SUPPORT, jusqu'à l'évasion : le
+  // vaisseau n'est plus passif, il se déplace pour éviter les astéroïdes (coque max + moteur max -> fiable).
+  for (let i = 0; i < 400; i++) {
     const st = await page.evaluate(() => window.__game?.getFlight?.()?.status ?? "null");
     if (st === "escaped" || st === "null") break;
-    await page.evaluate(() => window.__game?.flightFire?.());
-    await page.waitForTimeout(120);
+    await page.evaluate(() => { window.__game?.autoDodge?.(); window.__game?.flightFire?.(); });
+    await page.waitForTimeout(90);
   }
   await expect.poll(() => page.evaluate(() => window.__game?.getFlight?.()?.status ?? null)).toBe("escaped");
 

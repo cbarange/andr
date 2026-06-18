@@ -52,7 +52,7 @@ import {
   takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
   visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige, discoverShip, revealCells,
+  liftOff, flightFire, endFlight, steer, prestige, discoverShip, revealCells,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -125,8 +125,10 @@ declare global {
       grantPerk?: (perk: string) => void;
       liftOff?: () => void;
       flightFire?: () => void;
+      steer?: (x: number, y: number) => void;
+      autoDodge?: () => void;
       endFlight?: () => void;
-      getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number } | null;
+      getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number; shipX: number; shipY: number } | null;
       prestige?: () => void;
       getProgress?: () => { prestige: number };
       endingText?: () => string;
@@ -1519,6 +1521,7 @@ async function boot(): Promise<void> {
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
   let prevFlightStatus: string | null = state.flight?.status ?? null; // M11/E3 : transitions évasion/crash
+  let lastSteerX = 0, lastSteerY = 0; // M11/RF8 : dernier vecteur STEER émis (réémis seulement au changement)
   let lastEncSeen: SharedEncounter | null = null; // dernière rencontre où l'on était engagé (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
   let prevOnRoad: boolean | null = null;
@@ -1814,7 +1817,7 @@ async function boot(): Promise<void> {
       hud.setCombat({
         name: boarding ? "embarquement…" : "ascension",
         hpFrac: f.hull / Math.max(1, f.hullMax),
-        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}% · ${f.asteroids.length} entrant(s) — [E] tirer`,
+        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}% · ${f.asteroids.length} entrant(s) — ESQUIVE (ZQSD) · [E] tirer`,
         ready: !boarding && f.asteroids.length > 0,
       });
     } else if (engagedNow) {
@@ -1968,8 +1971,17 @@ async function boot(): Promise<void> {
     currentFocus = (uiOpen || flying || cineActive) ? null : computeFocus();
     const interacted = input.consumeInteract();
     if (flying) {
-      // E = TIRER sur le débris le plus urgent (la sim borne via le cooldown par joueur).
-      if (interacted && state.flight?.status === "ascending") { emit(flightFire(self())); audio.playSfx("weaponRanged"); }
+      if (state.flight?.status === "ascending") {
+        // RF8 — PILOTAGE D'ESQUIVE : les touches de déplacement orientent le vaisseau dans le tube
+        // (strafe = gauche/droite, forward = haut/bas). On (ré)émet STEER seulement au CHANGEMENT du
+        // vecteur (réseau-safe, porte playerId ; l'hôte/le pair l'applique de façon persistante).
+        const sx = raw.strafe, sy = raw.forward;
+        if (sx !== lastSteerX || sy !== lastSteerY) { emit(steer(self(), sx, sy)); lastSteerX = sx; lastSteerY = sy; }
+        // E = TIR de SUPPORT sur le débris le plus urgent (la sim borne via le cooldown par joueur).
+        if (interacted) { emit(flightFire(self())); audio.playSfx("weaponRanged"); }
+      } else if (lastSteerX !== 0 || lastSteerY !== 0) {
+        lastSteerX = 0; lastSteerY = 0; // hors ascension : repart neutre au prochain vol
+      }
     } else if (!uiOpen && !cineActive && interacted) {
       // Avec focus (village/camp) -> action ciblée (tooltip). Sinon, en exploration ->
       // on coupe l'arbre sauvage le plus proche (sans tooltip).
@@ -2296,8 +2308,20 @@ async function boot(): Promise<void> {
     grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
     liftOff: () => { const w = shipWorldPos(); emit(liftOff(self(), w.x, w.z)); },
     flightFire: () => emit(flightFire(self())),
+    steer: (x: number, y: number) => emit(steer(self(), x, y)),
+    // RF8 — AUTOPILOTE d'esquive (tests/démo) : fuit le barycentre des astéroïdes pondéré par l'imminence
+    // (positions réelles de la sim). Exerce le vrai chemin STEER ; rend l'évasion fiable sans pilotage manuel.
+    autoDodge: () => {
+      const f = state.flight;
+      if (!f || f.status !== "ascending") return;
+      let bx = 0, by = 0, w = 0;
+      for (const a of f.asteroids) { const wt = 1 / Math.max(1, a.impactAt - state.tick + 1); bx += a.x * wt; by += a.y * wt; w += wt; }
+      if (w === 0) { emit(steer(self(), 0, 0)); return; }
+      const dx = -bx / w, dy = -by / w, m = Math.hypot(dx, dy) || 1;
+      emit(steer(self(), dx / m, dy / m));
+    },
     endFlight: () => emit(endFlight(self())),
-    getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine } : null; },
+    getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine, shipX: f.shipX, shipY: f.shipY } : null; },
     prestige: () => restartWorld(),
     getProgress: () => ({ prestige: state.prestige }),
     endingText: () => endingView().text, // M11/RF6 : variante d'épilogue (étendue si fleet beacon possédé)
