@@ -60,7 +60,7 @@ export class Minimap {
       c.style.cssText = "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(72vmin,640px);height:min(72vmin,640px);"
         + "z-index:40;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,0.6);pointer-events:none";
     } else {
-      c.style.cssText = "position:fixed;left:18px;bottom:18px;width:180px;height:180px;z-index:18;"
+      c.style.cssText = "position:fixed;right:18px;top:18px;width:180px;height:180px;z-index:18;"
         + "border-radius:8px;opacity:0.94;pointer-events:none";
     }
   }
@@ -252,12 +252,15 @@ export class Minimap {
     }
   }
 
-  /** Chevron vers l'objectif courant (épave -> vaisseau-camp / cuirassé), clampé au bord si hors-cadre. */
+  /** Chevron vers l'objectif courant : AVANT découverte -> l'ÉPAVE ; APRÈS -> le VAISSEAU AU CAMP
+   *  (qu'on doit rejoindre pour réparer/décoller). Clampé au bord si hors-cadre (edge-pointer). */
   private drawObjective(ctx: MinimapCtx, map: (wx: number, wz: number) => [number, number]): void {
     let target: { x: number; z: number } | null = null;
     if (!ctx.state.perks["ship_found"]) {
       const wreck = ctx.worldMap.sites.find((s) => s.type === "ship");
       if (wreck) target = ctx.worldMap.cellToWorldCenter(wreck.cx, wreck.cz);
+    } else if (!ctx.state.flight) {
+      target = { x: 24, z: 0 }; // ancre du vaisseau AU CAMP (SHIP_CAMP) — aller le réparer / décoller
     }
     if (!target) return;
     const g = this.ctx2d, S = this.canvas.width;

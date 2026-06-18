@@ -29,6 +29,7 @@ const INTERIOR_TYPES = new Set(["cave", "ironmine", "coalmine", "sulphurmine"]);
 // Distances de build/free (hystérésis) — l'intérieur lourd n'existe qu'autour du joueur.
 const BUILD_R = 44; // bâtit quand le joueur s'approche à moins de 44 u du centre du site
 const FREE_R = 64; //  libère au-delà de 64 u (marge anti-clignotement)
+const INSIDE_HYSTERESIS = 7; // (u) marge anti-flicker du « dedans » : on entre à insideR, on sort à insideR+7
 
 // Géométrie locale (repère intérieur : origine au sol, +Z vers le camp = côté de la bouche).
 const SINK = 0.22; // enfoncement (comme la cabane) -> ressaut de bouche FRANCHISSABLE par la capsule
@@ -47,6 +48,8 @@ interface Built {
   insideR: number; // rayon « sous plafond » (pour l'obscurité locale)
   barrier: Mesh; // collider de SEUIL à la bouche (actif tant que le joueur n'a pas de torche)
   barrierOn: boolean; // la barrière a-t-elle un corps physique (bloque-t-elle) ?
+  entrance: Vector3; // position MONDE de la BOUCHE (pour ancrer la cinématique de seuil — RF5)
+  entranceYaw: number; // orientation de la bouche (face camp)
   site: { type: string; cx: number; cz: number }; // identité du site (pour les actions sim)
   loot: Array<{ nodeId: string; kind: string; world: Vector3; mesh: TransformNode }>; // caches/filons ramassables
 }
@@ -99,6 +102,12 @@ export class Interiors {
   /** Le joueur LOCAL est-il sous plafond (pour la torche / le gating d'entrée — R2). */
   isLocalPlayerInside(): boolean {
     return this.inside;
+  }
+
+  /** Bouche de l'intérieur ACTIF (position monde + cap) — pour ancrer la cinématique de seuil (RF5). */
+  activeEntrance(): { x: number; y: number; z: number; yaw: number } | null {
+    const a = this.activeKey ? this.built.get(this.activeKey) : null;
+    return a ? { x: a.entrance.x, y: a.entrance.y, z: a.entrance.z, yaw: a.entranceYaw } : null;
   }
 
   /** Clé "cx,cz" du site dont l'intérieur 3D est ACTUELLEMENT bâti (pour masquer son modèle décoratif). */
@@ -197,8 +206,10 @@ export class Interiors {
     // Bloqué = sans torche et proche de la bouche (déclenche un toast côté main).
     this.blocked = !!act && !hasTorch && distAct <= act.insideR + 9;
 
-    // 4) obscurité LOCALE : sous plafond si dans le rayon de l'intérieur actif.
-    this.inside = !!act && distAct <= act.insideR;
+    // 4) obscurité LOCALE : sous plafond si dans le rayon de l'intérieur actif. HYSTÉRÉSIS : on entre
+    //    à `insideR` mais on ne ressort qu'au-delà de `insideR + MARGIN` -> pas de clignotement FPV/3PV
+    //    quand on longe une paroi pile au rayon (bug playtest : caméra qui alterne 1ʳᵉ/3ᵉ personne).
+    this.inside = !!act && distAct <= act.insideR + (this.inside ? INSIDE_HYSTERESIS : 0);
     const target = this.inside ? 1 : 0;
     this.dark += (target - this.dark) * Math.min(1, dtSec * 4);
     if (this.dark < 1e-3) this.dark = 0;
@@ -268,6 +279,7 @@ export class Interiors {
     // bouche) -> « dedans » couvre TOUTE la cavité (obscurité + FPV restent actifs jusqu'au fond).
     this.built.set(key, {
       root, colliders, center: new Vector3(worldX(0, cz0), gy, worldZ(0, cz0)), insideR: R * 0.85, barrier, barrierOn: false,
+      entrance: new Vector3(worldX(0, blz), gy, worldZ(0, blz)), entranceYaw: yaw,
       site: { type: site.type, cx: site.cx, cz: site.cz }, loot,
     });
   }

@@ -441,13 +441,13 @@ async function boot(): Promise<void> {
   let cineForceWalk = false; // pas scripté SEULEMENT pour l'entrée du cuirassé (focus) ; sinon door+dip
   let cineCooldown = 0; // s — anti-spam : pas de re-déclenchement juste après une cinématique (seuil hover)
   let prevInteriorKind: "" | "cave" | "mine" | "ship" = ""; // pour détecter le franchissement de seuil (edge)
-  /** Lance une cinématique de seuil (porte du `type` + fondu) si aucune n'est active. `forceWalk` = pas
-   *  scripté (réservé à l'entrée focus du cuirassé) ; `commit` = action sim au fondu (ex. ENTER_ROOM). */
-  function startThresholdCine(dir: "in" | "out", type: "cave" | "mine" | "ship", forceWalk: boolean, commit: (() => void) | null): void {
-    if (cine.active) return;
-    const yaw = cameraYaw(camera), fx = Math.sin(yaw), fz = Math.cos(yaw);
-    const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
-    cineDoor.place(type, dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
+  /** Lance une cinématique de seuil (porte du `type` + fondu) si aucune n'est active. La porte est
+   *  ANCRÉE à l'entrée réelle (`door` = bouche de grotte/mine ou sas du cuirassé) — JAMAIS flottante
+   *  devant le joueur (bug playtest). `forceWalk` = pas scripté (entrée focus cuirassé) ; `commit` =
+   *  action sim au fondu (ex. ENTER_ROOM). Sans entrée connue, on n'ouvre PAS de cinématique. */
+  function startThresholdCine(dir: "in" | "out", type: "cave" | "mine" | "ship", forceWalk: boolean, commit: (() => void) | null, door: { x: number; y: number; z: number; yaw: number } | null): void {
+    if (cine.active || !door) return;
+    cineDoor.place(type, door.x, door.y + 0.3, door.z, door.yaw);
     cineDoor.setEnabled(true);
     cineForceWalk = forceWalk;
     cineCommit = commit;
@@ -1335,9 +1335,9 @@ async function boot(): Promise<void> {
         act: () => {
           if (et.sealed) { hud.toast("le pont reste scellé — il faut d'abord nettoyer les trois ailes du cuirassé."); return; }
           if (et.room === "antechamber" && !cine.active) {
-            // RF5 — pénétrer par le SAS : cinématique de seuil (porte alien + PAS SCRIPTÉ + fondu),
-            // ENTER_ROOM(antichambre) émis AU FONDU (chargement masqué). 100 % local, timeout-safe.
-            startThresholdCine("in", "ship", true, () => emit(enterRoom(self(), et.cx, et.cz, "antechamber")));
+            // RF5 — pénétrer par le SAS : cinématique de seuil (porte alien ANCRÉE AU SAS + PAS SCRIPTÉ
+            // + fondu), ENTER_ROOM(antichambre) émis AU FONDU (chargement masqué). 100 % local, timeout-safe.
+            startThresholdCine("in", "ship", true, () => emit(enterRoom(self(), et.cx, et.cz, "antechamber")), shipInterior.entrance());
           } else {
             emit(enterRoom(self(), et.cx, et.cz, et.room));
             audio.playSfx("weaponMelee");
@@ -1358,7 +1358,7 @@ async function boot(): Promise<void> {
           verb: "découvrir l'épave",
           act: () => {
             emit(discoverShip(self(), st.cx, st.cz));
-            hud.toast("les courbes familières d'un vaisseau wanderer émergent de la cendre — il vous attend désormais au camp.");
+            hud.toast("vaisseau wanderer remorqué jusqu'au CAMP. rentre au village (◆ sur la minimap) pour le RÉPARER à l'alliage de l'entrepôt, puis DÉCOLLER.");
             audio.playSfx("checkTraps");
           },
         }));
@@ -2108,8 +2108,13 @@ async function boot(): Promise<void> {
       // sortie (grotte/mine/cuirassé) idem. L'ENTRÉE du cuirassé reste gérée par le focus (ENTER_ROOM).
       const kind: "" | "cave" | "mine" | "ship" = !mmInterior ? "" : mmInterior.type === "executioner" ? "ship" : mmInterior.type === "cave" ? "cave" : "mine";
       if (kind !== prevInteriorKind && !cine.active && cineCooldown <= 0 && !uiOpen && !flying) {
-        if (prevInteriorKind === "" && (kind === "cave" || kind === "mine")) startThresholdCine("in", kind, false, null); // entrée grotte/mine
-        else if (kind === "" && prevInteriorKind !== "") startThresholdCine("out", prevInteriorKind, false, null); // sortie (tout type clos)
+        if (prevInteriorKind === "" && (kind === "cave" || kind === "mine")) {
+          startThresholdCine("in", kind, false, null, interiors.activeEntrance()); // entrée grotte/mine (porte à la BOUCHE)
+        } else if (kind === "" && prevInteriorKind !== "") {
+          // sortie : porte ancrée à la bouche du lieu qu'on quitte (cuirassé -> sas ; grotte/mine -> bouche).
+          const door = prevInteriorKind === "ship" ? shipInterior.entrance() : interiors.activeEntrance();
+          startThresholdCine("out", prevInteriorKind, false, null, door);
+        }
       }
       // On suit l'état même quand on ne déclenche pas (entrée cuirassé par focus, cinématique active…).
       if (!cine.active) prevInteriorKind = kind;
@@ -2456,13 +2461,9 @@ async function boot(): Promise<void> {
       dbg.shipSite = (): { cx: number; cz: number; x: number; z: number } | null => { const s = worldMap.sites.find((s) => s.type === "executioner"); if (!s) return null; const w = worldMap.cellToWorldCenter(s.cx, s.cz); return { cx: s.cx, cz: s.cz, x: w.x, z: w.z }; };
       dbg.shipInteriorStats = (): { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number } => shipInterior.stats;
       dbg.testThresholdCine = (site: "cave" | "mine" | "ship" = "ship"): void => {
-        if (cine.active) return;
         const yaw = cameraYaw(camera), fx = Math.sin(yaw), fz = Math.cos(yaw);
         const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
-        cineDoor.place(site, dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
-        cineDoor.setEnabled(true);
-        cineCommit = null;
-        cine.start("in", site);
+        startThresholdCine("in", site, site === "ship", null, { x: dx, y: terrainHeight(dx, dz), z: dz, yaw }); // debug : porte devant
       };
       dbg.cineActive = (): boolean => cine.active;
       dbg.shipRoomWorld = (room: string): { x: number; z: number } | null => {

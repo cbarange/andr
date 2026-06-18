@@ -107,6 +107,17 @@ export class ShipInterior {
     return this.built ? this.built.site.cx + "," + this.built.site.cz : null;
   }
 
+  /** SAS d'entrée du cuirassé (face -Z de l'antichambre) — position monde + cap, pour ancrer la
+   *  cinématique de seuil (RF5). null si pas bâti. */
+  entrance(): { x: number; y: number; z: number; yaw: number } | null {
+    const b = this.built;
+    if (!b) return null;
+    const ante = executionerDungeon(b.site.cx, b.site.cz, this.map!.seed).rooms.find((r) => r.isHub);
+    if (!ante) return null;
+    const lz = ante.pos.z - ante.size.d / 2; // face -Z (sas d'entrée, vers le camp)
+    return { x: this.worldXOf(b, ante.pos.x, lz), y: terrainHeight(b.wx, b.wz), z: this.worldZOf(b, ante.pos.x, lz), yaw: b.yaw };
+  }
+
   get stats(): { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number } {
     return { built: !!this.built, inside: this.inside, room: this.curRoom, colliders: this.built?.colliders.length ?? 0, dark: Math.round(this.dark * 100) / 100 };
   }
@@ -191,7 +202,9 @@ export class ShipInterior {
 
     const { lx, lz } = this.toLocal(b, playerPos.x, playerPos.z);
     this.curRoom = this.roomAt(b, lx, lz, 1.5);
-    this.inside = this.roomAt(b, lx, lz, 1.0) !== null;
+    // HYSTÉRÉSIS : on reste « dedans » avec une marge plus large -> pas de clignotement FPV/3PV au ras
+    //  d'une paroi de salle (bug playtest). On entre à 1.5 u, on ne sort qu'au-delà de 6 u hors salle.
+    this.inside = this.roomAt(b, lx, lz, this.inside ? 6 : 1.5) !== null;
 
     // Culling par salle : la salle courante + ses voisines (marge).
     for (const rv of b.rooms) {
