@@ -2378,6 +2378,7 @@ async function boot(): Promise<void> {
         terrain.regenerate(worldMap, player.position);
         sites.placeAll(worldMap, entities);
         interiors.setMap(worldMap);
+        shipInterior.setMap(worldMap); // /seed (dev) : sinon l'intérieur du cuirassé garderait l'ancienne graine
         siteLoot.setMap(worldMap);
       },
     };

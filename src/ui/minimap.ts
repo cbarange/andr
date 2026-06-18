@@ -201,7 +201,7 @@ export class Minimap {
     for (const key of Object.keys(ctx.state.visitedCells ?? {})) {
       const ci = key.indexOf(","); if (ci < 0) continue;
       const chx = Number(key.slice(0, ci)), chz = Number(key.slice(ci + 1));
-      const [x, y] = map(chx * CHUNK, chz * CHUNK);
+      const [x, y] = map((chx + 0.5) * CHUNK, (chz + 0.5) * CHUNK); // centre de la cellule de chunk
       g.fillRect(x - cs / 2, y - cs / 2, cs, cs);
     }
     // Anneaux de distance (×2 ADR : 16/38 cellules).
