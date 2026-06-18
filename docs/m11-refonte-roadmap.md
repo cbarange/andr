@@ -330,13 +330,27 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   de l'antichambre) + e2e (gaté → grantPerk → craft → au sac). **281 tests, 18 e2e.**
 - ⏳ *Reste optionnel* : autres recettes ADR (stim/disruptor/cargo drone…), audio de fin/espace dédié.
 
+### **RF8 — DÉCOLLAGE immersif : pilotage d'esquive 3D** *(L — playtest)* — 📐 **DESIGNÉ** → voir [`m11-flight-refonte.md`](m11-flight-refonte.md)
+- **Constat playtest** : le décollage actuel (M11/E3 « extraction allégée ») est on-rails passif (on
+  *tire* sur les débris, sans bouger). Le joueur veut **PILOTER** : se déplacer gauche/droite (et
+  haut/bas) pour **ESQUIVER** — fidèle au mini-jeu spatial d'ADR (`space.js` : dodge 2D libre, horloge
+  ~60 s, densité qui escalade, crash → réparer).
+- **Proposition** (analyse sous-agent du source ADR + design 3D, doc dédiée) : esquive **primaire**
+  (vaisseau déplacé dans le plan X/Y, astéroïdes seedés qui foncent en +Z, collision par position, 1
+  coque/hit + i-frames), tir **support** (`FLIGHT_FIRE` conservé), caméra de poursuite, moteur = esquive
+  plus vive. 100 % host-autoritaire & déterministe (étend `SharedFlight`/`stepFlight`, action `STEER`).
+- **Phasage** : RF8a sim (STEER + `stepFlight` révisé + tests purs) → RF8b rendu/caméra/input → RF8c
+  co-op (modèle de pilotage) + audio + tuning du *feel* en playtest.
+- **À trancher** (cf. doc §10) : pilotage co-op (esquive sommée vs pilote unique+support) · axes (g/d +
+  h/b ou g/d seul) · garder le tir support.
+
 ---
 
 ## 8. Décisions OUVERTES (à trancher avant de coder RF1+)
 
-1. **Format du décollage** : garder l'« extraction allégée » co-op actuelle (décision porteur), ou se
-   rapprocher du **dodge-shooter libre** d'ADR (pilotage + esquive) ? *(reco : garder l'allégée, c'est un
-   choix co-op assumé.)*
+1. **Format du décollage** : ~~garder l'« extraction allégée »~~ → **TRANCHÉ (playtest) : pilotage
+   d'esquive 3D** fidèle ADR (déplacement g/d + h/b pour éviter les astéroïdes), le tir devenant un
+   support. Voir **RF8** + [`m11-flight-refonte.md`](m11-flight-refonte.md).
 2. **Caps coque/moteur** : ADR n'en a pas (limité par l'alliage). Garder nos caps (20/3) pour l'équilibre,
    ou les lever pour la fidélité ? *(reco : garder des caps, mais les exposer en config.)*
 3. **Cuirassé = obligatoire OU optionnel pour la fin ?** Fidèle = **optionnel** (RF1). Mais pour un climax
