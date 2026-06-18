@@ -203,12 +203,13 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    PARTAGÉS ancrés dans le monde (poursuite, frappe d'un engagé au hasard, **butin au sol premier-servi**,
    flux d'ennemis 15 Hz interpolé). **Reste** : preview MULTI 2 onglets (manuel), écran de butin,
    F5 (perks d'usage), `cityCleared`→Raid militaire.
-1. **M11-REFONTE (recommandé n°1)** — corriger la fidélité de la fin + l'immersion, d'après l'audit du
-   code source d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)**. **RF1 ✅** (vaisseau
-   dé-gaté + ramené au camp). **RF2 sim ✅ + RF3 données ✅** (cuirassé = donjon de salles `executionerDungeon`
-   + `ENTER_ROOM` + clear émergent + gate du pont ; table d'aliens). **Prochain : RF2b/RF3b (rendu)** —
-   `shipInterior.ts` (salles/portes/culling) + modèles aliens + wiring `main.ts` (le gantelet reste dormant
-   d'ici là). Puis RF4 minimap ; RF5 caméra/seuils ; RF6 beacon/fins ; RF7 Fabricator. M11 v1 reste jouable.
+1. **M11-REFONTE ✅ COMPLÈTE** (build) — fidélité de la fin + immersion, d'après l'audit du code source
+   d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)**. **RF1** (vaisseau dé-gaté + au camp) ·
+   **RF2/RF2b** (cuirassé EXPLORABLE jouable : donjon de salles, combats par salle, portes télégraphiées,
+   FPV) · **RF3/RF3b** (aliens + 4 modèles émissifs) · **RF4** (minimap unifiée contextuelle CAMP/MONDE/
+   INTÉRIEUR + fog partagé) · **RF5** (cinématique de seuil — ENTRÉE du cuirassé) · **RF6** (fleet beacon +
+   fin étendue) · **RF7** (Fabricator). **Reste polish/optionnel** : réglage du FEEL de RF5 (durées/choré,
+   à juger en **playtest**), extension RF5 aux grottes/mines + SORTIE, autres recettes Fabricator, audio espace.
 2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
