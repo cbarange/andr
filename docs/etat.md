@@ -207,9 +207,9 @@ métiers** (bûcheron par défaut, chaînes bois/cuir/viande séchée, income to
    d'ADR : voir **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)**. **RF1** (vaisseau dé-gaté + au camp) ·
    **RF2/RF2b** (cuirassé EXPLORABLE jouable : donjon de salles, combats par salle, portes télégraphiées,
    FPV) · **RF3/RF3b** (aliens + 4 modèles émissifs) · **RF4** (minimap unifiée contextuelle CAMP/MONDE/
-   INTÉRIEUR + fog partagé) · **RF5** (cinématique de seuil — ENTRÉE du cuirassé) · **RF6** (fleet beacon +
-   fin étendue) · **RF7** (Fabricator). **Reste polish/optionnel** : réglage du FEEL de RF5 (durées/choré,
-   à juger en **playtest**), extension RF5 aux grottes/mines + SORTIE, autres recettes Fabricator, audio espace.
+   INTÉRIEUR + fog partagé) · **RF5** (cinématique de seuil — cuirassé + grottes/mines + SORTIE) · **RF6**
+   (fleet beacon + fin étendue) · **RF7** (Fabricator). **Reste polish/optionnel** : réglage du FEEL de RF5
+   (durées/choré/caméra serrée, à juger en **playtest**), autres recettes Fabricator, audio espace.
 2. **Raid militaire (M10)** : événement gaté sur une cité nettoyée (`cityCleared`) — la cité scriptée
    (R3b) est livrée, il reste à brancher l'événement de raid.
 3. Polish au fil de l'eau (Chantier D) : rebind clavier, cycle jour/nuit, AO/ombres de contact ;
