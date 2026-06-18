@@ -249,10 +249,10 @@ export class ShipInterior {
   private fade(target: number, dtSec: number): void {
     this.dark += (target - this.dark) * Math.min(1, dtSec * 4);
     if (this.dark < 1e-3) this.dark = 0;
-    // Le cuirassé est ALIMENTÉ : intérieur tamisé (pas une grotte aveugle) -> on garde davantage de
-    // fond + les nombreux accents émissifs (nervures/bandeaux/portes) portent la lecture.
-    if (this.hemi) this.hemi.intensity = this.hemiBase * (1 - 0.45 * this.dark);
-    if (this.sun) this.sun.intensity = this.sunBase * (1 - 0.55 * this.dark);
+    // Le cuirassé est ALIMENTÉ : intérieur ÉCLAIRÉ (pas une grotte aveugle) -> on lit bien la coque
+    // voûtée, les nervures et les props ; les accents émissifs ajoutent l'ambiance alien par-dessus.
+    if (this.hemi) this.hemi.intensity = this.hemiBase * (1 - 0.22 * this.dark);
+    if (this.sun) this.sun.intensity = this.sunBase * (1 - 0.3 * this.dark);
   }
 
   // ========================================================================
@@ -304,12 +304,26 @@ export class ShipInterior {
     for (const r of dungeon.rooms) {
       const node = K.node(root);
       const hw = r.size.w / 2, hd = r.size.d / 2, cx = r.pos.x, cz = r.pos.z;
-      // sol + plafond (visibles + colliders)
+
+      // --- SOL : plaque grillagée sombre + lignes de grille + 2 rubans de balisage émissifs. ---
       K.box(node, deck, [r.size.w, 0.2, r.size.d], [cx, FT - 0.1, cz]);
       collBox(r.size.w, r.size.d, 0.6, cx, cz, FT);
-      K.box(node, hullDk, [r.size.w, 0.3, r.size.d], [cx, FT + WALL_H, cz]);
-      collBox(r.size.w, r.size.d, 0.4, cx, cz, FT + WALL_H + 0.3);
-      // 4 parois : pleine si pas de porte sur ce côté, sinon 2 segments encadrant le sas.
+      for (let i = 1; i < 5; i++) K.box(node, hullDk, [0.07, 0.05, r.size.d - 1.2], [cx - hw + i * (r.size.w / 5), FT + 0.01, cz]); // grille
+      for (const sx of [-1, 1]) K.box(node, P.alienHot, [0.16, 0.05, r.size.d * 0.72], [cx + sx * hw * 0.5, FT + 0.04, cz], { emi: 0.8, unlit: true });
+
+      // --- PLAFOND VOÛTÉ (≠ boîte plate) : 2 pans inclinés vers une ARÊTE centrale (la quille) +
+      //     VEINE DORSALE émissive le long du vaisseau. Donne la section « fuselage » d'un vaisseau. ---
+      const ridgeY = FT + WALL_H + 1.1;
+      K.box(node, hullDk, [0.6, 0.6, r.size.d], [cx, ridgeY, cz]); // poutre maîtresse (quille)
+      K.box(node, P.alienGlow, [0.16, 0.12, r.size.d * 0.92], [cx, ridgeY - 0.32, cz], { emi: 1.4, unlit: true }); // veine dorsale
+      for (const sx of [-1, 1]) {
+        const pan = K.node(node, [cx + sx * hw * 0.5, FT + WALL_H + 0.55, cz]);
+        pan.rotation.z = sx * 0.52; // pan incliné vers l'arête
+        K.box(pan, hull, [hw * 1.2, 0.22, r.size.d], [0, 0, 0]);
+      }
+      collBox(r.size.w, r.size.d, 0.4, cx, cz, ridgeY + 0.7); // occulteur de ciel (plafond physique haut)
+
+      // --- 4 PAROIS : segment plein (ou 2 segments encadrant un sas) + colliders. ---
       const sides: Array<{ s: Side; alongZ: boolean; ox: number; oz: number; len: number }> = [
         { s: "px", alongZ: true, ox: hw, oz: 0, len: r.size.d },
         { s: "nx", alongZ: true, ox: -hw, oz: 0, len: r.size.d },
@@ -328,26 +342,24 @@ export class ShipInterior {
           const w = side.alongZ ? WALL_TH : seg.l, d = side.alongZ ? seg.l : WALL_TH;
           K.box(node, hull, [w, WALL_H, d], [lx, FT + WALL_H / 2, lz]);
           collBox(w, d, WALL_H, lx, lz, FT + WALL_H);
-          // linteau au-dessus du sas (ferme le haut de l'ouverture)
-          if (has && seg === segs[segs.length - 1]) {
+          if (has && seg === segs[segs.length - 1]) { // linteau au-dessus du sas
             const dlx = cx + side.ox, dlz = cz + side.oz;
-            K.box(node, hullDk, [side.alongZ ? WALL_TH : DOOR_W, WALL_H - DOOR_H, side.alongZ ? DOOR_W : WALL_TH], [dlx, FT + DOOR_H + (WALL_H - DOOR_H) / 2, dlz]);
+            K.box(node, hullDk, [side.alongZ ? WALL_TH + 0.2 : DOOR_W, WALL_H - DOOR_H, side.alongZ ? DOOR_W : WALL_TH + 0.2], [dlx, FT + DOOR_H + (WALL_H - DOOR_H) / 2, dlz]);
           }
         }
+        // NERVURES de cloison (pilastres verticaux réguliers) + BANDE émissive mi-hauteur -> coque vivante.
+        const ribs = Math.max(2, Math.round(side.len / 3.4));
+        for (let i = 0; i <= ribs; i++) {
+          const t = -side.len / 2 + (i / ribs) * side.len;
+          const rlx = cx + side.ox * 0.94 + (side.alongZ ? 0 : t), rlz = cz + side.oz * 0.94 + (side.alongZ ? t : 0);
+          K.box(node, hullDk, [side.alongZ ? 0.3 : 0.55, WALL_H - 0.4, side.alongZ ? 0.55 : 0.3], [rlx, FT + (WALL_H - 0.4) / 2, rlz]);
+        }
+        const blx = cx + side.ox * 0.9, blz = cz + side.oz * 0.9;
+        K.box(node, P.alienGlow, [side.alongZ ? 0.08 : side.len * 0.88, 0.1, side.alongZ ? side.len * 0.88 : 0.08], [blx, FT + 1.7, blz], { emi: 0.85, unlit: true });
       }
-      // Déco / ÉCLAIRAGE alien : nervures murales émissives aux 4 coins + 2 bandeaux de plafond
-      // croisés + 2 rubans lumineux au sol (balisage) -> le vaisseau « luit » de l'intérieur.
-      for (const cnx of [-1, 1]) for (const cnz of [-1, 1]) {
-        K.box(node, P.alienGlow, [0.1, WALL_H - 1.0, 0.1], [cx + cnx * (hw - 0.3), FT + WALL_H / 2, cz + cnz * (hd - 0.3)], { emi: 1.1, unlit: true });
-      }
-      K.box(node, P.alienGlow, [r.size.w * 0.62, 0.14, 0.14], [cx, FT + WALL_H - 0.22, cz], { emi: 1.0, unlit: true });
-      K.box(node, P.alienGlow, [0.14, 0.14, r.size.d * 0.62], [cx, FT + WALL_H - 0.22, cz], { emi: 1.0, unlit: true });
-      for (const sx of [-1, 1]) K.box(node, P.alienHot, [0.16, 0.05, r.size.d * 0.7], [cx + sx * hw * 0.45, FT + 0.04, cz], { emi: 0.8, unlit: true }); // rubans au sol
-      if (r.isBridge) { // pont : grande baie émissive (poste de pilotage)
-        K.box(node, P.alienGlow, [r.size.w * 0.7, 1.4, 0.12], [cx, FT + 1.8, cz + hd - 0.4], { emi: 1.2, unlit: true });
-        K.box(node, hull, [3.4, 1.0, 1.4], [cx, FT + 0.5, cz + hd - 1.8]); // console
-        K.box(node, P.alienHot, [3.0, 0.1, 1.0], [cx, FT + 1.05, cz + hd - 1.8], { emi: 1.0, unlit: true }); // pupitre lumineux
-      }
+
+      // --- PROPS THÉMATIQUES (donne du SENS à chaque salle). ---
+      this.buildRoomProps(node, r, cx, cz, hw, hd);
       rooms.push({ id: r.id, node, room: r });
     }
 
@@ -385,6 +397,50 @@ export class ShipInterior {
 
     const insideR = 30;
     this.built = { root, colliders, rooms, doors, center: new Vector3(wx, gy, wz), yaw, cos, sin, wx, wz, site: { cx: site.cx, cz: site.cz }, insideR };
+  }
+
+  /** Mobilier/structure THÉMATIQUE d'une salle — donne une identité à chaque compartiment du vaisseau. */
+  private buildRoomProps(node: TransformNode, r: DungeonRoom, cx: number, cz: number, hw: number, hd: number): void {
+    const K = this.K;
+    const hull = [0.15, 0.17, 0.2], metal = P.metal, metalDk = P.metalDark, alloy = P.alienAlloy;
+    if (r.isHub) {
+      // ANTICHAMBRE : pilier holographique central (sas d'embarquement) + cerclage lumineux au sol.
+      K.cyl(node, metalDk, { h: 2.6, dt: 0.5, db: 0.8, t: 8 }, [cx, FT + 1.3, cz]);
+      K.ico(node, P.alienGlow, { d: 0.9, sub: 1 }, [cx, FT + 2.9, cz], { emi: 1.6, unlit: true });
+      K.tor(node, P.alienHot, { d: 3.2, thick: 0.08, t: 20 }, [cx, FT + 0.06, cz], { rot: [Math.PI / 2, 0, 0], emi: 0.9, unlit: true });
+    } else if (r.wing === "engineering") {
+      // INGÉNIERIE : CŒUR DE RÉACTEUR (colonne lumineuse violet/cyan) + tuyauterie le long d'un flanc.
+      K.cyl(node, alloy, { h: 3.4, dt: 1.1, db: 1.4, t: 10 }, [cx, FT + 1.7, cz]);
+      K.cyl(node, P.alienBoss, { h: 3.0, d: 1.5, t: 10 }, [cx, FT + 1.7, cz], { emi: 1.6, unlit: true });
+      K.tor(node, alloy, { d: 2.0, thick: 0.16, t: 12 }, [cx, FT + 1.7, cz], { rot: [Math.PI / 2, 0, 0] });
+      for (const dz of [-1, 0, 1]) K.cyl(node, metal, { h: hd * 1.4, d: 0.22, t: 6 }, [cx - hw + 0.5, FT + 2.4 + dz * 0.4, cz], { rot: [Math.PI / 2, 0, 0] }); // tuyaux
+    } else if (r.wing === "martial") {
+      // MARTIALE : RÂTELIERS d'armes le long des deux flancs (barres + pointes lumineuses).
+      for (const sx of [-1, 1]) {
+        const rack = K.node(node, [cx + sx * (hw - 0.7), FT, cz]);
+        K.box(rack, metalDk, [0.4, 2.4, hd * 1.4], [0, 1.2, 0]);
+        for (let i = -2; i <= 2; i++) { K.box(rack, metal, [0.5, 0.1, 0.6], [0, 1.6, i * 1.6]); K.box(rack, P.alienGlow, [0.12, 0.5, 0.12], [0, 1.9, i * 1.6], { emi: 0.9, unlit: true }); }
+      }
+    } else if (r.wing === "medical") {
+      // MÉDICALE : capsules de stase (med-pods) lumineuses + croix médicale au mur.
+      for (const sx of [-1, 1]) for (const dz of [-1, 1]) {
+        const pod = K.node(node, [cx + sx * (hw - 1.4), FT, cz + dz * hd * 0.4]);
+        K.cyl(pod, metalDk, { h: 1.8, d: 1.0, t: 8 }, [0, 0.9, 0], { rot: [Math.PI / 2.4, 0, 0] });
+        K.cyl(pod, P.alienGlow, { h: 1.4, d: 0.7, t: 8 }, [0, 0.95, 0.05], { rot: [Math.PI / 2.4, 0, 0], emi: 1.0, unlit: true });
+      }
+      K.box(node, P.alienHot, [0.9, 0.22, 0.06], [cx, FT + 2.4, cz - hd + 0.3], { emi: 1.2, unlit: true });
+      K.box(node, P.alienHot, [0.22, 0.9, 0.06], [cx, FT + 2.4, cz - hd + 0.3], { emi: 1.2, unlit: true });
+    } else if (r.isBridge) {
+      // PONT : grande BAIE VITRÉE sur l'espace (étoiles) + console de commandement en arc + sièges.
+      K.box(node, [0.02, 0.03, 0.06], [r.size.w * 0.82, 2.6, 0.2], [cx, FT + 2.4, cz + hd - 0.25]); // vitre sombre
+      K.box(node, P.alienGlow, [r.size.w * 0.84, 0.12, 0.14], [cx, FT + 1.1, cz + hd - 0.25], { emi: 1.0, unlit: true }); // cadre bas
+      K.box(node, P.alienGlow, [r.size.w * 0.84, 0.12, 0.14], [cx, FT + 3.7, cz + hd - 0.25], { emi: 1.0, unlit: true }); // cadre haut
+      for (let i = 0; i < 16; i++) K.box(node, P.alienHot, [0.07, 0.07, 0.02], [cx - r.size.w * 0.38 + (i % 8) * (r.size.w * 0.76 / 7), FT + 1.5 + Math.floor(i / 8) * 1.4, cz + hd - 0.27], { emi: 1.4, unlit: true }); // étoiles
+      const cons = K.node(node, [cx, FT, cz + hd - 2.4]);
+      K.cyl(cons, metalDk, { h: 1.0, dt: 3.2, db: 3.6, t: 10 }, [0, 0.5, 0]); // console arc
+      K.box(cons, P.alienGlow, [3.4, 0.08, 1.2], [0, 1.05, 0], { emi: 1.1, unlit: true }); // pupitre lumineux
+      for (const sx of [-1, 1]) { const seat = K.node(cons, [sx * 1.4, 0, 1.4]); K.box(seat, hull, [0.7, 0.5, 0.7], [0, 0.55, 0]); K.box(seat, hull, [0.7, 0.8, 0.2], [0, 1.0, -0.3]); } // sièges
+    }
   }
 
   private dispose(): void {
