@@ -2126,7 +2126,7 @@ async function boot(): Promise<void> {
     liftoff.update(dtSec, state.flight, state.tick); // M11/E3b : cinématique du décollage (caméra incluse)
     // M11/RF1b : le vaisseau au camp — visible une fois trouvé, s'assemble au fil de la coque ; masqué
     // pendant le décollage (la cinématique `liftoff` représente alors le vaisseau).
-    shipAtCamp.sync(!!state.perks["ship_found"] && !flying, state.ship.hull);
+    shipAtCamp.sync(!!state.perks["ship_found"] && !flying, state.ship.hull, state.ship.engine);
     shipAtCamp.update(dtSec);
     // M8.5/F1 — PODOMÈTRE : les rencontres se déclenchent PAR PAS de déplacement (1 pas = 1 cellule
     // = 12 u), fidèle au `checkFight` d'ADR. Immobile = rien ; téléport (saut > 3 u/frame) ignoré.
