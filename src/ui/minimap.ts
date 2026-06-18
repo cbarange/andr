@@ -12,7 +12,7 @@
 import type { GameState } from "../sim/state";
 import type { WorldMap } from "../sim/worldgen";
 import { dungeonFor, executionerDungeon } from "../sim/dungeon";
-import { worldgen, campLayout } from "../../data/world";
+import { worldgen, campLayout, Biome } from "../../data/world";
 
 const CELL = worldgen.cellSize;
 const SAFE_R = worldgen.safeRadiusCells * CELL; // rayon de la zone sûre (camp) en u
@@ -32,6 +32,16 @@ export interface MinimapCtx {
 
 type Layer = "camp" | "interior" | "world";
 
+// Teinte de fog par BIOME découvert (terrain exploré coloré, semi-transparent). Camp/Forêt/Champ/
+// Lande/Marais (cf. data/world.ts Biome). Hors-grille -> lande par défaut.
+const BIOME_FOG: Record<number, string> = {
+  [Biome.Camp]: "rgba(150,135,95,0.30)", // sol de camp (tan)
+  [Biome.Forest]: "rgba(60,110,70,0.30)", // forêt (vert sombre)
+  [Biome.Field]: "rgba(120,150,80,0.30)", // champ (vert-olive clair)
+  [Biome.Barren]: "rgba(120,110,95,0.26)", // lande (gris-brun)
+  [Biome.Swamp]: "rgba(70,115,110,0.30)", // marais (teal trouble)
+};
+
 const C = {
   bg: "rgba(14,17,19,0.82)", frame: "rgba(120,140,150,0.5)", grid: "rgba(120,140,150,0.16)",
   ink: "#9fb0b8", inkDim: "rgba(159,176,184,0.45)", self: "#e8f0f2", obj: "#ffd78a",
@@ -48,7 +58,7 @@ export class Minimap {
 
   constructor() {
     const c = document.createElement("canvas");
-    c.width = 360; c.height = 360; // résolution interne (retina-friendly via CSS scale)
+    c.width = 440; c.height = 440; // résolution interne (retina-friendly via CSS scale)
     this.applyStyle(c, false);
     document.body.appendChild(c);
     this.canvas = c;
@@ -60,8 +70,8 @@ export class Minimap {
       c.style.cssText = "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(72vmin,640px);height:min(72vmin,640px);"
         + "z-index:40;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,0.6);pointer-events:none";
     } else {
-      c.style.cssText = "position:fixed;right:18px;top:18px;width:180px;height:180px;z-index:18;"
-        + "border-radius:8px;opacity:0.94;pointer-events:none";
+      c.style.cssText = "position:fixed;right:18px;top:18px;width:224px;height:224px;z-index:18;"
+        + "border-radius:8px;opacity:0.95;pointer-events:none";
     }
   }
 
@@ -195,12 +205,14 @@ export class Minimap {
     const S = this.canvas.width, span = WORLD_R + 60;
     const map = (wx: number, wz: number): [number, number] => [S / 2 + (wx / span) * (S / 2 - 12), S / 2 + (wz / span) * (S / 2 - 12)];
     const g = this.ctx2d;
-    // Fog : chunks révélés (premier-vu partagé).
-    g.fillStyle = "rgba(159,176,184,0.07)";
+    // Fog : chunks révélés (premier-vu partagé), TEINTÉS PAR BIOME découvert (couleur du terrain).
     const cs = (CHUNK / span) * (S / 2 - 12);
+    const half = Math.floor(worldgen.chunkCells / 2);
     for (const key of Object.keys(ctx.state.visitedCells ?? {})) {
       const ci = key.indexOf(","); if (ci < 0) continue;
       const chx = Number(key.slice(0, ci)), chz = Number(key.slice(ci + 1));
+      const biome = ctx.worldMap.biomeAt(chx * worldgen.chunkCells + half, chz * worldgen.chunkCells + half); // cellule centrale du chunk
+      g.fillStyle = BIOME_FOG[biome] ?? BIOME_FOG[Biome.Barren];
       const [x, y] = map((chx + 0.5) * CHUNK, (chz + 0.5) * CHUNK); // centre de la cellule de chunk
       g.fillRect(x - cs / 2, y - cs / 2, cs, cs);
     }
@@ -234,13 +246,15 @@ export class Minimap {
 
   // ---- Briques ----
 
-  /** Flèche du joueur (orientée selon le cap caméra). Edge-clampée si hors-cadre. */
+  /** Flèche du joueur, orientée selon le CAP CAMÉRA. Le « forward » monde = (sin yaw, cos yaw)
+   *  (cf. player.ts), et la carte projette +z VERS LE BAS -> la rotation canvas correcte est
+   *  `π − yaw` (sinon la flèche pointe à l'inverse — bug playtest). Edge-clampée si hors-cadre. */
   private drawSelf(ctx: MinimapCtx, map: (wx: number, wz: number) => [number, number]): void {
     const g = this.ctx2d, S = this.canvas.width;
     let [x, y] = map(ctx.px, ctx.pz);
-    x = Math.max(8, Math.min(S - 8, x)); y = Math.max(8, Math.min(S - 8, y));
-    g.save(); g.translate(x, y); g.rotate(ctx.yaw);
-    g.fillStyle = C.self; g.beginPath(); g.moveTo(0, -7); g.lineTo(5, 6); g.lineTo(0, 3); g.lineTo(-5, 6); g.closePath(); g.fill();
+    x = Math.max(9, Math.min(S - 9, x)); y = Math.max(9, Math.min(S - 9, y));
+    g.save(); g.translate(x, y); g.rotate(Math.PI - ctx.yaw);
+    g.fillStyle = C.self; g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 7); g.lineTo(0, 3.5); g.lineTo(-6, 7); g.closePath(); g.fill();
     g.restore();
   }
 
