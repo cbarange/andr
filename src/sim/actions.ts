@@ -223,6 +223,15 @@ export type RevealCellsAction = {
   chunks: string[]; // clés "chunkX,chunkZ" ; bornées à 32 côté hôte
 };
 
+/** M11/RF8 : entrée de PILOTAGE pendant le décollage (esquive). Maintenue, émise ~10 Hz (comme
+ *  SET_POSITIONS). (x,y) ∈ [−1,1] (gauche/droite, bas/haut). L'hôte agrège (somme) les pilotes à bord. */
+export type SteerAction = {
+  type: "STEER";
+  playerId: string;
+  x: number;
+  y: number;
+};
+
 // ---- M8 : combat temps réel (rencontres non-spatiales par joueur, fidèle ADR) ----
 
 /**
@@ -441,6 +450,7 @@ export type GameAction =
   | CraftItemAction
   | SetOutsideAction
   | RevealCellsAction
+  | SteerAction
   | StepsAction
   | EngageGuardianAction
   | EnterRoomAction
@@ -500,6 +510,7 @@ export type PlayerAction =
   | CraftItemAction
   | SetOutsideAction
   | RevealCellsAction
+  | SteerAction
   | StepsAction
   | EngageGuardianAction
   | EnterRoomAction
@@ -634,6 +645,9 @@ export function setOutside(playerId: string, outside: boolean, tier?: number, on
 }
 export function revealCells(playerId: string, chunks: string[]): RevealCellsAction {
   return { type: "REVEAL_CELLS", playerId, chunks };
+}
+export function steer(playerId: string, x: number, y: number): SteerAction {
+  return { type: "STEER", playerId, x, y };
 }
 export function steps(playerId: string, n: number, tier: number, biome: string, onRoad: boolean, x: number, z: number): StepsAction {
   return { type: "STEPS", playerId, n, tier, biome, onRoad, x, z };

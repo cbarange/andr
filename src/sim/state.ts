@@ -174,12 +174,19 @@ export interface SharedFlight {
   z: number;
   hull: number; // PV de coque COMMUNS (partagés par l'équipage)
   hullMax: number;
-  engine: number; // niveau de moteur capturé au décollage (vitesse d'ascension)
+  engine: number; // niveau de moteur capturé au décollage (vitesse d'ascension ET d'esquive — RF8)
   progress: number; // 0..1 (altitude) ; évasion à 1
-  asteroids: Array<{ id: number; impactAt: number }>; // débris entrants (impact au tic `impactAt`)
+  // M11/RF8 — PILOTAGE D'ESQUIVE : position du vaisseau dans le plan transversal (X = gauche/droite,
+  // Y = bas/haut), intégrée par l'hôte depuis `steer` agrégé. Les astéroïdes ont une VOIE (x,y) ; on
+  // encaisse seulement si le vaisseau les chevauche à l'impact (sinon ESQUIVÉ).
+  shipX: number;
+  shipY: number;
+  steer: Record<string, { x: number; y: number }>; // entrée de pilotage PAR JOUEUR (−1..1), agrégée (somme)
+  lastHitAt: number; // tic du dernier impact subi (i-frames co-op)
+  asteroids: Array<{ id: number; x: number; y: number; impactAt: number }>; // débris : voie (x,y) + tic d'impact
   nextSpawnAt: number; // tic du prochain spawn
   nextAsteroidId: number;
-  fireReadyAt: Record<string, number>; // cooldown de tir PAR JOUEUR
+  fireReadyAt: Record<string, number>; // cooldown de tir PAR JOUEUR (tir = support, RF8)
   aboard: Record<string, true>; // équipage à bord
   countdownAt: number; // tic du décollage forcé (fin d'embarquement)
   seq: number; // id de création (diff rendu)

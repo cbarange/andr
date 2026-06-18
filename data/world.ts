@@ -382,14 +382,22 @@ export const SHIP = {
  *  co-op) : ascension on-rails, COQUE PARTAGÉE, vagues d'astéroïdes seedées ; les joueurs TIRENT pour
  *  abattre les débris entrants avant l'impact. Le moteur accélère l'ascension (gantelet plus court). */
 export const FLIGHT = {
-  ascentSeconds: 30,            // durée de l'ascension à vide (le moteur la raccourcit)
+  ascentSeconds: 45,            // durée de l'ascension à vide (~horloge fidèle ADR ; le moteur la raccourcit)
   engineSpeedup: 0.15,          // chaque cran de moteur réduit la durée d'ascension de 15 %
-  spawnIntervalSeconds: 1.4,    // cadence d'apparition des astéroïdes entrants
-  impactLeadSeconds: 2.4,       // délai avant impact (la fenêtre pour tirer)
-  asteroidDamage: 2,            // dégâts à la coque par astéroïde NON abattu
-  fireCooldownSeconds: 0.5,     // cadence de tir PAR JOUEUR (plus de joueurs = plus de canons)
+  spawnIntervalSeconds: 1.0,    // cadence de spawn à altitude 0 (rétrécit avec l'altitude — voir flight.ts)
+  spawnIntervalMin: 0.38,       // plancher de la cadence (climax : mur d'astéroïdes)
+  impactLeadSeconds: 2.2,       // délai avant que l'astéroïde atteigne le plan du vaisseau (fenêtre d'esquive/tir)
+  asteroidDamage: 1,            // M11/RF8 — 1 coque par COLLISION (fidèle ADR), si on n'esquive pas
+  fireCooldownSeconds: 0.6,     // cadence du TIR de support PAR JOUEUR (abat un rocher imminent)
   boardRadius: 10,              // (u) rayon d'embarquement autour du vaisseau
   boardingCountdownSeconds: 20, // attente max avant décollage forcé (le vaisseau « attend tout le monde »)
+  // --- M11/RF8 : PILOTAGE D'ESQUIVE (plan transversal X/Y) ---
+  steerSpeed: 9,                // (u/s) vitesse latérale de base du vaisseau (esquive)
+  engineSteerBonus: 0.2,        // chaque cran de moteur = +20 % de vitesse d'esquive (fidèle thrusters)
+  tubeRadius: 7.5,              // (u) demi-largeur du couloir d'ascension (clamp de shipX/shipY)
+  laneRadius: 7,                // (u) étendue d'apparition des astéroïdes (x,y seedés dans [−r, r])
+  hitRadius: 1.7,              // (u) rayon de collision astéroïde↔vaisseau (hitbox indulgente, co-op)
+  iframeSeconds: 0.5,           // (s) invulnérabilité après un impact (anti pile-up injuste en co-op)
 } as const;
 
 export const resources = {

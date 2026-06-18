@@ -572,7 +572,9 @@ export function reduce(state: GameState, action: GameAction): GameState {
         status: "boarding",
         x: action.x, z: action.z,
         hull: state.ship.hull, hullMax: state.ship.hull, engine: state.ship.engine,
-        progress: 0, asteroids: [], nextSpawnAt: 0, nextAsteroidId: 1,
+        progress: 0,
+        shipX: 0, shipY: 0, steer: {}, lastHitAt: -1, // M11/RF8 : pilotage d'esquive
+        asteroids: [], nextSpawnAt: 0, nextAsteroidId: 1,
         fireReadyAt: {}, aboard: { [action.playerId]: true },
         countdownAt: state.tick + Math.round(FLIGHT.boardingCountdownSeconds * HZ),
         seq: state.tick,
@@ -591,6 +593,19 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const asteroids = f.asteroids.filter((a) => a.id !== target.id);
       const fireReadyAt = { ...f.fireReadyAt, [pid]: state.tick + Math.round(FLIGHT.fireCooldownSeconds * HZ) };
       return { ...state, flight: { ...f, asteroids, fireReadyAt }, rng: cloneRng(state.rng) };
+    }
+
+    case "STEER": {
+      // M11/RF8 — entrée de PILOTAGE (esquive) d'un membre d'équipage : enregistre son vecteur (−1..1).
+      // L'hôte AGRÈGE (somme) les pilotes à bord dans `stepFlight` pour déplacer le vaisseau partagé.
+      const f = state.flight;
+      const pid = action.playerId;
+      if (!f || f.status !== "ascending" || !f.aboard[pid]) return state;
+      const clamp1 = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
+      const x = clamp1(action.x), y = clamp1(action.y);
+      const cur = f.steer[pid];
+      if (cur && cur.x === x && cur.y === y) return state; // idempotent (pas de churn)
+      return { ...state, flight: { ...f, steer: { ...f.steer, [pid]: { x, y } } }, rng: cloneRng(state.rng) };
     }
 
     case "END_FLIGHT": {
@@ -1719,10 +1734,14 @@ export function reduce(state: GameState, action: GameAction): GameState {
         }
       }
 
-      // 9) DÉCOLLAGE (M11/E3) — ascension du vaisseau (host-autoritaire, déterministe). Hors vol : no-op.
-      //    La survie utilise les valeurs FRAÎCHES (post-drain) pour l'embarquement (joueurs dehors/vivants).
+      // 9) DÉCOLLAGE (M11/E3+RF8) — ascension/esquive (host-autoritaire, déterministe). Hors vol : no-op.
+      //    La survie utilise les valeurs FRAÎCHES (post-drain) pour l'embarquement (joueurs vivants).
+      //    RF8 : les spawns d'astéroïdes sont SEEDÉS -> on passe le `rng` (cloné) que stepFlight consomme.
       let flight = state.flight;
-      if (flight) flight = stepFlight({ ...state, survival }, flight, tick);
+      if (flight) {
+        rng = rng === state.rng ? cloneRng(state.rng) : rng;
+        flight = stepFlight({ ...state, survival }, flight, tick, rng);
+      }
 
       return {
         ...state,

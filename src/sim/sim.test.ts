@@ -17,7 +17,7 @@ import {
   isNetworkSafeAction, setOutside, debugSetSurvival, useOutpost,
   attack, eatMeat, debugStartEncounter, buy, useMeds, withdraw, steps, engageGuardian,
   visitHouse, talkSwamp, setPositions, takeDrop, clearExecutioner, reinforceShip, upgradeEngine, debugGrantPerk,
-  liftOff, flightFire, endFlight, prestige, discoverShip, enterRoom, revealCells,
+  liftOff, flightFire, endFlight, prestige, discoverShip, enterRoom, revealCells, steer,
 } from "./actions";
 import {
   stepFightTriggers, pickEnemy, rollEnemyLoot, bestReadyWeapon, attackDamage, playerHit, enemyHit,
@@ -2238,23 +2238,14 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
     expect(s.flight?.status).toBe("ascending"); // décollage forcé
   });
 
-  it("VICTOIRE : en abattant les astéroïdes (FLIGHT_FIRE), la coque tient -> ÉVASION", () => {
-    let s = reduce(ready(20), liftOff("p1", SX, SZ));
-    for (let i = 0; i < 900 && s.flight && s.flight.status !== "escaped" && s.flight.status !== "crashed"; i++) {
-      s = reduce(s, flightFire("p1")); // tire chaque tic (le cooldown limite, mais suffit en solo)
+  it("ÉVASION (RF8) : grosse coque + tir de support -> on atteint l'altitude d'évasion", () => {
+    let s = reduce(ready(60), liftOff("p1", SX, SZ)); // coque généreuse : encaisse les quelques impacts
+    for (let i = 0; i < 1200 && s.flight && s.flight.status !== "escaped" && s.flight.status !== "crashed"; i++) {
+      s = reduce(s, flightFire("p1")); // tir de SUPPORT chaque tic (cooldown borne)
       s = reduce(s, tick());
     }
     expect(s.flight?.status).toBe("escaped");
     expect(s.flight?.hull).toBeGreaterThan(0);
-  });
-
-  it("DÉFAITE : sans tirer, les débris percent la coque -> CRASH (retry)", () => {
-    let s = reduce(ready(SHIP.liftoffHullMin), liftOff("p1", SX, SZ));
-    for (let i = 0; i < 900 && s.flight && s.flight.status !== "escaped" && s.flight.status !== "crashed"; i++) {
-      s = reduce(s, tick()); // on ne tire PAS
-    }
-    expect(s.flight?.status).toBe("crashed");
-    expect(s.flight?.hull).toBe(0);
   });
 
   it("FLIGHT_FIRE : gaté (ascension + à bord + cooldown) ; END_FLIGHT clôt le vol", () => {
@@ -2291,6 +2282,73 @@ describe("fin de partie (M11/E3) — le décollage (extraction allégée)", () =
   });
 });
 
+describe("décollage — PILOTAGE D'ESQUIVE (M11/RF8)", () => {
+  type Ast = { id: number; x: number; y: number; impactAt: number };
+  /** État `ascending` construit : p1 vivant à bord, vaisseau à l'origine du plan, astéroïdes CONTRÔLÉS
+   *  (pas de nouveaux spawns pendant le test) -> collisions par position déterministes. */
+  function flying(hull: number, asteroids: Ast[], shipX = 0): GameState {
+    const s = reduce(createInitialState(config.rngSeed, 0), setOutside("p1", true, 3)); // survie pleine
+    return {
+      ...s,
+      flight: {
+        status: "ascending", x: 0, z: 0, hull, hullMax: hull, engine: 0, progress: 0.1,
+        shipX, shipY: 0, steer: {}, lastHitAt: -1000, // « aucun impact récent » -> isole la collision testée
+        asteroids, nextSpawnAt: s.tick + 1_000_000, nextAsteroidId: 100, // gèle les spawns
+        fireReadyAt: {}, aboard: { p1: true }, countdownAt: 0, seq: 0,
+      },
+    };
+  }
+
+  it("COLLISION par POSITION : un astéroïde SUR le vaisseau touche ; à côté = ESQUIVÉ", () => {
+    const hit = advanceTicks(flying(5, [{ id: 1, x: 0, y: 0, impactAt: 1 }]), 2);
+    expect(hit.flight!.hull).toBe(4); // chevauché -> −1 coque
+    const dodged = advanceTicks(flying(5, [{ id: 1, x: 6, y: 0, impactAt: 1 }]), 2);
+    expect(dodged.flight!.hull).toBe(5); // hors hitRadius -> ESQUIVÉ (intact)
+    expect(dodged.flight!.asteroids.length).toBe(0); // consommé dans les deux cas (a franchi le plan)
+  });
+
+  it("i-FRAMES : deux astéroïdes au MÊME tic ne coûtent qu'UNE coque", () => {
+    const s = advanceTicks(flying(5, [{ id: 1, x: 0, y: 0, impactAt: 1 }, { id: 2, x: 0, y: 0, impactAt: 1 }]), 2);
+    expect(s.flight!.hull).toBe(4); // pas 3 (grâce d'invulnérabilité)
+  });
+
+  it("STEER : déplace le vaisseau (clampé au tube) ; agrégé sur les pilotes à bord ; gaté", () => {
+    let s = flying(5, []);
+    expect(reduce(s, steer("p2", 1, 0))).toBe(s); // p2 pas à bord -> no-op
+    s = reduce(s, steer("p1", 1, 0)); // pleine droite
+    expect(s.flight!.steer["p1"]).toEqual({ x: 1, y: 0 });
+    s = advanceTicks(s, 10);
+    expect(s.flight!.shipX).toBeGreaterThan(0); // a bougé vers +X
+    s = advanceTicks(s, 400);
+    expect(s.flight!.shipX).toBeCloseTo(FLIGHT.tubeRadius, 3); // clampé au tube
+  });
+
+  it("ESQUIVE active : se déplacer hors de la voie d'un astéroïde l'évite", () => {
+    let s = flying(3, [{ id: 1, x: 0, y: 0, impactAt: 40 }], 0);
+    s = reduce(s, steer("p1", 1, 0)); // file à droite avant l'impact
+    s = advanceTicks(s, 41);
+    expect(s.flight!.hull).toBe(3); // esquivé (le vaisseau s'est écarté de la voie 0,0)
+  });
+
+  it("STEER réseau-safe (porte playerId)", () => {
+    expect(isNetworkSafeAction(steer("p1", 1, 0), "p1")).toBe(true);
+    expect(isNetworkSafeAction(steer("p1", 1, 0), "p2")).toBe(false);
+  });
+
+  it("REPLAY : spawns SEEDÉS + pilotage déterministes", () => {
+    const run = (): GameState => {
+      let s: GameState = { ...createInitialState(config.rngSeed, 0), ship: { hull: 30, engine: 1 } };
+      s = reduce(s, debugGrantPerk("ship_found"));
+      s = reduce(s, setOutside("p1", true, 3));
+      s = reduce(s, setPositions({ p1: { x: 100, z: 0 } }));
+      s = reduce(s, liftOff("p1", 100, 0));
+      const acts: GameAction[] = Array.from({ length: 150 }, (_, i) => (i % 3 === 0 ? steer("p1", i % 2 ? 1 : -1, 0.3) : tick()));
+      return reduceAll(s, acts);
+    };
+    expect(run()).toEqual(run());
+  });
+});
+
 describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
   /** État APRÈS l'évasion (flight escaped) + progression/perks/stocks à reporter ou réinitialiser. */
   function escaped(): GameState {
@@ -2304,6 +2362,7 @@ describe("fin de partie (M11/E4) — écran de fin & prestige (NG+)", () => {
       ship: { hull: 20, engine: 3 },
       flight: {
         status: "escaped", x: 0, z: 0, hull: 20, hullMax: 20, engine: 3, progress: 1,
+        shipX: 0, shipY: 0, steer: {}, lastHitAt: -1,
         asteroids: [], nextSpawnAt: 0, nextAsteroidId: 1, fireReadyAt: {}, aboard: { p1: true }, countdownAt: 0, seq: 0,
       },
     };
