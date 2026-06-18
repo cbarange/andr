@@ -625,6 +625,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
       const item = craftableItemById[action.itemId];
       if (!item) return state;
       if (item.building && (state.buildings[item.building] ?? 0) === 0) return state; // prérequis bâtiment
+      if (item.requiresPerk && !state.perks[item.requiresPerk]) return state; // M11/RF7 — Fabricator gaté (antichambre du cuirassé)
       const pid = action.playerId;
       if (item.maximum !== undefined) {
         const owned = item.type === "upgrade" ? stockOf(state, item.id) : carriedOf(state, pid, item.id);
@@ -1703,6 +1704,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
             const cur = sites[key];
             const newProg: SiteProgress = { ...cur, rooms: { ...cur.rooms!, [roomId]: "cleared" } };
             if (room.wing) newProg.wings = { ...(newProg.wings ?? {}), [room.wing]: true }; // gate du pont
+            // M11/RF7 — franchir l'ANTICHAMBRE débloque le Fabricator au camp (perk `executioner_cleared`).
+            if (room.isHub && !perksOut["executioner_cleared"]) perksOut = { ...perksOut, executioner_cleared: true };
             if (room.isBridge) newProg.cleared = true; // cuirassé FINI
             sites = { ...sites, [key]: newProg };
             if (room.isBridge) roads = drawRoad(roads, sites, cxs, czs);

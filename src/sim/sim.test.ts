@@ -2094,6 +2094,36 @@ describe("cuirassé EXPLORABLE (M11/RF2) — donjon de salles, arènes verrouill
   });
 });
 
+describe("Fabricator (M11/RF7) — tech alien gatée sur l'antichambre du cuirassé", () => {
+  const CX = 41, CZ = 41, KEY = siteKey(CX, CZ);
+
+  it("stats : fusil à plasma (16 dégâts) & armure cinétique (75 PV, meilleure que l'acier)", () => {
+    expect(weaponById["plasma rifle"].damage).toBe(16);
+    const armoured: GameState = { ...createInitialState(config.rngSeed, 0), resources: { "kinetic armour": 1 } };
+    expect(maxHealthOf(armoured)).toBe(75);
+    const steel: GameState = { ...createInitialState(config.rngSeed, 0), resources: { "s armour": 1 } };
+    expect(maxHealthOf(steel)).toBe(45); // l'acier reste à 45 -> la cinétique domine
+  });
+
+  it("CRAFT gaté : refusé sans `executioner_cleared` ; OK avec le perk (alliage consommé, au sac)", () => {
+    const base: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10, resources: { "alien alloy": 5, steel: 200, "energy cell": 20 } };
+    expect(reduce(base, craftItem("p1", "plasma rifle"))).toBe(base); // pas de perk -> no-op
+    const withPerk: GameState = { ...base, perks: { executioner_cleared: true } };
+    const s = reduce(withPerk, craftItem("p1", "plasma rifle"));
+    expect(carriedOf(s, "p1", "plasma rifle")).toBe(1); // arme au sac
+    expect(s.resources["alien alloy"]).toBe(4); // 5 - 1 alliage consommé
+  });
+
+  it("franchir l'ANTICHAMBRE du cuirassé pose `executioner_cleared` (débloque le Fabricator)", () => {
+    let s: GameState = { ...createInitialState(config.rngSeed, 0), cabinTier: 10 };
+    expect(s.perks["executioner_cleared"]).toBeUndefined();
+    s = reduce(s, enterRoom("p1", CX, CZ, "antechamber")); // hub : aucun ennemi
+    s = advanceTicks(s, 1); // TICK 8e : antichambre vidée -> cleared + perk
+    expect(s.sites[KEY].rooms?.antechamber).toBe("cleared");
+    expect(s.perks["executioner_cleared"]).toBe(true);
+  });
+});
+
 describe("fin de partie (M11/E2) — réparer le vaisseau", () => {
   /** État avec le vaisseau RÉVÉLÉ (ou non) et de l'alliage en réserve. cabinTier 10 = plafonds larges. */
   function shipState(alloy = 10, revealed = true): GameState {

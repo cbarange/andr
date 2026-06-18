@@ -315,8 +315,15 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
 - ✅ **Vérif** : tests purs (drop garanti au clear du pont, beacon absent après PRESTIGE) + e2e M11
   (beacon en stock → épilogue « flotte »). Hook debug `endingText`. 275 tests, 17 e2e.
 
-### **RF7 — Fabricator (optionnel) + polish + audio** *(M)*
-- Onglet Fabricator au camp (gaté antichambre cuirassé), audio de fin/espace dédié, équilibrage.
+### **RF7 — Fabricator (optionnel)** *(M)* — ✅ **FAIT**
+- ✅ **Tech alien gatée** : `CraftableItem.requiresPerk` (additif) + garde `CRAFT_ITEM`. Franchir
+  l'**antichambre** du cuirassé pose `executioner_cleared` (TICK 8e, RF7) → débloque le fabricateur à
+  l'atelier du camp (réutilise l'UI M10, aucun nouveau système ; texte « l'établi ronronne d'une lueur
+  alien »). Items : **fusil à plasma** (16 dégâts, ajouté à `weapons` — utilisable en combat) + **armure
+  cinétique** (75 PV, en tête d'`ARMOR_HEALTH`), recettes à l'**alliage**. Optionnel (pas requis pour fuir).
+- ✅ **Vérif** : tests purs (gate sans/avec perk + alliage consommé, stats, `executioner_cleared` au clear
+  de l'antichambre) + e2e (gaté → grantPerk → craft → au sac). **281 tests, 18 e2e.**
+- ⏳ *Reste optionnel* : autres recettes ADR (stim/disruptor/cargo drone…), audio de fin/espace dédié.
 
 ---
 

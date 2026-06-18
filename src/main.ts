@@ -764,9 +764,13 @@ async function boot(): Promise<void> {
   // bâtiment est satisfait) ; false = via la constructrice (items SANS bâtiment requis, ex. torche).
   // Coûts puisés dans l'ENTREPÔT, l'objet va au SAC (guards sim CRAFT_ITEM : recette/bâtiment/place).
   function craftView(atelier: boolean): DialogueView {
-    const items = craftableItems.filter((it) =>
-      atelier ? !it.building || (state.buildings[it.building] ?? 0) > 0 : !it.building,
-    );
+    const items = craftableItems.filter((it) => {
+      // M11/RF7 — Fabricator : items gatés PERK (tech alien) -> à l'atelier, seulement une fois
+      // l'antichambre du cuirassé franchie. Jamais chez la constructrice (objets simples).
+      if (it.requiresPerk) return atelier && !!state.perks[it.requiresPerk];
+      return atelier ? !it.building || (state.buildings[it.building] ?? 0) > 0 : !it.building;
+    });
+    const hasFab = atelier && craftableItems.some((it) => it.requiresPerk && !!state.perks[it.requiresPerk]);
     const room = carryCapacity(state) - carriedTotal(state, self()) > 0;
     const choices: DialogueChoice[] = items.map((it) => {
       const isUpgrade = it.type === "upgrade"; // M10 : possession du village -> entrepôt, max 1
@@ -793,8 +797,10 @@ async function boot(): Promise<void> {
       };
     });
     return {
-      speaker: atelier ? "l'atelier" : "la constructrice",
-      text: atelier ? "l'établi est prêt. qu'est-ce qu'on fabrique ?" : "« je peux te préparer quelques objets simples. »",
+      speaker: hasFab ? "l'atelier · fabricateur" : atelier ? "l'atelier" : "la constructrice",
+      text: hasFab
+        ? "l'établi ronronne d'une lueur alien — le fabricateur a appris d'étranges plans. qu'est-ce qu'on forge ?"
+        : atelier ? "l'établi est prêt. qu'est-ce qu'on fabrique ?" : "« je peux te préparer quelques objets simples. »",
       choices: [...choices, { label: "(fermer)", enabled: true, onSelect: closeInteractive }],
     };
   }

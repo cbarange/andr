@@ -149,6 +149,7 @@ export const CARRY_BONUS: Array<[string, number]> = [
   ["convoy", 60], ["wagon", 30], ["rucksack", 10],
 ];
 export const ARMOR_HEALTH: Array<[string, number]> = [
+  ["kinetic armour", 75], // M11/RF7 — Fabricator (alliage) : la meilleure armure (au-dessus de l'acier)
   ["s armour", 45], ["i armour", 25], ["l armour", 15], // PV MAX totaux (base 10 sinon)
 ];
 
@@ -205,6 +206,8 @@ export const weapons: WeaponDef[] = [
   { id: "rifle", name: "fusil", damage: 5, cooldownSeconds: 1, kind: "ranged", ammo: "bullets" },
   { id: "grenade", name: "grenade", damage: 15, cooldownSeconds: 5, kind: "ranged", ammo: "grenade" },
   { id: "laser rifle", name: "fusil laser", damage: 8, cooldownSeconds: 1, kind: "ranged", ammo: "energy cell" },
+  // M11/RF7 — Fabricator (tech alien, gaté `executioner_cleared`) : la meilleure arme.
+  { id: "plasma rifle", name: "fusil à plasma", damage: 16, cooldownSeconds: 1, kind: "ranged", ammo: "energy cell" },
 ];
 export const weaponById: Record<string, WeaponDef> = Object.fromEntries(weapons.map((w) => [w.id, w]));
 
@@ -796,6 +799,9 @@ export interface CraftableItem {
   building: string | null; // prérequis bâtiment (M10 : "workshop") ; null = aucun (v1)
   recipe: Record<string, number>; // coût en ressources de l'entrepôt
   maximum?: number; // nombre max possédé (upgrades ADR : 1)
+  /** M11/RF7 — Fabricator : prérequis PERK (ex. `executioner_cleared`) au lieu d'un bâtiment.
+   *  Visible/fabricable seulement une fois ce perk acquis (antichambre du cuirassé franchie). */
+  requiresPerk?: string;
 }
 
 export const craftableItems: CraftableItem[] = [
@@ -820,6 +826,13 @@ export const craftableItems: CraftableItem[] = [
   { id: "iron sword", name: "épée de fer", type: "weapon", building: "workshop", recipe: { wood: 200, leather: 50, iron: 20 } },
   { id: "steel sword", name: "épée d'acier", type: "weapon", building: "workshop", recipe: { wood: 500, leather: 100, steel: 20 } },
   { id: "rifle", name: "fusil", type: "weapon", building: "workshop", recipe: { wood: 200, steel: 50, sulphur: 50 } },
+  // --- M11/RF7 : LE FABRICATOR (tech alien). Gaté sur l'antichambre du cuirassé franchie
+  //     (`executioner_cleared`). Recettes à l'ALLIAGE — puissance parallèle, optionnelle (pas requise
+  //     pour s'évader). Réutilise l'atelier M10 (CRAFT_ITEM) : aucun nouveau système. ---
+  { id: "plasma rifle", name: "fusil à plasma", type: "weapon", requiresPerk: "executioner_cleared", building: null,
+    recipe: { "alien alloy": 1, steel: 50, "energy cell": 10 } },
+  { id: "kinetic armour", name: "armure cinétique", type: "upgrade", requiresPerk: "executioner_cleared", building: null, maximum: 1,
+    recipe: { "alien alloy": 2, steel: 100, leather: 100 } },
 ];
 
 export const craftableItemById: Record<string, CraftableItem> = Object.fromEntries(craftableItems.map((i) => [i.id, i]));
@@ -856,6 +869,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   leather: "cuir", scales: "écailles", teeth: "dents", cloth: "étoffe", charm: "charme",
   iron: "fer", coal: "charbon", sulphur: "soufre", steel: "acier", bullets: "balles", bait: "appât",
   "alien alloy": "alliage", "energy cell": "cellule", "fleet beacon": "balise de flotte", torch: "torche",
+  "plasma rifle": "fusil à plasma", "kinetic armour": "armure cinétique",
   medicine: "médecine", "bone spear": "lance d'os",
   // M10 — atelier & troc :
   waterskin: "outre", cask: "baril", "water tank": "citerne",

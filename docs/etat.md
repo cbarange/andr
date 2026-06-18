@@ -27,8 +27,8 @@ camp, beacon optionnel) → **refonte planifiée** : [`m11-refonte-roadmap.md`](
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 278 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie inclus
-npm run e2e     # 17 tests Playwright (boucle, P2P, save, perf, sites, survie, combat, cuirassé…) + capture
+npm run test    # 281 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie inclus
+npm run e2e     # 18 tests Playwright (boucle, P2P, save, perf, sites, survie, combat, cuirassé, fabricator…) + capture
 npm run typecheck
 ```
 

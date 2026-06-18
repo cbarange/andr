@@ -716,3 +716,28 @@ test("M11/RF2b — cuirassé explorable : entrer verrouille l'arène, le pont es
 
   expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
 });
+
+// M11/RF7 — LE FABRICATOR : tech alien (fusil à plasma) gatée sur l'antichambre du cuirassé franchie
+// (`executioner_cleared`). Optionnel ; vérifie le gate + la fabrication via l'atelier (CRAFT_ITEM).
+test("M11/RF7 — Fabricator : le fusil à plasma est gaté sur l'antichambre du cuirassé", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.waitForTimeout(400);
+
+  // Entrepôt plein (alliage + acier + cellules) MAIS sans le perk -> fabrication REFUSÉE.
+  await page.evaluate(() => { const g = window.__game; g?.setCabinTier?.(10); g?.fillStorage?.(0.8); });
+  await page.evaluate(() => window.__game?.craft?.("plasma rifle"));
+  await page.waitForTimeout(200);
+  expect(await carried(page, "plasma rifle")).toBe(0); // gaté : rien au sac
+
+  // Antichambre franchie (perk acquis) -> le fabricateur forge le fusil à plasma.
+  await page.evaluate(() => window.__game?.grantPerk?.("executioner_cleared"));
+  await page.evaluate(() => window.__game?.craft?.("plasma rifle"));
+  await expect.poll(() => carried(page, "plasma rifle")).toBeGreaterThanOrEqual(1); // au sac
+
+  expect(pageErrors, `erreurs:\n${pageErrors.join("\n")}`).toEqual([]);
+});
