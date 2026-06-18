@@ -301,11 +301,16 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   réutilise le mouvement normal — zéro reprise de caméra = faible risque) → **fondu au noir** PILE au seuil
   (qui émet `ENTER_ROOM(antichambre)`) → FPV dedans. Input neutralisé pendant, restauré à la fin. Vérifié
   preview (joue, revient à idle, input rendu, zéro erreur). Hooks debug `testThresholdCine`/`cineActive`.
-- ⏳ **Reste** : étendre aux **grottes/mines** (entrée) + la **SORTIE** (« ressortir »), via des verbes de
-  seuil ; **caméra serrée** (spring-arm sphere-cast) ; **réglage du FEEL** (durées, choré, esthétique de la
-  porte) — à affiner via **playtest** (le ressenti se juge en interactif, pas en headless).
-- **Exception : cabane** (garde son fondu 3PV↔1PV). **Accept.** : entrer joue une mini-cinématique fluide,
-  aucune coupe sèche, 100 % local.
+- ✅ **GROTTES/MINES + SORTIE FAITES** (`main.ts`) : cinématique **auto-déclenchée au franchissement de
+  seuil** (edge du « dedans ») — entrée grotte (herse) / mine (portillon) + **sortie** (tout type clos, y
+  compris cuirassé). Porte + fondu **sans pas scripté** (le franchissement a déjà eu lieu → on ne bouscule
+  pas le joueur) ; **anti-spam** (cooldown 1,2 s + garde `cine.active`) ; timeout-safe. L'entrée du cuirassé
+  garde son pas scripté (focus). Helper unifié `startThresholdCine`. Vérifié preview (entrée/sortie grotte :
+  déclenche, revient à idle, input rendu, zéro erreur) ; 281 tests, 18 e2e.
+- ⏳ **Reste (optionnel, à affiner en PLAYTEST)** : **réglage du FEEL** (durées/choré/esthétique des portes),
+  **caméra serrée** (spring-arm sphere-cast) — le ressenti se juge manette en main, pas en headless.
+- **Exception : cabane** (garde son fondu 3PV↔1PV). **Accept.** : entrer/sortir joue une mini-cinématique
+  fluide, aucune coupe sèche, 100 % local. ✅
 
 ### **RF6 — Beacon & fins** *(S)* — ✅ **FAIT**
 - ✅ `fleet beacon` = **drop GARANTI** du boss du pont (`immortal wanderer`) — ajouté au `room.loot` du pont

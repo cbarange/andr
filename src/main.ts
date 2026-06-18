@@ -438,6 +438,22 @@ async function boot(): Promise<void> {
   const cineDoor = new AnimatedDoor(scene);
   const dipOverlay = new DipOverlay();
   let cineCommit: (() => void) | null = null;
+  let cineForceWalk = false; // pas scripté SEULEMENT pour l'entrée du cuirassé (focus) ; sinon door+dip
+  let cineCooldown = 0; // s — anti-spam : pas de re-déclenchement juste après une cinématique (seuil hover)
+  let prevInteriorKind: "" | "cave" | "mine" | "ship" = ""; // pour détecter le franchissement de seuil (edge)
+  /** Lance une cinématique de seuil (porte du `type` + fondu) si aucune n'est active. `forceWalk` = pas
+   *  scripté (réservé à l'entrée focus du cuirassé) ; `commit` = action sim au fondu (ex. ENTER_ROOM). */
+  function startThresholdCine(dir: "in" | "out", type: "cave" | "mine" | "ship", forceWalk: boolean, commit: (() => void) | null): void {
+    if (cine.active) return;
+    const yaw = cameraYaw(camera), fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
+    cineDoor.place(type, dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
+    cineDoor.setEnabled(true);
+    cineForceWalk = forceWalk;
+    cineCommit = commit;
+    cine.start(dir, type);
+    audio.playSfx("checkTraps");
+  }
   // MINIMAP UNIFIÉE & CONTEXTUELLE (M11/RF4b) : un seul widget 2D qui se contextualise (camp / monde /
   // intérieur). Lit le snapshot (fog `visitedCells`, sites, routes, donjons) ; plein écran sur `M`.
   const minimap = new Minimap();
@@ -1319,16 +1335,9 @@ async function boot(): Promise<void> {
         act: () => {
           if (et.sealed) { hud.toast("le pont reste scellé — il faut d'abord nettoyer les trois ailes du cuirassé."); return; }
           if (et.room === "antechamber" && !cine.active) {
-            // RF5 — pénétrer par le SAS : cinématique de seuil (porte alien + pas franchi + fondu),
+            // RF5 — pénétrer par le SAS : cinématique de seuil (porte alien + PAS SCRIPTÉ + fondu),
             // ENTER_ROOM(antichambre) émis AU FONDU (chargement masqué). 100 % local, timeout-safe.
-            const yaw = cameraYaw(camera);
-            const fx = Math.sin(yaw), fz = Math.cos(yaw);
-            const dx = player.position.x + fx * 3, dz = player.position.z + fz * 3;
-            cineDoor.place("ship", dx, terrainHeight(dx, dz) + 0.3, dz, yaw);
-            cineDoor.setEnabled(true);
-            cineCommit = () => emit(enterRoom(self(), et.cx, et.cz, "antechamber"));
-            cine.start("in", "ship");
-            audio.playSfx("checkTraps");
+            startThresholdCine("in", "ship", true, () => emit(enterRoom(self(), et.cx, et.cz, "antechamber")));
           } else {
             emit(enterRoom(self(), et.cx, et.cz, et.room));
             audio.playSfx("weaponMelee");
@@ -1924,16 +1933,19 @@ async function boot(): Promise<void> {
     // M11/RF5 — CINÉMATIQUE DE SEUIL : si active, on avance la machine d'état, on pilote la porte/le
     // fondu, on émet le commit (ENTER_ROOM) au fondu max, et l'input est neutralisé (pas scripté pendant
     // la phase « walking »). Timeout-safe : la machine revient toujours à `idle` (jamais coincé).
+    if (cineCooldown > 0) cineCooldown = Math.max(0, cineCooldown - dtSec);
     const cineFrame = cine.active ? cine.advance(dtSec) : null;
     const cineActive = cine.active;
     if (cineFrame) {
       cineDoor.setOpen(cineFrame.doorOpen);
       dipOverlay.set(cineFrame.dip);
       if (cineFrame.commit && cineCommit) { cineCommit(); cineCommit = null; }
-      if (!cine.active) { cineDoor.setEnabled(false); dipOverlay.set(0); } // cinématique terminée
+      if (!cine.active) { cineDoor.setEnabled(false); dipOverlay.set(0); cineCooldown = 1.2; } // terminée -> anti-spam
     }
     const raw = input.getIntent(); // consomme aussi le front du saut
-    const cineWalk = cineActive && cineFrame?.phase === "walking";
+    // Pas scripté UNIQUEMENT pour l'entrée focus du cuirassé (`cineForceWalk`) ; les seuils auto
+    // (grottes/mines/sortie) = porte + fondu sans bouger le joueur (le franchissement a déjà eu lieu).
+    const cineWalk = cineActive && cineFrame?.phase === "walking" && cineForceWalk;
     const intent = (uiOpen || flying || cineActive)
       ? { forward: cineWalk ? 0.7 : 0, strafe: 0, jump: false, vertical: 0 } // pas scripté pendant le franchissement
       : raw;
@@ -2090,6 +2102,17 @@ async function boot(): Promise<void> {
       }
       const peers = remotes.entries().map((e) => ({ id: e.id, x: e.x, z: e.z, dead: (state.survival[e.id]?.health ?? 1) <= 0 }));
       minimap.update({ state, self: self(), px: player.position.x, pz: player.position.z, yaw: cameraYaw(camera), worldMap, interior: mmInterior, peers });
+
+      // M11/RF5 — CINÉMATIQUE DE SEUIL aux GROTTES/MINES + SORTIE : déclenchée au FRANCHISSEMENT (edge
+      // du « dedans »). Entrée grotte/mine = porte + fondu (sans pas scripté — on a déjà franchi) ;
+      // sortie (grotte/mine/cuirassé) idem. L'ENTRÉE du cuirassé reste gérée par le focus (ENTER_ROOM).
+      const kind: "" | "cave" | "mine" | "ship" = !mmInterior ? "" : mmInterior.type === "executioner" ? "ship" : mmInterior.type === "cave" ? "cave" : "mine";
+      if (kind !== prevInteriorKind && !cine.active && cineCooldown <= 0 && !uiOpen && !flying) {
+        if (prevInteriorKind === "" && (kind === "cave" || kind === "mine")) startThresholdCine("in", kind, false, null); // entrée grotte/mine
+        else if (kind === "" && prevInteriorKind !== "") startThresholdCine("out", prevInteriorKind, false, null); // sortie (tout type clos)
+      }
+      // On suit l'état même quand on ne déclenche pas (entrée cuirassé par focus, cinématique active…).
+      if (!cine.active) prevInteriorKind = kind;
     }
     siteLoot.update(player.position); // butin de SURFACE (forages/champs de bataille, R3)
     siteLoot.applyProgress(state.sites ?? {});
