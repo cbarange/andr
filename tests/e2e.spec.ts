@@ -182,6 +182,27 @@ test("un événement s'affiche et se résout via le panneau de choix", async ({ 
   await expect(page.locator("#dialogue")).toBeHidden();
 });
 
+// M10 — RAID MILITAIRE : événement gaté `city_cleared` (posé en pillant une cité). On arme le perk
+// par le raccourci dev (la mécanique de pillage est couverte en unitaire), puis on vérifie le câblage
+// état -> panneau -> choix -> SCÈNE SUIVANTE -> fermeture (flux à 2 scènes : start -> looted -> end).
+test("RAID MILITAIRE : gaté `city_cleared`, s'affiche et se résout (2 scènes)", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+  await page.evaluate(() => { window.__game?.grantPerk?.("city_cleared"); window.__game?.fillStorage?.(0.5); });
+  await page.evaluate(() => window.__game?.triggerEvent?.("military_raid"));
+  await expect.poll(() => page.evaluate(() => window.__game?.getActiveEvent?.()?.id)).toBe("military_raid");
+  await expect(page.locator("#dialogue")).toBeVisible();
+  await expect(page.locator("#dlgText")).toContainText("soldats");
+
+  // « se terrer » -> scène « looted » (next chaîne, déterministe), puis « constater » ferme l'événement.
+  await page.locator(".dlgChoice", { hasText: "se terrer" }).click();
+  await expect.poll(() => page.evaluate(() => window.__game?.getActiveEvent?.()?.scene)).toBe("looted");
+  await page.locator(".dlgChoice", { hasText: "constater" }).click();
+  await expect.poll(() => page.evaluate(() => window.__game?.getActiveEvent?.())).toBeNull();
+  await expect(page.locator("#dialogue")).toBeHidden();
+});
+
 // AUDIO (A1+A2) — on vérifie le CÂBLAGE état -> musique + les réglages, pas l'oreille (headless
 // n'émet pas de son audible). La piste voulue (`getAudio().music`) est posée par reflectState
 // indépendamment du déverrouillage du contexte, donc déterministe en headless.

@@ -6,7 +6,7 @@
 > Fabricator, **décollage pilotable en esquive 3D**). État détaillé : [`etat.md`](etat.md) · jalons :
 > [`roadmap-v2.md`](roadmap-v2.md) · refonte M11 : [`m11-refonte-roadmap.md`](m11-refonte-roadmap.md).
 >
-> Vérif courante : **typecheck propre · 286 tests unitaires · 18 e2e Playwright**.
+> Vérif courante : **typecheck propre · 291 tests unitaires · 19 e2e Playwright**.
 
 ---
 
@@ -61,8 +61,10 @@ jouer, mesurer le ressenti, ajuster les chiffres dans `data/world.ts`, rejouer.
 
 Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M8.6/M10) :
 
-- [ ] **Raid militaire** (M10) — événement gaté sur une **cité nettoyée** (`cityCleared`, déjà posé par la
-  cité scriptée R3b) : il reste à **brancher l'événement** (`data/world.ts` events + reducer + e2e).
+- [x] **Raid militaire** (M10) — ✅ **LIVRÉ** : piller une **cité** pose le perk `city_cleared` (reducer
+  `TAKE_LOOT`) ; l'événement `military_raid` (récurrent, gaté `city_cleared` + population) propose 3 ripostes
+  (fusils → repoussé/coûteux ; tenir la porte ; se terrer → pillage) avec pertes/butin (alliage). Pure data +
+  scene-machine M5. Tests sim (perk, gating, gun-gating, pillage déterministe, replay) + e2e (flux 2 scènes).
 - [ ] **Écran de butin** — à la mort d'un ennemi, un récap du butin tombé (aujourd'hui : pile 3D au sol +
   verbe « ramasser », sans synthèse). Polish UX.
 - [ ] **F5 — perks d'USAGE** (vs les perks de village déjà faits) : les perks consommables/situationnels

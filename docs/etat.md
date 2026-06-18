@@ -32,8 +32,8 @@ reste** = playtest/équilibrage + finition + polish → **[`reste-a-faire.md`](r
 ```bash
 npm install     # postinstall copie le WASM Havok
 npm run dev     # http://localhost:5173
-npm run test    # 286 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie + décollage d'esquive (RF8) inclus
-npm run e2e     # 18 tests Playwright (boucle, P2P, save, perf, sites, survie, combat, cuirassé, fabricator, décollage→évasion→prestige) + capture
+npm run test    # 291 tests de sim/logique (rapide, sans navigateur) — combat co-op + fin de partie + décollage d'esquive (RF8) inclus
+npm run e2e     # 19 tests Playwright (boucle, P2P, save, perf, sites, survie, combat, cuirassé, fabricator, raid militaire, décollage→évasion→prestige) + capture
 npm run typecheck
 ```
 

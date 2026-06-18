@@ -461,13 +461,18 @@ export function reduce(state: GameState, action: GameAction): GameState {
         ...state.sites,
         [key]: { ...prog, type: prog.type ?? action.siteType, discovered: true, taken, cleared },
       };
-      // Grotte NOUVELLEMENT nettoyée (devient avant-poste) -> trace une route vers le réseau (fusion).
-      const lootRoads = cleared && !prog.cleared ? drawRoad(state.roads, lootSites, action.cx, action.cz) : state.roads;
+      const newlyCleared = cleared && !prog.cleared;
+      // Site NOUVELLEMENT nettoyé (devient avant-poste) -> trace une route vers le réseau (fusion).
+      const lootRoads = newlyCleared ? drawRoad(state.roads, lootSites, action.cx, action.cz) : state.roads;
+      // M10 — une CITÉ pillée arme le RAID MILITAIRE : l'armée que l'on a saignée traque les pilleurs
+      // jusqu'au camp (perk `city_cleared`, fidèle au `cityCleared` d'ADR -> events/global.js). Idempotent.
+      const lootPerks = newlyCleared && action.siteType === "city" ? { ...state.perks, city_cleared: true as const } : state.perks;
       return {
         ...state,
         carried: { ...state.carried, [pid]: bag },
         sites: lootSites,
         roads: lootRoads,
+        perks: lootPerks,
         rng: cloneRng(state.rng),
       };
     }

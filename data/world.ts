@@ -1121,6 +1121,58 @@ export const events: GameEvent[] = [
       },
     },
   },
+  { // M10 — LE RAID MILITAIRE (events/global.js d'ADR, gaté `cityCleared`). L'armée que l'on a saignée
+    //  en pillant la CITÉ traque les pilleurs jusqu'au camp. RÉCURRENT (menace persistante). On choisit
+    //  la riposte ; l'issue dépend de l'arsenal (les balles font la différence, fidèle ADR).
+    id: "military_raid",
+    title: "un raid militaire",
+    isAvailable: (g) => !!g.perks["city_cleared"] && g.population > 0,
+    scenes: {
+      start: {
+        text: [
+          "des silhouettes en armure surgissent du sud, fusils au poing.",
+          "ils ont suivi votre piste depuis la cité que vous avez pillée.",
+          "ce ne sont pas des charognards : ce sont des soldats, et ils veulent du sang.",
+        ],
+        notification: "un raid militaire ! des soldats attaquent le village.",
+        choices: [
+          // Riposte armée : coûte des balles (entrepôt) mais repousse proprement 85 % du temps.
+          { id: "guns", text: "riposter aux fusils (20 balles)", available: (g) => stock(g, "bullets") >= 20, cost: { bullets: 20 }, next: { 0.85: "repelled", 1: "costly" } },
+          // Défense de fortune : gratuite, mais l'issue est surtout sanglante.
+          { id: "defend", text: "tenir la porte", next: { 0.35: "repelled", 1: "costly" } },
+          // Se terrer : peu de morts, mais ils pillent l'entrepôt.
+          { id: "hide", text: "se terrer dans la cabane", next: "looted" },
+        ],
+      },
+      repelled: {
+        text: [
+          "les fusils crachent depuis le rempart ; les soldats reculent, laissant leurs morts.",
+          "on dépouille les corps : munitions, acier, et un éclat d'alliage extraterrestre.",
+        ],
+        notification: "le raid est repoussé.",
+        onLoad: { killVillagers: { min: 0, max: 2 }, stores: { bullets: 15, steel: 5, "alien alloy": 1 } },
+        choices: [{ id: "back", text: "compter les pertes", next: "end" }],
+      },
+      costly: {
+        text: [
+          "le combat est long et sanglant. les soldats finissent par se replier,",
+          "mais le village paie le prix fort : des morts, des huttes en flammes.",
+        ],
+        notification: "le raid est repoussé, au prix fort.",
+        onLoad: { killVillagers: { min: 2, max: 6 }, destroyBuildings: { id: "hut", min: 1, max: 2 }, stores: { steel: 2 } },
+        choices: [{ id: "mourn", text: "pleurer les morts", next: "end" }],
+      },
+      looted: {
+        text: [
+          "terrés dans la cabane, vous écoutez les bottes piétiner le camp toute la nuit.",
+          "au matin, ils sont partis — avec une bonne part de vos réserves.",
+        ],
+        notification: "les soldats ont pillé l'entrepôt.",
+        onLoad: { killVillagers: { min: 0, max: 1 }, stores: { wood: -150, fur: -80, "cured meat": -40 } },
+        choices: [{ id: "back", text: "constater les dégâts", next: "end" }],
+      },
+    },
+  },
   { // Le nomade — boutique (le panneau reste) ; boussole retirée (la carte arrive en M7)
     id: "nomad",
     title: "le nomade",

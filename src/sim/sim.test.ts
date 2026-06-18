@@ -26,7 +26,7 @@ import {
 import { enemyById, weaponById, mineGuardians, worldgen, EXECUTIONER_ALLOY_REWARD, SHIP, FLIGHT } from "../../data/world";
 import { dungeonFor, lootNodeIds, caveSteps, townSteps, executionerDungeon } from "./dungeon";
 import { createRng, cloneRng, nextFloat, nextInt } from "./rng";
-import { config, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
+import { config, events, eventById, storageCap, craftableById, craftableRevealed, buildSecondsFor } from "../../data/world";
 
 /** Force le déclenchement d'un événement par id (action de debug, hors réseau). */
 function trigger(s: GameState, id: string): GameState {
@@ -569,6 +569,67 @@ describe("événements (M5)", () => {
     const b = advanceTicks(base, window);
     expect(a.activeEvent).not.toBeNull(); // un événement s'est bien déclenché
     expect(a).toEqual(b); // intégralement reproductible (graine + séquence identiques)
+  });
+});
+
+describe("M10 — RAID MILITAIRE (événement gaté `city_cleared`)", () => {
+  const raid = () => events.find((e) => e.id === "military_raid")!;
+
+  it("piller une CITÉ entière pose le perk `city_cleared`", () => {
+    const seed = createInitialState(config.rngSeed, 0).worldSeed;
+    // Trouve une cité porteuse de butin à coords déterministes.
+    let cx = 0; let ids: string[] = [];
+    for (let i = 1; i < 40 && ids.length === 0; i++) { ids = lootNodeIds("city", i, 3, seed); if (ids.length) cx = i; }
+    expect(ids.length).toBeGreaterThan(0);
+    // La cache finale est gardée par le setpiece -> on pose les étapes franchies (comme la grotte F3.2).
+    const steps = townSteps("city", cx, 3, seed);
+    let s = repaired({ sites: { [siteKey(cx, 3)]: { type: "city", guardians: steps.length } } });
+    expect(s.perks["city_cleared"]).toBeFalsy();
+    // On vide le sac après chaque prise -> jamais à court de place (la cité a beaucoup de nœuds).
+    for (const id of ids) { s = reduce(s, takeLoot("a", cx, 3, "city", id)); s = { ...s, carried: { ...s.carried, a: {} } }; }
+    expect(s.sites[siteKey(cx, 3)].cleared).toBe(true);
+    expect(s.perks["city_cleared"]).toBe(true);
+    // Une grotte nettoyée, elle, ne l'arme PAS (seules les cités).
+    const cave = reduce(repaired(), clearCave("a", 3, -2));
+    expect(cave.perks["city_cleared"]).toBeFalsy();
+  });
+
+  it("indisponible sans `city_cleared` ni population ; disponible avec les deux", () => {
+    const base = repaired({ population: 10 });
+    expect(raid().isAvailable(base)).toBe(false); // pas de cité pillée
+    const cleared = { ...base, perks: { ...base.perks, city_cleared: true as const } };
+    expect(raid().isAvailable(cleared)).toBe(true);
+    expect(raid().isAvailable({ ...cleared, population: 0 })).toBe(false); // plus personne à perdre
+  });
+
+  it("« riposter aux fusils » est GATÉ par les balles (no-op sans), et les consomme sinon", () => {
+    const armed = repaired({ perks: { city_cleared: true as const }, population: 10, resources: { bullets: 50 } });
+    let s = trigger(armed, "military_raid");
+    expect(s.activeEvent).toEqual({ id: "military_raid", scene: "start" });
+    const after = reduce(s, resolveEventChoice("a", "guns"));
+    expect(["repelled", "costly"]).toContain(after.activeEvent?.scene); // l'event a avancé
+    expect(after.resources["bullets"]).toBeLessThanOrEqual(50 - 20 + 15); // -20 (coût) + au plus +15 (repelled)
+    expect(after.resources["bullets"]).toBeGreaterThanOrEqual(50 - 20);   // jamais en dessous du coût payé
+
+    // Sans assez de balles : le choix « guns » n'est pas disponible -> no-op (on garde « defend »/« hide »).
+    const broke = trigger(repaired({ perks: { city_cleared: true as const }, population: 10, resources: { bullets: 5 } }), "military_raid");
+    expect(reduce(broke, resolveEventChoice("a", "guns"))).toBe(broke);
+  });
+
+  it("« se terrer » -> pillage DÉTERMINISTE de l'entrepôt (pertes bornées à 0)", () => {
+    const s = trigger(repaired({ perks: { city_cleared: true as const }, population: 10, resources: { wood: 200, fur: 100, "cured meat": 50 } }), "military_raid");
+    const after = reduce(s, resolveEventChoice("a", "hide"));
+    expect(after.activeEvent?.scene).toBe("looted"); // `next` est une chaîne -> scène fixe
+    expect(after.resources["wood"]).toBe(50);  // 200 - 150
+    expect(after.resources["fur"]).toBe(20);   // 100 - 80
+    expect(after.resources["cured meat"]).toBe(10); // 50 - 40
+    expect(after.population).toBeLessThanOrEqual(10); // 0..1 mort (RNG borné)
+    expect(after.population).toBeGreaterThanOrEqual(9);
+  });
+
+  it("REPLAY : résoudre un raid est déterministe (graine + choix identiques)", () => {
+    const make = () => trigger(repaired({ perks: { city_cleared: true as const }, population: 12, resources: { bullets: 40 } }), "military_raid");
+    expect(reduce(make(), resolveEventChoice("a", "defend"))).toEqual(reduce(make(), resolveEventChoice("a", "defend")));
   });
 });
 

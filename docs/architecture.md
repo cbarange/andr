@@ -50,7 +50,7 @@ src/
     flight.ts              DÉCOLLAGE PUR (M11/RF8) : stepFlight() — pilotage d'esquive (STEER sommé, spawns seedés,
                            collision par position + i-frames), tir support. Déterministe & host-autoritaire.
     roads.ts               drawRoad() : réseau de routes qui FUSIONNE (spirale → plus proche, L Manhattan) — fidèle ADR
-    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout… 286 tests)
+    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout… 291 tests)
   render/                  LE CORPS (Babylon.js)
     scene.ts               moteur WebGPU→WebGL2, lumières, fog, post-process, PALETTE
     physics.ts             chargement du plugin Havok (WASM depuis public/)
@@ -355,10 +355,10 @@ Exposés pour Playwright et le debug console (sans effet sur le gameplay) :
 
 ## 12. Tests & vérification
 
-- **`npm run test`** (Vitest, `src/sim/*.test.ts`, **286 tests**) : règles pures + **déterminisme**
+- **`npm run test`** (Vitest, `src/sim/*.test.ts`, **291 tests**) : règles pures + **déterminisme**
   (replay), sans Babylon — survie, combat co-op, donjons, routes, fin de partie + décollage d'esquive (RF8).
   C'est le filet de sécurité principal.
-- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **18 tests**) : (1) boucle complète headless
+- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **19 tests**) : (1) boucle complète headless
   (récolte→feu→cabane→entrepôt→construction→population, gravité, déplacement, relève de piège) +
   capture `tests/screenshot.png` ; (2) smoke P2P (rejoindre un salon → HUD en ligne) ; (3)
   **sauvegarde/rechargement** (l'état est restauré). Headless = repli **WebGL2** (rendu logiciel) ;
