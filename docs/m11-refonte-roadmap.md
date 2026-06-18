@@ -330,7 +330,7 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   de l'antichambre) + e2e (gaté → grantPerk → craft → au sac). **281 tests, 18 e2e.**
 - ⏳ *Reste optionnel* : autres recettes ADR (stim/disruptor/cargo drone…), audio de fin/espace dédié.
 
-### **RF8 — DÉCOLLAGE immersif : pilotage d'esquive 3D** *(L — playtest)* — 🛠️ **RF8a+b LIVRÉS** (reste RF8c co-op/feel) → voir [`m11-flight-refonte.md`](m11-flight-refonte.md)
+### **RF8 — DÉCOLLAGE immersif : pilotage d'esquive 3D** *(L — playtest)* — ✅ **LIVRÉ** (reste : tuning du *feel* en playtest live) → voir [`m11-flight-refonte.md`](m11-flight-refonte.md)
 - **Constat playtest** : le décollage actuel (M11/E3 « extraction allégée ») est on-rails passif (on
   *tire* sur les débris, sans bouger). Le joueur veut **PILOTER** : se déplacer gauche/droite (et
   haut/bas) pour **ESQUIVER** — fidèle au mini-jeu spatial d'ADR (`space.js` : dodge 2D libre, horloge
@@ -351,6 +351,11 @@ une **phase tardive** (réutilise l'atelier M10 + un onglet « fabricator » gat
   hors-champ, étoiles + pluie de débris), vaisseau piloté qui **s'incline** (roll/pitch) ; entrée ZQSD →
   `STEER` (émis au changement, réseau-safe), [E] → tir support ; flash rouge à l'impact. Autopilote
   d'esquive (`__game.autoDodge`) pour la démo/e2e. Vérifié preview (esquive g/d/h/b non-miroir) + e2e.
+- **RF8c (livré)** — AUDIO du décollage : musique de TENSION (réutilise `encounter-tier-3`, overlay+ducking,
+  coupée à l'évasion/crash), « clang » métallique SYNTHÉTISÉ à chaque coque encaissée, grondement de
+  propulseurs SYNTHÉTISÉ à l'allumage (aucun asset, pattern `playDoor`). CO-OP : esquive sommée déjà sûre
+  (sim/snapshot) ; HUD affiche « N pilotes » à bord. **Reste** : tuning du *feel* (difficulté, sensibilité)
+  en playtest live — non-déterminable en aveugle.
 
 ---
 

@@ -353,6 +353,43 @@ export class AudioManager {
     }
   }
 
+  // ---- SFX SYNTHÉTISÉS du DÉCOLLAGE (RF8 ; aucun asset, calqués sur playDoor) -----------------
+
+  /** RF8 — impact d'astéroïde sur la coque : « clang » métallique (transitoire de bruit + partiels
+   *  inharmoniques). `gain` 0..1. Respecte le toggle SFX « flightImpact ». Échec silencieux. */
+  playFlightImpact(gain = 1): void {
+    this.playSynth("__flight_impact", "flightImpact", synthImpactWavUrl, gain);
+  }
+  /** RF8 — allumage des propulseurs au décollage : grondement grave qui enfle puis retombe. */
+  playFlightLaunch(gain = 1): void {
+    this.playSynth("__flight_launch", "flightLaunch", synthLaunchWavUrl, gain);
+  }
+
+  /** Joue un son SYNTHÉTISÉ mis en cache (data-URL WAV), en respectant son toggle SFX. */
+  private playSynth(cacheKey: string, toggleKey: string, makeUrl: () => string, gain: number): void {
+    if (this.sfxDisabled.has(toggleKey)) return;
+    const g = clamp01(gain);
+    if (g <= 0.001) return;
+    const cached = this.sfxCache.get(cacheKey);
+    if (cached) { this.playOneShot(cached, g); return; }
+    void this.loadSynth(cacheKey, makeUrl).then((s) => { if (s) this.playOneShot(s, g); });
+  }
+
+  private async loadSynth(cacheKey: string, makeUrl: () => string): Promise<StaticSound | null> {
+    if (!this.engine || !this.sfxBus || this.sfxLoading.has(cacheKey)) return null;
+    this.sfxLoading.add(cacheKey);
+    try {
+      const sound = await CreateSoundAsync(`sfx:${cacheKey}`, makeUrl(), { loop: false, autoplay: false, outBus: this.sfxBus }, this.engine);
+      this.sfxCache.set(cacheKey, sound);
+      return sound;
+    } catch (e) {
+      console.warn(`[audio] synth « ${cacheKey} » non chargé :`, e);
+      return null;
+    } finally {
+      this.sfxLoading.delete(cacheKey);
+    }
+  }
+
   // ---- Boucle : fondu enchaîné manuel (appelé chaque frame depuis main.ts) ----
 
   update(dtSec: number): void {
@@ -401,6 +438,44 @@ function synthDoorWavUrl(): string {
   }
   _doorWavUrl = floatToWavDataUrl(data, sr);
   return _doorWavUrl;
+}
+
+// --- Impact d'astéroïde SYNTHÉTISÉ (RF8) : « clang » métallique = transitoire de bruit large bande
+//     + 3 partiels inharmoniques à décroissance rapide. Math.random admis (cosmétique, figé au 1er appel).
+let _impactWavUrl: string | null = null;
+function synthImpactWavUrl(): string {
+  if (_impactWavUrl) return _impactWavUrl;
+  const sr = 22050, dur = 0.34, n = Math.floor(sr * dur);
+  const data = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const noise = (Math.random() * 2 - 1) * Math.exp(-t * 70) * 0.5;     // transitoire d'impact
+    const m1 = Math.sin(2 * Math.PI * 214 * t) * Math.exp(-t * 11);      // partiels métalliques
+    const m2 = Math.sin(2 * Math.PI * 523 * t) * Math.exp(-t * 15) * 0.6;
+    const m3 = Math.sin(2 * Math.PI * 847 * t) * Math.exp(-t * 20) * 0.4;
+    data[i] = (noise + (m1 + m2 + m3) * 0.5) * 0.7;
+  }
+  _impactWavUrl = floatToWavDataUrl(data, sr);
+  return _impactWavUrl;
+}
+
+// --- Allumage des propulseurs SYNTHÉTISÉ (RF8) : grondement grave (sub qui monte un peu) + bruit de
+//     combustion, enveloppe qui enfle vite puis retombe, lissé par un passe-bas grossier (rumble).
+let _launchWavUrl: string | null = null;
+function synthLaunchWavUrl(): string {
+  if (_launchWavUrl) return _launchWavUrl;
+  const sr = 22050, dur = 0.7, n = Math.floor(sr * dur);
+  const data = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const env = Math.min(1, t * 6) * Math.exp(-t * 2.2);                 // attaque rapide, longue chute
+    const sub = Math.sin(2 * Math.PI * (46 + t * 30) * t);              // grave qui monte légèrement
+    const rumble = (Math.random() * 2 - 1) * 0.6;                        // combustion
+    data[i] = env * (sub * 0.7 + rumble * 0.5);
+  }
+  for (let i = 1; i < n; i++) data[i] = data[i] * 0.5 + data[i - 1] * 0.5; // passe-bas simple -> rumble
+  _launchWavUrl = floatToWavDataUrl(data, sr);
+  return _launchWavUrl;
 }
 
 /** Encode des échantillons [-1,1] en data-URL WAV PCM 16-bit mono. */

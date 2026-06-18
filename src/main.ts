@@ -1521,6 +1521,7 @@ async function boot(): Promise<void> {
   let prevDeathSeq = survivalOf(state, self()).deathSeq; // M7 : compteur de morts (téléport au camp au +1)
   let prevWinSeq = survivalOf(state, self()).winSeq; // M8 : compteur de victoires (effondrement + toast)
   let prevFlightStatus: string | null = state.flight?.status ?? null; // M11/E3 : transitions évasion/crash
+  let prevFlightHull = state.flight?.hull ?? 0; // M11/RF8 : détecte les coques encaissées (SFX d'impact)
   let lastSteerX = 0, lastSteerY = 0; // M11/RF8 : dernier vecteur STEER émis (réémis seulement au changement)
   let lastEncSeen: SharedEncounter | null = null; // dernière rencontre où l'on était engagé (toast gardien)
   let prevDangerTier = -1; // M8 : tier de danger émis (watcher triple avec inVillage/onRoad)
@@ -1793,6 +1794,9 @@ async function boot(): Promise<void> {
     // M11/E3-E4 — DÉCOLLAGE : transitions terminales (évasion / crash) observées par diff de statut.
     const fStatus = state.flight?.status ?? null;
     if (fStatus !== prevFlightStatus) {
+      if (fStatus === "ascending" && prevFlightStatus !== "ascending") {
+        audio.playFlightLaunch(); // RF8 : allumage des propulseurs (grondement) au début de l'ascension
+      }
       if (fStatus === "escaped") {
         // ÉVASION : écran de fin (le vaisseau s'éloigne en fond, cf. liftoff) -> prestige / contempler.
         audio.stopEventMusic();
@@ -1800,6 +1804,7 @@ async function boot(): Promise<void> {
         showDialogue(endingViewRef);
       } else if (fStatus === "crashed") {
         hud.toast("la coque cède — le vaisseau retombe en flammes. il faudra réparer et réessayer.");
+        audio.stopEventMusic(); // RF8 : coupe la musique de tension du décollage
         audio.playSfx("death");
         const w = shipWorldPos();
         player.teleport(w.x, w.z);
@@ -1814,12 +1819,19 @@ async function boot(): Promise<void> {
       // HUD du décollage (réutilise le panneau de combat) : coque commune + altitude + débris entrants.
       const f = state.flight;
       const boarding = f.status === "boarding";
+      const pilots = Object.keys(f.aboard).length; // RF8 co-op : esquive SOMMÉE sur les pilotes à bord
+      const crew = pilots > 1 ? ` · ${pilots} pilotes` : "";
       hud.setCombat({
         name: boarding ? "embarquement…" : "ascension",
         hpFrac: f.hull / Math.max(1, f.hullMax),
-        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}% · ${f.asteroids.length} entrant(s) — ESQUIVE (ZQSD) · [E] tirer`,
+        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}%${crew} · ${f.asteroids.length} entrant(s) — ESQUIVE (ZQSD) · [E] tirer`,
         ready: !boarding && f.asteroids.length > 0,
       });
+      // RF8 — AMBIANCE du décollage : musique de tension (réutilise la rencontre tier-3, overlay+ducking)
+      // + « clang » à chaque coque encaissée (détecté par baisse de coque). Local/cosmétique.
+      audio.playEventMusic(audioManifest.music.encounter[2]);
+      if (f.hull < prevFlightHull) audio.playFlightImpact();
+      prevFlightHull = f.hull;
     } else if (engagedNow) {
       const enc = engagedNow.enc;
       const def = enemyById[enc.enemyId];
