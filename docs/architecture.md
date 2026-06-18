@@ -35,16 +35,22 @@ data/world.ts              DONNÉES : config, craftables (bâtiments), craftable
                            generateCampLayout() (placement MATHÉMATIQUE des bâtiments), campLayout, libellés FR.
 src/
   sim/                     LE CERVEAU (pur, sans Babylon/DOM) — testé `npm run test`
-    state.ts               GameState (structure) + helpers ; champs M9 (sites) & routes (roads)
-    actions.ts             actions sérialisables (+ PlayerAction réseau) — dont CRAFT_ITEM / DISCOVER_SITE /
-                           TAKE_LOOT / SECURE_MINE / CLEAR_CAVE / CLEAR_HAZARD
+    state.ts               GameState (structure) + helpers ; champs M9 (sites/roads), M7 (survival),
+                           M8.6 (encounters/playerPos/drops), M11 (ship/flight + RF8 : SharedFlight pilotable)
+    actions.ts             actions sérialisables (+ PlayerAction réseau) — récolte/construction, combat
+                           (ATTACK/EAT_MEAT/TAKE_DROP), M10 (CRAFT_ITEM/BUY/USE_MEDS/WITHDRAW), survie
+                           (SET_OUTSIDE/STEPS), M11 (LIFT_OFF/FLIGHT_FIRE/STEER/ENTER_ROOM/REVEAL_CELLS/PRESTIGE)
     reducer.ts             reduce(state, action) -> nouvel état (pur, déterministe). Cœur des règles.
     rng.ts                 mulberry32 à graine (tout aléatoire de la LOGIQUE passe par là)
     worldgen.ts            génération du monde PURE : biomes EN RÉGIONS (bruit + domain warping) + marais-région,
                            sites en anneaux, scatter déterministe
-    dungeon.ts             donjons (grottes/mines) PURS : graphe + butin dérivés de la graine (M9)
+    dungeon.ts             donjons PURS : graphe + butin dérivés de la graine — grottes/mines (M9) + cuirassé
+                           explorable salle-par-salle (M11/RF2 : antichambre → 3 ailes → pont, aliens RF3)
+    combat.ts              combat CO-OP PUR (M8.6) : engagés par proximité, poursuite, frappe d'un engagé au hasard
+    flight.ts              DÉCOLLAGE PUR (M11/RF8) : stepFlight() — pilotage d'esquive (STEER sommé, spawns seedés,
+                           collision par position + i-frames), tir support. Déterministe & host-autoritaire.
     roads.ts               drawRoad() : réseau de routes qui FUSIONNE (spirale → plus proche, L Manhattan) — fidèle ADR
-    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout…)
+    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout… 286 tests)
   render/                  LE CORPS (Babylon.js)
     scene.ts               moteur WebGPU→WebGL2, lumières, fog, post-process, PALETTE
     physics.ts             chargement du plugin Havok (WASM depuis public/)
@@ -55,19 +61,24 @@ src/
     cabin.ts               cabane ruine→réparée (paliers ×1/×5/×10) : coffre + étagères + grand tableau + lanternes
     buildings.ts           bâtiments low-poly (placement = campLayout maths) + chantier animé + fumée + pièges
     campDecor.ts / campLights.ts / campRuins.ts / campPaths.ts   décor sol · lanternes (palier) · ruines · sentiers
-    sites.ts               modèles 3D des ~14 types de site (grotte/maison/ville/cité/mines/forage/champ/marais/cache/épave/cuirassé/avant-poste) + LOD
-    interior.ts            intérieur explorable des grottes/mines (Option A : massif au sol + colliders + obscurité)
+    rampart.ts             rempart/porte/puits de la zone sûre (M6) ; sites.ts : modèles 3D des ~14 types de site + LOD
+    interior.ts / shipInterior.ts   intérieur explorable grottes/mines · intérieur du cuirassé salle-par-salle (M11/RF2b)
+    encounter.ts / drops.ts   ennemis partagés rendus à leur position monde (co-op, flux 15 Hz) · butin au sol ramassable
+    threshold.ts           cinématiques de SEUIL (M11/RF5) : porte animée + fondu à l'entrée/sortie d'un intérieur clos
+    liftoff.ts             DÉCOLLAGE (M11/RF8) : vaisseau pilotable qui monte, caméra contre-plongée, pluie de débris
+    shipCamp.ts / shipCrashed.ts / shipRepaired.ts / shipUpgrades.ts   vaisseau au camp en 3 états (épave→dressé→amélioré)
     villagers.ts           avatars de population (cosmétique) : métiers, navGrid A*, DANS LES HUTTES + rotation
     navGrid.ts / entities.ts / proplod.ts / autoperf.ts   A* villageois · LOD entités/props · perf adaptative
-    stranger.ts            la constructrice (PNJ) · characters.ts (humanoïdes) · player.ts (capsule Havok + confinement)
+    stranger.ts            la constructrice (PNJ) · characters.ts (humanoïdes, dont aliens) · player.ts (capsule Havok + confinement)
     camera.ts / remotePlayer.ts   caméra 3e/1re pers · avatars distants interpolés
-    audio.ts               AUDIO (présentation) : bus, musique adaptative, SFX (dont PORTE synthétisée). Lit l'état.
-  ui/hud.ts                HUD (sac avec count-up/pop, feu, village), étiquette E, DIALOGUES, menu PARAMÈTRES (son, CONFORT, multi)
+    audio.ts               AUDIO (présentation) : bus, musique adaptative, SFX (dont PORTE + IMPACT/LANCEMENT synthétisés). Lit l'état.
+  ui/hud.ts                HUD (sac, feu, village, combat/décollage), étiquette E, DIALOGUES, menu PARAMÈTRES (son, CONFORT, multi)
+  ui/minimap.ts            minimap UNIFIÉE & contextuelle (M11/RF4) : camp / exploration-monde / grotte-mine / vaisseau + fog
   input/                   input.ts (clavier→intentions) · pointerLook.ts (souris=caméra, sensibilité réglable)
   net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
   save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)
   main.ts                  point d'entrée : init, boucle à pas fixe, dialogues, interactions, réseau, save
-tests/e2e.spec.ts          Playwright (11 tests) : boucle, P2P, save, perf/LOD, sites…
+tests/e2e.spec.ts          Playwright (18 tests) : boucle, P2P, save, perf/LOD, sites, survie, combat, cuirassé, fabricator, décollage→évasion→prestige…
 ```
 
 ---
@@ -344,9 +355,10 @@ Exposés pour Playwright et le debug console (sans effet sur le gameplay) :
 
 ## 12. Tests & vérification
 
-- **`npm run test`** (Vitest, `src/sim/sim.test.ts`, 35 tests) : règles pures + **déterminisme**
-  (replay), sans Babylon. C'est le filet de sécurité principal.
-- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, 3 tests) : (1) boucle complète headless
+- **`npm run test`** (Vitest, `src/sim/*.test.ts`, **286 tests**) : règles pures + **déterminisme**
+  (replay), sans Babylon — survie, combat co-op, donjons, routes, fin de partie + décollage d'esquive (RF8).
+  C'est le filet de sécurité principal.
+- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **18 tests**) : (1) boucle complète headless
   (récolte→feu→cabane→entrepôt→construction→population, gravité, déplacement, relève de piège) +
   capture `tests/screenshot.png` ; (2) smoke P2P (rejoindre un salon → HUD en ligne) ; (3)
   **sauvegarde/rechargement** (l'état est restauré). Headless = repli **WebGL2** (rendu logiciel) ;

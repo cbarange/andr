@@ -1,9 +1,11 @@
 # M11 — REFONTE : fidélité ADR + cuirassé explorable + vaisseau au camp + minimap
 
-> **Statut : DOCUMENT DE PLANIFICATION (aucune implémentation encore).** Établi après audit du **code
-> source officiel** d'*A Dark Room* (`github.com/doublespeakgames/adarkroom`), recherche des
-> best-practices de l'industrie, et audit de notre base de code. Reprend et corrige le plan initial
-> [`m11-plan.md`](m11-plan.md). À valider/arbitrer avant de coder (cf. §8 Décisions ouvertes).
+> **Statut : REFONTE LIVRÉE — RF1→RF8 TOUS FAITS ✅** (juin 2026). Établi après audit du **code source
+> officiel** d'*A Dark Room* (`github.com/doublespeakgames/adarkroom`), recherche des best-practices de
+> l'industrie, et audit de notre base de code. Les 3 écarts de fidélité (§0) sont **corrigés** et
+> l'immersion demandée est **livrée** (cuirassé explorable, minimap, cinématiques de seuil, décollage
+> pilotable). **Seul reste le tuning du *feel* en playtest live** (cf. §7 RF8 + RF5). Suite forward (hors
+> M11) : **[`reste-a-faire.md`](reste-a-faire.md)**. Décisions (§8) toutes tranchées.
 
 ---
 

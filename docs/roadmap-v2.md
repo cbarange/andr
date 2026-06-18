@@ -30,11 +30,11 @@
 | **M10 atelier · poste de traite · perks** : 12 objets ADR exacts (eau/portage/armures/armes), troc TradeGoods, outfitting (WITHDRAW), Maître/homme malade, USE_MEDS | ✅ (reste : bolas, boussole — différés) |
 | **M8.5 fidélité combat & lieux** ([`analyse-combat-adr.md`](analyse-combat-adr.md)) | ✅ **F1-F4 + R3b FAITS** (par pas · tables/biomes · mines/grottes/villes/cités SCRIPTÉES · maisons/marais · armes lourdes · soin en voyage · mort 120 s · avant-postes/expédition · désengagement) — reste écran de butin, F5 (perks d'usage) |
 | **M8.6 combat COOPÉRATIF** : ennemis PARTAGÉS ancrés dans le monde (HP commun, position autoritaire, attaquables ENSEMBLE), poursuite du plus proche, frappe d'un engagé au hasard, **butin au sol premier-servi**, flux d'ennemis 15 Hz interpolé, désengagement par laisse | ✅ **FAIT** (`SET_POSITIONS` host-feedé, reducer pur ; `combat[pid]`→`encounters[id]`) — reste preview MULTI 2 onglets (manuel) |
-| **M11 fin de partie** : cuirassé → réparer le vaisseau → DÉCOLLAGE (extraction co-op) → ÉVASION → PRESTIGE | ✅ **v1 FAIT** (`sim/flight.ts` + `render/liftoff.ts`, e2e) — ⚠️ **REFONTE planifiée** : écarts de fidélité (cuirassé non requis / vaisseau au camp / beacon) + cuirassé explorable + minimap → **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)** |
-| **Contenu manquant** | ✅ boucle ADR complète & finissable (v1) ; reste la **refonte M11** (fidélité + immersion) |
+| **M11 fin de partie** : cuirassé → réparer le vaisseau → DÉCOLLAGE → ÉVASION → PRESTIGE | ✅ **FAIT + REFONTE RF1→RF8 COMPLÈTE** : vaisseau dé-gaté/au camp (RF1) · cuirassé **explorable** salle-par-salle + aliens (RF2/RF3) · **minimap unifiée** + fog (RF4) · cinématiques de seuil (RF5) · fleet beacon + fin étendue (RF6) · Fabricator (RF7) · **décollage PILOTABLE en esquive 3D** (RF8). Reste : feel/équilibrage → **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)** |
+| **Contenu manquant** | ✅ **boucle ADR complète, finissable ET fidèle** (M0–M11 + refonte). Reste : playtest/équilibrage, finition (raid militaire, écran de butin, perks d'usage), dette technique, polish → **[`reste-a-faire.md`](reste-a-faire.md)** |
 
-> Vérif à chaque pas : **typecheck · 258 tests unit · 16 e2e**. Détails par bloc ci-dessous + docs liées
-> ([`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
+> Vérif à chaque pas : **typecheck · 286 tests unit · 18 e2e**. Détails par bloc ci-dessous + docs liées
+> ([`reste-a-faire.md`](reste-a-faire.md) (forward), [`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
 ---
