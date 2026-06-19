@@ -35,9 +35,12 @@ export function engagedPids(state: GameState, enc: SharedEncounter, tick: number
  * caverne — intérim F3.2), appelé par le reducer UNIQUEMENT au-delà de FIGHT_DELAY pas.
  * CONSOMME un tirage du RNG fourni.
  */
-export function stepFightTriggers(rng: RngState, tier: number): boolean {
+export function stepFightTriggers(rng: RngState, tier: number, perks: Record<string, true> = {}): boolean {
   if (tier <= 0) return false;
-  return nextFloat(rng) < config.combat.fightChance; // sous terre : plus d'aléatoire (grottes scriptées F3.2)
+  // « furtif » (F5) : moitié moins de rencontres sauvages. Le tirage est TOUJOURS consommé (seul le
+  // seuil change) -> aucun impact sur la séquence RNG, le replay reste déterministe.
+  const chance = config.combat.fightChance * (perks["stealthy"] ? 0.5 : 1);
+  return nextFloat(rng) < chance;
 }
 
 /**
@@ -79,9 +82,11 @@ export function hasAmmo(state: GameState, playerId: string, w: WeaponDef): boole
   return carriedOf(state, playerId, w.ammo) >= 1;
 }
 
-/** Dégâts d'une frappe : « barbare » booste la MÊLÉE ×1,5 (floor) — fidèle events.js d'ADR. M10. */
+/** Dégâts d'une frappe : « barbare » booste la MÊLÉE ×1,5 ; « artiste martial » (F5) booste les
+ *  poings/mains nues ×2 (floor) — fidèle aux perks d'ADR. M10. */
 export function attackDamage(w: WeaponDef, perks: Record<string, true>): number {
   if (w.kind === "melee" && perks["barbarian"]) return Math.floor(w.damage * 1.5);
+  if (w.kind === "unarmed" && perks["martial artist"]) return Math.floor(w.damage * 2);
   return w.damage;
 }
 

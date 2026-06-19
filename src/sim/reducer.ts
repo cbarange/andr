@@ -900,7 +900,7 @@ export function reduce(state: GameState, action: GameAction): GameState {
         fightSteps++;
         if (fightSteps <= FIGHT_DELAY_STEPS) continue;
         rng = rng === state.rng ? cloneRng(state.rng) : rng;
-        if (!stepFightTriggers(rng, action.tier)) continue;
+        if (!stepFightTriggers(rng, action.tier, state.perks)) continue;
         fightSteps = 0; // tirage réussi : compteur remis à zéro MÊME si le pool est vide (fidèle)
         const enemy = action.onRoad ? null : pickEnemy(rng, action.tier, action.biome);
         if (!enemy) continue;

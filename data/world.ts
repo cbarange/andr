@@ -160,6 +160,8 @@ export const PERKS: Record<string, { name: string; desc: string }> = {
   precise: { name: "précis", desc: "+10 % de chances de toucher" },
   barbarian: { name: "barbare", desc: "dégâts de mêlée ×1,5" },
   evasive: { name: "insaisissable", desc: "les ennemis touchent moins souvent" },
+  "martial artist": { name: "artiste martial", desc: "dégâts à mains nues ×2" }, // F5 — le Maître
+  stealthy: { name: "furtif", desc: "moitié moins de rencontres sauvages" }, // F5 — le Maître
   gastronome: { name: "gastronome", desc: "la viande soigne deux fois plus" }, // l'ermite du marais (M8.5)
 };
 
@@ -1194,7 +1196,7 @@ export const events: GameEvent[] = [
     //  Coût ADR exact : 100 viande séchée + 100 fourrure (entrepôt) + 1 torche (SAC du résolveur).
     id: "master",
     title: "le maître",
-    isAvailable: (g) => g.cabinRepaired && g.population >= 5 && !(g.perks["evasive"] && g.perks["precise"] && g.perks["barbarian"]),
+    isAvailable: (g) => g.cabinRepaired && g.population >= 5 && !(g.perks["evasive"] && g.perks["precise"] && g.perks["barbarian"] && g.perks["martial artist"] && g.perks["stealthy"]),
     scenes: {
       start: {
         text: [
@@ -1213,6 +1215,8 @@ export const events: GameEvent[] = [
           { id: "evasion", text: "l'art d'esquiver", available: (g) => !g.perks["evasive"], next: "taughtEvasive" },
           { id: "precision", text: "l'art de viser", available: (g) => !g.perks["precise"], next: "taughtPrecise" },
           { id: "force", text: "l'art de frapper", available: (g) => !g.perks["barbarian"], next: "taughtBarbarian" },
+          { id: "unarmed", text: "l'art du combat à mains nues", available: (g) => !g.perks["martial artist"], next: "taughtMartial" },
+          { id: "stealth", text: "l'art de passer inaperçu", available: (g) => !g.perks["stealthy"], next: "taughtStealthy" },
           { id: "nothing", text: "rien", next: "end" },
         ],
       },
@@ -1229,6 +1233,16 @@ export const events: GameEvent[] = [
       taughtBarbarian: {
         text: ["une journée durant, il vous apprend à mettre tout votre poids dans chaque coup."],
         onLoad: { grantPerk: "barbarian" },
+        choices: [{ id: "leave", text: "le remercier", next: "end" }],
+      },
+      taughtMartial: {
+        text: ["une journée durant, il vous apprend à faire de vos poings des armes."],
+        onLoad: { grantPerk: "martial artist" },
+        choices: [{ id: "leave", text: "le remercier", next: "end" }],
+      },
+      taughtStealthy: {
+        text: ["une journée durant, il vous apprend à marcher sans qu'on vous entende venir."],
+        onLoad: { grantPerk: "stealthy" },
         choices: [{ id: "leave", text: "le remercier", next: "end" }],
       },
     },

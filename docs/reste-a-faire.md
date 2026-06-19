@@ -6,7 +6,7 @@
 > Fabricator, **décollage pilotable en esquive 3D**). État détaillé : [`etat.md`](etat.md) · jalons :
 > [`roadmap-v2.md`](roadmap-v2.md) · refonte M11 : [`m11-refonte-roadmap.md`](m11-refonte-roadmap.md).
 >
-> Vérif courante : **typecheck propre · 291 tests unitaires · 19 e2e Playwright**.
+> Vérif courante : **typecheck propre · 293 tests unitaires · 19 e2e Playwright**.
 
 ---
 
@@ -67,8 +67,10 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
   scene-machine M5. Tests sim (perk, gating, gun-gating, pillage déterministe, replay) + e2e (flux 2 scènes).
 - [ ] **Écran de butin** — à la mort d'un ennemi, un récap du butin tombé (aujourd'hui : pile 3D au sol +
   verbe « ramasser », sans synthèse). Polish UX.
-- [ ] **F5 — perks d'USAGE** (vs les perks de village déjà faits) : les perks consommables/situationnels
-  d'ADR encore absents.
+- [x] **F5 — perks de combat ADR** — ✅ **LIVRÉ** (1er lot) : le Maître enseigne désormais aussi
+  **artiste martial** (mains nues ×2, `combat.ts attackDamage`) et **furtif** (moitié moins de rencontres
+  sauvages, `stepFightTriggers` — tirage toujours consommé → replay sûr). Tests + preview (6 choix au
+  Maître). *Reste optionnel* : scout, slow metabolism, desert rat (touchent fog/survie — à caler en M12).
 - [ ] **Bolas** (arme de *stun*) — différée ; **boussole** — décision ouverte (utilité avec la minimap RF4 ?).
 
 ---

@@ -1642,6 +1642,24 @@ describe("atelier, commerce & perks (M10) — fidèle ADR", () => {
     expect(enemyHit(0.8, all)).toBeCloseTo(0.64);
   });
 
+  it("PERKS (F5) : « artiste martial » ×2 mains nues ; « furtif » réduit les rencontres (helpers purs)", () => {
+    expect(attackDamage(weaponById["fists"], { "martial artist": true })).toBe(2); // 1 × 2 (mains nues)
+    expect(attackDamage(weaponById["bayonet"], { "martial artist": true })).toBe(8); // mêlée : pas de bonus mains nues
+    expect(attackDamage(weaponById["fists"], {})).toBe(1); // sans le perk : inchangé
+    // « furtif » : strictement MOINS de rencontres (même graines), mais pas zéro.
+    let base = 0, sneaky = 0;
+    for (let seed = 0; seed < 600; seed++) {
+      if (stepFightTriggers(createRng(seed), 1)) base++;
+      if (stepFightTriggers(createRng(seed), 1, { stealthy: true })) sneaky++;
+    }
+    expect(sneaky).toBeLessThan(base);
+    expect(sneaky).toBeGreaterThan(0);
+    // Le tirage est consommé dans les DEUX cas -> RNG identique après l'appel (replay déterministe).
+    const a = createRng(42), b = createRng(42);
+    stepFightTriggers(a, 1); stepFightTriggers(b, 1, { stealthy: true });
+    expect(a).toEqual(b);
+  });
+
   it("POSTE DE TRAITE : coûts ADR exacts, exige le bâtiment, gain borné", () => {
     const noPost = repaired({ resources: { fur: 999 } });
     expect(reduce(noPost, buy("p1", "scales"))).toBe(noPost); // pas de poste -> no-op
@@ -1691,6 +1709,23 @@ describe("atelier, commerce & perks (M10) — fidèle ADR", () => {
     expect(s.resources["cured meat"]).toBe(50);
     s = reduce(s, resolveEventChoice("p1", "force"));
     expect(s.perks["barbarian"]).toBe(true); // l'art de frapper -> perk barbare
+  });
+
+  it("LE MAÎTRE (F5) : enseigne aussi les mains nues et la furtivité ; ne revient plus une fois tout appris", () => {
+    const learn = (choice: string): GameState => {
+      let s: GameState = { ...repaired({ resources: { "cured meat": 150, fur: 150 } }), carried: { p1: { torch: 1 } } };
+      s = reduce(trigger(s, "master"), resolveEventChoice("p1", "agree"));
+      expect(s.activeEvent?.scene).toBe("wisdom");
+      return reduce(s, resolveEventChoice("p1", choice));
+    };
+    expect(learn("unarmed").perks["martial artist"]).toBe(true);
+    expect(learn("stealth").perks["stealthy"]).toBe(true);
+    // Gating : le Maître revient tant qu'il reste un art à apprendre, puis disparaît.
+    const master = events.find((e) => e.id === "master")!;
+    const four = repaired({ population: 5, perks: { evasive: true, precise: true, barbarian: true, "martial artist": true } as Record<string, true> });
+    expect(master.isAvailable(four)).toBe(true); // « furtif » manque encore
+    const five = repaired({ population: 5, perks: { evasive: true, precise: true, barbarian: true, "martial artist": true, stealthy: true } as Record<string, true> });
+    expect(master.isAvailable(five)).toBe(false);
   });
 
   it("L'HOMME MALADE : 1 médecine -> issue PONDÉRÉE déterministe (alliage/cellules/écailles/rien)", () => {

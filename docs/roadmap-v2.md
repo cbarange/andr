@@ -33,7 +33,7 @@
 | **M11 fin de partie** : cuirassé → réparer le vaisseau → DÉCOLLAGE → ÉVASION → PRESTIGE | ✅ **FAIT + REFONTE RF1→RF8 COMPLÈTE** : vaisseau dé-gaté/au camp (RF1) · cuirassé **explorable** salle-par-salle + aliens (RF2/RF3) · **minimap unifiée** + fog (RF4) · cinématiques de seuil (RF5) · fleet beacon + fin étendue (RF6) · Fabricator (RF7) · **décollage PILOTABLE en esquive 3D** (RF8). Reste : feel/équilibrage → **[`m11-refonte-roadmap.md`](m11-refonte-roadmap.md)** |
 | **Contenu manquant** | ✅ **boucle ADR complète, finissable ET fidèle** (M0–M11 + refonte). Reste : playtest/équilibrage, finition (raid militaire, écran de butin, perks d'usage), dette technique, polish → **[`reste-a-faire.md`](reste-a-faire.md)** |
 
-> Vérif à chaque pas : **typecheck · 291 tests unit · 19 e2e**. Détails par bloc ci-dessous + docs liées
+> Vérif à chaque pas : **typecheck · 293 tests unit · 19 e2e**. Détails par bloc ci-dessous + docs liées
 > ([`reste-a-faire.md`](reste-a-faire.md) (forward), [`routes-sites.md`](routes-sites.md), [`refonte-monde-campement.md`](refonte-monde-campement.md),
 > [`bonnes-pratiques-jeu.md`](bonnes-pratiques-jeu.md), [`mines-grottes-implementation.md`](mines-grottes-implementation.md)).
 
