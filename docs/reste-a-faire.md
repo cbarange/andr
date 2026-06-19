@@ -6,7 +6,7 @@
 > Fabricator, **décollage pilotable en esquive 3D**). État détaillé : [`etat.md`](etat.md) · jalons :
 > [`roadmap-v2.md`](roadmap-v2.md) · refonte M11 : [`m11-refonte-roadmap.md`](m11-refonte-roadmap.md).
 >
-> Vérif courante : **typecheck propre · 293 tests unitaires · 19 e2e Playwright**.
+> Vérif courante : **typecheck propre · 293 tests unitaires · 20 e2e Playwright**.
 
 ---
 
@@ -93,7 +93,9 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
 - [ ] **Cycle jour/nuit** (ambiance ; impacte l'éclairage, pas la sim).
 - [ ] **AO / ombres de contact** (désactivées pour le budget perf au POC — à réévaluer en WebGPU).
 - [ ] **Reverb spatiale** (intérieurs grotte/mine/cuirassé) — la couche audio est prête (bus dédiés).
-- [ ] **Écran-titre / menu principal** (aujourd'hui : on tombe directement dans le jeu).
+- [x] **Écran-titre / menu principal** — ✅ **LIVRÉ** : seuil d'entrée minimaliste (« A Dark Room »,
+  fidèle ADR) avec *commencer/reprendre* (selon save) · *nouvelle partie* · *rejoindre une partie* ; le
+  1er clic déverrouille l'audio. Sauté en test piloté (`navigator.webdriver`) sauf `?title=1`. e2e dédié.
 - [ ] **Juice** (suite) : déjà HUD count-up + construction/cabane animées ✅ ; reste micro-feedbacks divers.
 
 ---

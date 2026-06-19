@@ -78,7 +78,7 @@ src/
   net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
   save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)
   main.ts                  point d'entrée : init, boucle à pas fixe, dialogues, interactions, réseau, save
-tests/e2e.spec.ts          Playwright (19 tests) : boucle, P2P, save, perf/LOD, sites, survie, combat, cuirassé, fabricator, raid militaire, décollage→évasion→prestige…
+tests/e2e.spec.ts          Playwright (20 tests) : boucle, P2P, save, perf/LOD, sites, survie, combat, cuirassé, fabricator, raid militaire, décollage→évasion→prestige…
 ```
 
 ---
@@ -358,7 +358,7 @@ Exposés pour Playwright et le debug console (sans effet sur le gameplay) :
 - **`npm run test`** (Vitest, `src/sim/*.test.ts`, **293 tests**) : règles pures + **déterminisme**
   (replay), sans Babylon — survie, combat co-op, donjons, routes, fin de partie + décollage d'esquive (RF8).
   C'est le filet de sécurité principal.
-- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **19 tests**) : (1) boucle complète headless
+- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **20 tests**) : (1) boucle complète headless
   (récolte→feu→cabane→entrepôt→construction→population, gravité, déplacement, relève de piège) +
   capture `tests/screenshot.png` ; (2) smoke P2P (rejoindre un salon → HUD en ligne) ; (3)
   **sauvegarde/rechargement** (l'état est restauré). Headless = repli **WebGL2** (rendu logiciel) ;

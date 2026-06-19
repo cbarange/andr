@@ -221,6 +221,31 @@
         padding: 10px 16px; font-size: 13px; color: var(--text); pointer-events: none;
         display: none;
       }
+
+      /* ---- Seuil d'entrée (écran-titre) : minimaliste, fidèle à l'esprit d'A Dark Room.
+             Voile sombre par-dessus la scène (qui transparaît faiblement), nom + entrée. ---- */
+      #titleScreen {
+        position: absolute; inset: 0; display: none; pointer-events: auto;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: radial-gradient(ellipse at center, rgba(8, 14, 17, 0.78), rgba(5, 9, 11, 0.97));
+        backdrop-filter: blur(3px);
+      }
+      #titleScreen.show { display: flex; animation: titleFade 0.7s ease both; }
+      @keyframes titleFade { from { opacity: 0; } to { opacity: 1; } }
+      #titleScreen .titleName {
+        font-size: clamp(34px, 7vw, 62px); font-weight: 700; letter-spacing: 0.04em;
+        color: var(--accent); text-shadow: 0 0 30px rgba(240, 160, 80, 0.35); line-height: 1;
+      }
+      #titleScreen .titleSub { color: var(--muted); font-size: 12px; letter-spacing: 0.55em; text-transform: uppercase; margin-top: 10px; }
+      #titleScreen .titleButtons { display: flex; flex-direction: column; gap: 10px; margin-top: 42px; width: min(300px, 80vw); }
+      #titleScreen .titleBtn {
+        background: rgba(0, 0, 0, 0.3); border: 1px solid var(--edge); border-radius: 8px;
+        padding: 12px 14px; font: inherit; font-size: 15px; color: var(--text); cursor: pointer;
+        text-align: center; letter-spacing: 0.04em; transition: border-color 0.15s ease;
+      }
+      #titleScreen .titleBtn.primary { background: var(--accent); color: #1a1208; font-weight: 700; border-color: transparent; }
+      #titleScreen .titleBtn:hover { border-color: var(--accent); }
+      #titleScreen .titleHint { color: var(--muted); font-size: 11px; margin-top: 30px; letter-spacing: 0.03em; }
     </style>
   </head>
   <body>
@@ -310,6 +335,18 @@
         <div id="dlgText"></div>
         <div id="dlgSteppers"></div>
         <div id="dlgChoices"></div>
+      </div>
+
+      <!-- Seuil d'entrée (écran-titre) — montré au boot par main.ts (sauté en test headless). -->
+      <div id="titleScreen">
+        <div class="titleName">A Dark Room</div>
+        <div class="titleSub">3 D</div>
+        <div class="titleButtons">
+          <button class="titleBtn primary" id="titleStart">commencer</button>
+          <button class="titleBtn" id="titleNew" style="display: none">nouvelle partie</button>
+          <button class="titleBtn" id="titleJoin">rejoindre une partie</button>
+        </div>
+        <div class="titleHint">souris : caméra · ZQSD : se déplacer · E : interagir</div>
       </div>
     </div>
 
