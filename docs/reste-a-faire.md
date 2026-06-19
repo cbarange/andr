@@ -90,7 +90,10 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
 ## Phase 4 — CONFORT & POLISH (Chantier D)
 
 - [ ] **Rebind clavier** (remapping des touches, persisté).
-- [ ] **Cycle jour/nuit** (ambiance ; impacte l'éclairage, pas la sim).
+- [x] **Cycle jour/nuit** — ✅ **LIVRÉ** (`render/daynight.ts`) : ambiance crépusculaire cyclique (nuit →
+  aube → jour → crépuscule) dérivée du `tick` (cohérente en co-op). COSMÉTIQUE : pilote couleurs ciel/feux
+  + direction du soleil + exposition, **jamais les intensités** (possédées par les intérieurs) ; ciel coupé
+  pendant le décollage. Aucune incidence sim/équilibrage. Vérifié preview (jour vs nuit).
 - [ ] **AO / ombres de contact** (désactivées pour le budget perf au POC — à réévaluer en WebGPU).
 - [ ] **Reverb spatiale** (intérieurs grotte/mine/cuirassé) — la couche audio est prête (bus dédiés).
 - [x] **Écran-titre / menu principal** — ✅ **LIVRÉ** : seuil d'entrée minimaliste (« A Dark Room »,

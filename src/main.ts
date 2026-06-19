@@ -60,6 +60,7 @@ import { caveSteps, townSteps, executionerDungeon } from "./sim/dungeon";
 import { EncounterFx, type EncView } from "./render/encounter";
 import { GroundDrops } from "./render/drops";
 import { Liftoff } from "./render/liftoff";
+import { DayNight } from "./render/daynight";
 import { ShipAtCamp } from "./render/shipCamp";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
@@ -189,7 +190,8 @@ async function boot(): Promise<void> {
   scene.enablePhysics(new Vector3(0, config.gravity, 0), havok);
 
   const camera = createCamera(scene, canvas);
-  setupPostProcess(scene, camera);
+  const pipe = setupPostProcess(scene, camera);
+  const dayNight = new DayNight(scene, pipe); // cycle jour/nuit cosmétique (couleurs + exposition ; cf. daynight.ts)
   // Caméra à capture de pointeur : orientation souris sans clic-glisser (phase libre),
   // curseur rendu en dialogue/UI.
   const pointerLook = new PointerLook(camera, canvas, document.getElementById("lockHint"));
@@ -2151,6 +2153,7 @@ async function boot(): Promise<void> {
     encounterFx.update(dtSec); // M8.6 : interpolation vers la position cible + fente/recul/retraits
     groundDrops.update(dtSec); // piles de butin au sol (flottement + rotation)
     liftoff.update(dtSec, state.flight, state.tick); // M11/E3b : cinématique du décollage (caméra incluse)
+    dayNight.update(state.tick, liftoff.isActive); // cycle jour/nuit cosmétique (ciel coupé pendant le décollage)
     // M11/RF1b : le vaisseau au camp — visible une fois trouvé, s'assemble au fil de la coque ; masqué
     // pendant le décollage (la cinématique `liftoff` représente alors le vaisseau).
     shipAtCamp.sync(!!state.perks["ship_found"] && !flying, state.ship.hull, state.ship.engine);
