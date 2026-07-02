@@ -77,7 +77,7 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
 
 ## Phase 3 — DETTE TECHNIQUE (Chantier A)
 
-- [~] **A6 — refactor `main.ts`** *(EN COURS — 3 extractions livrées, iso-comportement, un commit
+- [~] **A6 — refactor `main.ts`** *(EN COURS — 4 extractions livrées, iso-comportement, un commit
   chacune)* : **A6.1** hooks debug -> `dev/gameHooks.ts` (déclaration Window + installGameHooks(ctx à
   accesseurs + hostMutate)) · **A6.2** panneau de touches + indices -> `ui/keybindsPanel.ts` (classe à
   état propre) · **A6.3** écran-titre -> `ui/titleScreen.ts`. **main.ts : 2704 -> 2002 lignes (−702).**
