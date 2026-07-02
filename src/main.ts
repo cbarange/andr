@@ -36,6 +36,7 @@ import { Villagers } from "./render/villagers";
 import { EntityManager, type Entity } from "./render/entities";
 import { nextScaling, SCALE_MIN, SCALE_MAX, SCALE_STEP } from "./render/autoperf";
 import { InputManager } from "./input/input";
+import { installGameHooks } from "./dev/gameHooks";
 import {
   ACTION_LABELS, actionForKey, actionKeyLabel, clearBinding, keyLabel,
   mergeDefaults, moveClusterLabel, normalizeKey, withBinding, type Action,
@@ -52,10 +53,10 @@ import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
 import {
   gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
-  deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed, debugSetCabinTier, debugSet,
-  takeLoot, secureMine, setOutside, debugSetSurvival, useOutpost,
-  attack, eatMeat, debugStartEncounter, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
-  visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine, debugGrantPerk,
+  deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed,
+  takeLoot, secureMine, setOutside, useOutpost,
+  attack, eatMeat, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
+  visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine,
   liftOff, flightFire, endFlight, steer, prestige, discoverShip, revealCells,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
@@ -92,91 +93,7 @@ const BAG_ORDER = [
   "bone spear", "iron sword", "steel sword", "bayonet", "rifle", "grenade", // armes M8/M10 (outfit)
 ];
 
-declare global {
-  interface Window {
-    __game?: {
-      ready: boolean;
-      renderer?: string;
-      error?: string;
-      getStored?: () => Record<string, number>;
-      getCarried?: () => Record<string, number>;
-      getFire?: () => number;
-      getBuildings?: () => Record<string, number>;
-      getPopulation?: () => number;
-      getWorkers?: () => Record<string, number>;
-      getCabinRepaired?: () => boolean;
-      getCabinTier?: () => number;
-      getSurvival?: () => { water: number; food: number; health: number; outside: boolean; deathSeq: number; winSeq: number; tier: number };
-      setSurvival?: (vals: { water?: number; food?: number; health?: number }) => void;
-      getCombat?: () => { enemyId: string; enemyHp: number; seq: number } | null;
-      getMaxes?: () => { water: number; health: number; carry: number };
-      craft?: (itemId: string) => void;
-      buy?: (goodId: string) => void;
-      useMeds?: () => void;
-      withdraw?: (resource: string, amount?: number) => void;
-      startEncounter?: (enemyId?: string, enemyHp?: number) => void;
-      attack?: (weapon?: string) => void;
-      eatMeat?: () => void;
-      getDrops?: () => Array<{ id: string; loot: Record<string, number> }>;
-      takeDrop?: (id?: string) => void;
-      getShip?: () => { hull: number; engine: number };
-      enterRoom?: (room: string, cx?: number, cz?: number) => void;
-      getRooms?: () => Record<string, string>;
-      getWings?: () => Record<string, boolean>;
-      shipRoomWorld?: (room: string) => { x: number; z: number } | null;
-      shipInteriorStats?: () => { built: boolean; inside: boolean; room: string | null; colliders: number; dark: number };
-      reinforceShip?: () => void;
-      upgradeEngine?: () => void;
-      grantPerk?: (perk: string) => void;
-      liftOff?: () => void;
-      flightFire?: () => void;
-      steer?: (x: number, y: number) => void;
-      autoDodge?: () => void;
-      endFlight?: () => void;
-      getFlight?: () => { status: string; hull: number; hullMax: number; progress: number; asteroids: number; engine: number; shipX: number; shipY: number } | null;
-      prestige?: () => void;
-      getProgress?: () => { prestige: number };
-      endingText?: () => string;
-      pauseEncounters?: () => void;
-      getPlayer?: () => { x: number; y: number; z: number };
-      getTerrainStats?: () => { chunks: number; colliders: number; props: number; near: number; frozen: number };
-      getSiteStats?: () => { placed: number; types: number; full: number; minimal: number };
-      getHardwareScaling?: () => number;
-      setHardwareScaling?: (level: number) => void;
-      setAutoPerf?: (on: boolean) => void;
-      getFocusVerb?: () => string | null;
-      getAudio?: () => { unlocked: boolean; music: string | null; eventMusic: string | null; master: number; musicVol: number; sfxVol: number; muted: boolean; disabledSfx: string[] };
-      getActiveEvent?: () => { id: string; scene: string } | null;
-      triggerEvent?: (id: string) => void;
-      pauseEventScheduler?: () => void;
-      forceGather?: () => void;
-      lightFire?: () => void;
-      stoke?: () => void;
-      deposit?: () => void;
-      repairCabin?: () => void;
-      upgradeCabin?: () => void;
-      setCabinTier?: (tier: number) => void;
-      fillStorage?: (frac?: number) => void;
-      build?: (id: string) => void;
-      harvestTrap?: (index?: number) => void;
-      assignWorker?: (job: string) => void;
-      openBuilderDialogue?: () => void;
-      openVillageBoard?: () => void;
-      openSettings?: () => void;
-      saveNow?: () => void;
-      clearSave?: () => void;
-      teleport?: (x: number, z: number) => void;
-      fastForward?: (seconds: number) => void;
-      cmd?: (line: string) => string; // console de dev (DEV) : pilotable depuis Playwright/console
-      showcaseCamera?: () => void;
-      showcaseCabin?: () => void;
-      showcaseBoard?: () => void;
-      planView?: (height?: number) => void; // vue de dessus (plan) du campement — debug layout
-      editSpawn?: () => void; // ouvre/ferme l'éditeur de spawn (DEV) — aussi via la touche F2
-      errors?: string[];
-    };
-  }
-}
+// (La déclaration de type `Window.__game` + l'installation des hooks vivent dans dev/gameHooks.ts — A6.)
 
 async function boot(): Promise<void> {
   const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
@@ -2436,138 +2353,41 @@ async function boot(): Promise<void> {
     el.classList.add("show");
   })();
 
-  // ---- Hooks d'auto-vérification (Playwright/console). ----
-  window.__game = {
-    ready: true,
-    renderer: rendererLabel,
-    getStored: () => ({ ...state.resources }),
-    getCarried: () => ({ ...(state.carried[self()] ?? {}) }),
-    getFire: () => state.fire,
-    getBuildings: () => ({ ...state.buildings }),
-    getPopulation: () => state.population,
-    getWorkers: () => ({ ...state.workers }),
-    getCabinRepaired: () => state.cabinRepaired,
-    getCabinTier: () => state.cabinTier,
-    getSurvival: () => { const s = survivalOf(state, self()); return { water: s.water, food: s.food, health: s.health, outside: s.outside, deathSeq: s.deathSeq, winSeq: s.winSeq, tier: s.tier }; },
-    setSurvival: (vals: { water?: number; food?: number; health?: number }) => emit(debugSetSurvival(self(), vals)),
-    getCombat: () => { const e = selfEngagedEnc(); return e ? { enemyId: e.enc.enemyId, enemyHp: e.enc.enemyHp, seq: e.enc.seq } : null; },
-    getMaxes: () => ({ water: maxWaterOf(state), health: maxHealthOf(state), carry: carryCapacity(state) }),
-    craft: (itemId: string) => emit(craftItem(self(), itemId)),
-    buy: (goodId: string) => emit(buy(self(), goodId)),
-    useMeds: () => emit(useMeds(self())),
-    withdraw: (resource: string, amount = 1) => emit(withdraw(self(), resource, amount)),
-    startEncounter: (enemyId?: string, enemyHp?: number) => emit(debugStartEncounter(self(), enemyId, enemyHp)),
-    attack: (weapon = "fists") => { const e = selfEngagedEnc(); if (e) emit(attack(self(), weapon, e.id)); },
-    eatMeat: () => emit(eatMeat(self())),
-    getDrops: () => Object.keys(state.drops).map((id) => ({ id, loot: { ...state.drops[id].loot } })),
-    takeDrop: (id?: string) => { const d = id ?? Object.keys(state.drops)[0]; if (d) emit(takeDrop(self(), d)); },
-    getShip: () => ({ ...state.ship }),
-    enterRoom: (room: string, cx?: number, cz?: number) => {
-      let ecx = cx, ecz = cz;
-      if (ecx === undefined || ecz === undefined) { const s = worldMap.sites.find((s) => s.type === "executioner"); if (s) { ecx = s.cx; ecz = s.cz; } }
-      if (ecx !== undefined && ecz !== undefined) emit(enterRoom(self(), ecx, ecz, room));
+  // ---- Hooks d'auto-vérification (Playwright/console) — extraits dans dev/gameHooks.ts (A6). ----
+  installGameHooks({
+    rendererLabel,
+    errors,
+    getState: () => state,
+    setState: (s) => { state = s; },
+    hostMutate: (mutate) => {
+      if (net.connected && !net.isHost) return; // seul l'hôte mute (triggerEvent / fastForward)
+      state = mutate(state);
+      if (net.connected) net.broadcastStateSync(snapshot());
     },
-    getRooms: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state.sites?.[k]?.rooms ?? {}) } : {}; },
-    getWings: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state.sites?.[k]?.wings ?? {}) } : {}; },
-    reinforceShip: () => emit(reinforceShip(self())),
-    upgradeEngine: () => emit(upgradeEngine(self())),
-    grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
-    liftOff: () => { const w = shipWorldPos(); emit(liftOff(self(), w.x, w.z)); },
-    flightFire: () => emit(flightFire(self())),
-    steer: (x: number, y: number) => emit(steer(self(), x, y)),
-    // RF8 — AUTOPILOTE d'esquive (tests/démo) : fuit le barycentre des astéroïdes pondéré par l'imminence
-    // (positions réelles de la sim). Exerce le vrai chemin STEER ; rend l'évasion fiable sans pilotage manuel.
-    autoDodge: () => {
-      const f = state.flight;
-      if (!f || f.status !== "ascending") return;
-      let bx = 0, by = 0, w = 0;
-      for (const a of f.asteroids) { const wt = 1 / Math.max(1, a.impactAt - state.tick + 1); bx += a.x * wt; by += a.y * wt; w += wt; }
-      if (w === 0) { emit(steer(self(), 0, 0)); return; }
-      const dx = -bx / w, dy = -by / w, m = Math.hypot(dx, dy) || 1;
-      emit(steer(self(), dx / m, dy / m));
-    },
-    endFlight: () => emit(endFlight(self())),
-    getFlight: () => { const f = state.flight; return f ? { status: f.status, hull: f.hull, hullMax: f.hullMax, progress: f.progress, asteroids: f.asteroids.length, engine: f.engine, shipX: f.shipX, shipY: f.shipY } : null; },
-    prestige: () => restartWorld(),
-    getProgress: () => ({ prestige: state.prestige }),
+    emit,
+    self,
+    selfEngagedEnc,
+    worldMap,
+    shipWorldPos,
+    restartWorld,
     endingText: () => endingView().text, // M11/RF6 : variante d'épilogue (étendue si fleet beacon possédé)
     pauseEncounters: () => { encountersPaused = true; },
-    getPlayer: () => { const p = player.position; return { x: p.x, y: p.y, z: p.z }; },
+    player,
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)
     getSiteStats: () => sites.stats, // P5 : sites posés + paliers LOD (détail/silhouette)
-    getHardwareScaling: () => engine.getHardwareScalingLevel(), // P6 : résolution interne
-    setHardwareScaling: (level: number) => setScaling(level),
-    setAutoPerf: (on: boolean) => { autoPerf = on; perfAcc = 0; },
+    engine,
+    setScaling,
+    setAutoPerf: (on) => { autoPerf = on; perfAcc = 0; },
     getFocusVerb: () => currentFocus?.verb ?? null,
-    getAudio: () => ({
-      unlocked: audio.unlocked, music: audio.currentMusic, eventMusic: audio.currentEventMusic,
-      master: audio.master, musicVol: audio.musicVolume, sfxVol: audio.sfxVolume, muted: audio.muted,
-      disabledSfx: audio.getDisabledSfx(),
-    }),
-    getActiveEvent: () => (state.activeEvent ? { ...state.activeEvent } : null),
-    triggerEvent: (id: string) => {
-      if (net.connected && !net.isHost) return; // seul l'hôte déclenche
-      state = reduce(state, { type: "DEBUG_TRIGGER_EVENT", id });
-      if (net.connected) net.broadcastStateSync(snapshot());
-    },
-    // DEBUG : gèle l'ordonnanceur d'événements (pour les tests qui isolent une autre mécanique
-    // sur de longs fast-forwards). triggerEvent reste utilisable (il court-circuite le scheduler).
-    pauseEventScheduler: () => { state = { ...state, eventScheduledAt: Number.MAX_SAFE_INTEGER }; },
-    forceGather: () => emit(gatherWood(self(), config.gather.woodPerChop)),
-    lightFire: () => emit(lightFire(self())),
-    stoke: () => emit(stokeFire(self())),
-    deposit: () => emit(deposit(self())),
-    repairCabin: () => emit(repairCabin(self())),
-    upgradeCabin: () => emit(upgradeCabin(self())),
-    setCabinTier: (tier: number) => emit(debugSetCabinTier(tier)),
-    // DEBUG : remplit l'entrepôt à `frac` du plafond de chaque ressource connue (test des paliers/étiquettes).
-    fillStorage: (frac = 1) => {
-      for (const id of Object.keys(RESOURCE_LABELS)) emit(debugSet(self(), "storage", id, Math.floor(storageCap(state.cabinTier, id) * frac)));
-    },
-    build: (id: string) => emit(build(self(), id)),
-    harvestTrap: (index = 0) => emit(harvestTrap(self(), index)),
-    assignWorker: (job: string) => emit(assignWorker(self(), job)),
-    openBuilderDialogue: () => openBuilderDialogue(),
-    openVillageBoard: () => openBoard(),
-    openSettings: () => openSettings(),
-    saveNow: () => saveGame(state),
-    clearSave: () => clearSave(),
-    teleport: (x: number, z: number) => player.teleport(x, z),
-    fastForward: (seconds: number) => {
-      if (net.connected && !net.isHost) return;
-      const n = Math.floor(seconds * config.simTickHz);
-      for (let i = 0; i < n; i++) state = reduce(state, tick());
-      if (net.connected) net.broadcastStateSync(snapshot());
-    },
-    showcaseCamera: () => {
-      const p = player.position;
-      camera.setPosition(new Vector3(p.x + 2, p.y + 9, p.z + 13));
-    },
-    // Cadre l'intérieur de la cabane (coffre, étagères, grand tableau) pour la capture.
-    showcaseCabin: () => {
-      player.teleport(cabin.center.x + 1, cabin.center.z + 0.5);
-      camera.setPosition(new Vector3(cabin.center.x + 6, cabin.center.y + 7, cabin.center.z + 8));
-    },
-    // Debug : cadre le grand tableau DE FACE (caméra figée) pour vérifier le texte.
-    showcaseBoard: () => {
-      cameraFollow = false;
-      const bp = cabin.boardPosition;
-      camera.setTarget(new Vector3(bp.x - 0.8, cabin.center.y + 1.3, bp.z + 0.3));
-      camera.setPosition(new Vector3(bp.x + 3, cabin.center.y + 1.35, bp.z + 0.3));
-    },
-    // Debug : VUE DE DESSUS du campement (plan) pour juger l'implantation des bâtiments.
-    planView: (height = 64) => {
-      cameraFollow = false;
-      scene.fogMode = Scene.FOGMODE_NONE; // pas de brouillard pour lire le plan
-      camera.lowerBetaLimit = 0.001; // débride le tangage (sinon clampé à 0.35 -> oblique)
-      camera.upperRadiusLimit = 600;
-      camera.setTarget(new Vector3(0, terrainHeight(0, 0), 0));
-      camera.alpha = -Math.PI / 2; // -Z (nord/forêt) vers le HAUT de l'image
-      camera.beta = 0.08; // quasi vertical (plan)
-      camera.radius = height;
-    },
-    errors,
-  };
+    audio,
+    openBuilderDialogue,
+    openBoard,
+    openSettings,
+    camera,
+    scene,
+    cabin,
+    setCameraFollow: (on) => { cameraFollow = on; },
+  });
 
   // ---- CONSOLE DE DÉVELOPPEMENT (DEV uniquement) : ENTER l'ouvre ; `/commande` l'exécute.
   //      Les mutations d'état passent par `emit` (hôte-autoritaire) ; le reste agit en local.
