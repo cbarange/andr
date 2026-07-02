@@ -39,6 +39,7 @@ import { InputManager } from "./input/input";
 import { installGameHooks } from "./dev/gameHooks";
 import { actionForKey, actionKeyLabel, mergeDefaults, moveClusterLabel } from "./input/keybindings";
 import { KeybindsPanel, refreshKeyHints } from "./ui/keybindsPanel";
+import { TitleScreen } from "./ui/titleScreen";
 import { PointerLook } from "./input/pointerLook";
 import { Hud, type DialogueChoice, type DialogueStepper, type DialogueView } from "./ui/hud";
 import { NetRoom } from "./net/room";
@@ -291,7 +292,6 @@ async function boot(): Promise<void> {
   // ---- LE CERVEAU : état de simulation local (restauré depuis la sauvegarde si présente) ----
   const loaded = loadGame();
   const hasSave = !!loaded; // pour l'écran-titre : « reprendre » vs « commencer »
-  let titleOpen = false; // l'écran-titre est-il affiché (gèle le déplacement/l'interaction le temps du seuil)
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
@@ -1025,7 +1025,7 @@ async function boot(): Promise<void> {
     if (k === "f2") { e.preventDefault(); spawnEditor?.toggle(); return; } // éditeur de spawn (DEV — FIXE)
     if (k === "escape") { // FIXE (touche système : déverrouille aussi le pointeur — non rebindable)
       e.preventDefault();
-      if (titleOpen) return; // l'écran-titre se ferme par ses boutons, pas par Échap
+      if (titleScreen.isOpen) return; // l'écran-titre se ferme par ses boutons, pas par Échap
       if (keybindsPanel.capturing) { keybindsPanel.cancelCapture(); return; } // annule la capture (reste sur le panneau)
       if (keybindsPanel.isOpen) { keybindsPanel.close(true); return; } // retour au menu Paramètres
       // Un événement est MODAL : on ne peut pas le fermer sans choisir (chaque scène a une
@@ -1894,7 +1894,7 @@ async function boot(): Promise<void> {
 
     // 2) Entrées -> personnage + interaction (E). Le déplacement est neutralisé quand une UI
     //    est ouverte (les touches servent alors à naviguer le dialogue, cf. listener clavier).
-    const uiOpen = titleOpen || keybindsPanel.isOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
+    const uiOpen = titleScreen.isOpen || keybindsPanel.isOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
     // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
     // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
     const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending" || state.flight.status === "escaped");
@@ -2236,26 +2236,12 @@ async function boot(): Promise<void> {
     if (document.visibilityState === "hidden") saveIfAuthoritative();
   });
 
-  // ---- SEUIL D'ENTRÉE (écran-titre) : montré au boot (la scène transparaît derrière). Le 1er clic
-  //      déverrouille aussi l'audio. SAUTÉ en test piloté (navigator.webdriver) sauf override ?title=1
-  //      (preview + e2e dédié) -> les 19 e2e existants ne sont pas perturbés. ----
-  (() => {
-    const el = document.getElementById("titleScreen");
-    if (!el) return;
-    const forced = new URLSearchParams(location.search).has("title");
-    if (navigator.webdriver && !forced) return;
-    const startBtn = document.getElementById("titleStart");
-    const newBtn = document.getElementById("titleNew");
-    const joinBtn = document.getElementById("titleJoin");
-    if (startBtn) startBtn.textContent = hasSave ? "reprendre" : "commencer";
-    if (newBtn) newBtn.style.display = hasSave ? "" : "none"; // « nouvelle partie » : seulement si une partie existe déjà
-    const dismiss = (): void => { titleOpen = false; el.classList.remove("show"); el.style.display = "none"; audio.resumeOnGesture(); };
-    startBtn?.addEventListener("click", dismiss);
-    joinBtn?.addEventListener("click", () => { dismiss(); openSettings(); });
-    newBtn?.addEventListener("click", () => { clearSave(); location.reload(); }); // reset propre : reboot sur une partie neuve
-    titleOpen = true;
-    el.classList.add("show");
-  })();
+  // ---- SEUIL D'ENTRÉE (écran-titre) — extrait dans ui/titleScreen.ts (A6). ----
+  const titleScreen = new TitleScreen({
+    hasSave,
+    onFirstGesture: () => audio.resumeOnGesture(),
+    openSettings,
+  });
 
   // ---- Hooks d'auto-vérification (Playwright/console) — extraits dans dev/gameHooks.ts (A6). ----
   installGameHooks({
