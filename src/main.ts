@@ -37,10 +37,8 @@ import { EntityManager, type Entity } from "./render/entities";
 import { nextScaling, SCALE_MIN, SCALE_MAX, SCALE_STEP } from "./render/autoperf";
 import { InputManager } from "./input/input";
 import { installGameHooks } from "./dev/gameHooks";
-import {
-  ACTION_LABELS, actionForKey, actionKeyLabel, clearBinding, keyLabel,
-  mergeDefaults, moveClusterLabel, normalizeKey, withBinding, type Action,
-} from "./input/keybindings";
+import { actionForKey, actionKeyLabel, mergeDefaults, moveClusterLabel } from "./input/keybindings";
+import { KeybindsPanel, refreshKeyHints } from "./ui/keybindsPanel";
 import { PointerLook } from "./input/pointerLook";
 import { Hud, type DialogueChoice, type DialogueStepper, type DialogueView } from "./ui/hud";
 import { NetRoom } from "./net/room";
@@ -283,7 +281,7 @@ async function boot(): Promise<void> {
     bindings = b;
     input.setBindings(b);
     saveKeybindings(b);
-    refreshKeyHints(); // les indices affichés ([E], ZQSD…) suivent le rebind
+    refreshKeyHints(b); // les indices affichés ([E], ZQSD…) suivent le rebind
   };
   const input = new InputManager(bindings);
   // Console de développement (slash-commandes) — créée plus bas en DEV uniquement.
@@ -294,8 +292,6 @@ async function boot(): Promise<void> {
   const loaded = loadGame();
   const hasSave = !!loaded; // pour l'écran-titre : « reprendre » vs « commencer »
   let titleOpen = false; // l'écran-titre est-il affiché (gèle le déplacement/l'interaction le temps du seuil)
-  let keybindsOpen = false; // panneau « Paramètres des touches » affiché (sous-vue du menu)
-  let rebindCapture: Action | null = null; // action en attente de CAPTURE d'une touche (mode rebind)
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
@@ -646,110 +642,18 @@ async function boot(): Promise<void> {
     pointerLook.engage(); // appelé dans un geste (clic/Échap) -> recapture
   }
 
-  // ---- PANNEAU « PARAMÈTRES DES TOUCHES » (rebind — cf. docs/rebind-clavier-plan.md) ----
-  // Sous-vue du menu Paramètres, gérée ici (comme l'écran-titre) : `keybindsOpen` entre dans
-  // `uiOpen` (gèle le jeu) et Échap ramène au menu. Rendu = liste ACTION_LABELS -> chips.
-  const keybindsEl = document.getElementById("keybinds");
-  const keybindListEl = document.getElementById("keybindList");
-  function openKeybinds(): void {
-    hud.closeSettings();
-    keybindsOpen = true;
-    if (keybindsEl) keybindsEl.style.display = "block";
-    renderKeybinds();
-    pointerLook.release();
-  }
-  function closeKeybinds(backToSettings: boolean): void {
-    keybindsOpen = false;
-    rebindCapture = null;
-    if (keybindsEl) keybindsEl.style.display = "none";
-    if (backToSettings) openSettings();
-    else pointerLook.engage();
-  }
-  /** (Re)construit la liste actions -> touches. Appelé à l'ouverture et après chaque changement. */
-  function renderKeybinds(): void {
-    if (!keybindListEl) return;
-    keybindListEl.textContent = "";
-    for (const { action, label } of ACTION_LABELS) {
-      const row = document.createElement("div");
-      row.className = "kbRow" + (rebindCapture === action ? " capturing" : "");
-      const name = document.createElement("span");
-      name.className = "kbName";
-      name.textContent = label;
-      row.appendChild(name);
-      const keys = document.createElement("span");
-      keys.className = "kbKeys";
-      if (rebindCapture === action) {
-        const cap = document.createElement("span");
-        cap.className = "kbCapture";
-        cap.textContent = "appuyez sur une touche… (Échap : annuler)";
-        keys.appendChild(cap);
-      } else {
-        if (bindings[action].length === 0) {
-          const none = document.createElement("span");
-          none.className = "kbNone";
-          none.textContent = "aucune touche";
-          keys.appendChild(none);
-        }
-        for (const k of bindings[action]) {
-          const chip = document.createElement("span");
-          chip.className = "kbKey";
-          chip.appendChild(document.createTextNode(keyLabel(k)));
-          const rm = document.createElement("button");
-          rm.textContent = "×";
-          rm.title = "retirer cette touche";
-          rm.addEventListener("click", () => { applyBindings(clearBinding(bindings, action, k)); renderKeybinds(); });
-          chip.appendChild(rm);
-          keys.appendChild(chip);
-        }
-        const add = document.createElement("button");
-        add.className = "kbAdd";
-        add.textContent = "+";
-        add.title = "lier une touche";
-        add.addEventListener("click", () => { rebindCapture = action; renderKeybinds(); });
-        keys.appendChild(add);
-      }
-      row.appendChild(keys);
-      keybindListEl.appendChild(row);
-    }
-  }
-  /** Capture la prochaine touche pour l'action en attente (réservées ignorées via normalizeKey). */
-  function captureRebindKey(e: KeyboardEvent): void {
-    e.preventDefault();
-    const key = normalizeKey(e);
-    if (!rebindCapture) return;
-    if (key !== null) applyBindings(withBinding(bindings, rebindCapture, key)); // réservée -> on reste en capture
-    if (key !== null) rebindCapture = null;
-    renderKeybinds();
-  }
-  document.getElementById("keysBtn")?.addEventListener("click", () => openKeybinds());
-  document.getElementById("keybindBack")?.addEventListener("click", () => closeKeybinds(true));
-  document.getElementById("keybindReset")?.addEventListener("click", () => {
-    applyBindings(mergeDefaults(null)); // retour aux défauts (persisté)
-    rebindCapture = null;
-    renderKeybinds();
-    hud.toast("touches réinitialisées");
+  // ---- PANNEAU « PARAMÈTRES DES TOUCHES » — extrait dans ui/keybindsPanel.ts (A6). Sous-vue du
+  //      menu : `isOpen` entre dans `uiOpen` (gèle le jeu) ; Échap = annuler la capture / retour menu.
+  const keybindsPanel = new KeybindsPanel({
+    getBindings: () => bindings,
+    applyBindings,
+    closeSettings: () => hud.closeSettings(),
+    openSettings,
+    releasePointer: () => pointerLook.release(),
+    engagePointer: () => pointerLook.engage(),
+    toast: (msg) => hud.toast(msg),
   });
-
-  /** Régénère les INDICES de contrôle affichés (aide, titre, combat, badge E) après un rebind. */
-  function refreshKeyHints(): void {
-    const move = moveClusterLabel(bindings);
-    const jump = actionKeyLabel(bindings, "jump");
-    const interact = actionKeyLabel(bindings, "interact");
-    const eat = actionKeyLabel(bindings, "eat");
-    const help = document.getElementById("helpControls");
-    if (help) help.innerHTML = `<kbd>${move}</kbd> se déplacer · <kbd>${jump}</kbd> sauter · <kbd>${interact}</kbd> interagir · souris : caméra`;
-    const title = document.getElementById("titleControls");
-    if (title) title.textContent = `souris : caméra · ${move} : se déplacer · ${interact} : interagir`;
-    const hit = document.getElementById("combatKeyHit");
-    if (hit) hit.textContent = interact;
-    const eatK = document.getElementById("combatKeyEat");
-    if (eatK) eatK.textContent = eat;
-    const promptK = document.getElementById("promptKey");
-    if (promptK) promptK.textContent = interact;
-    const eatHint = document.getElementById("eatHint");
-    if (eatHint) eatHint.textContent = `${eat} : manger (+8 vie)`;
-  }
-  refreshKeyHints(); // au boot : reflète la save (ou les défauts)
+  refreshKeyHints(bindings); // au boot : reflète la save (ou les défauts)
 
   function buildChoices(): DialogueChoice[] {
     const choices: DialogueChoice[] = [];
@@ -1122,8 +1026,8 @@ async function boot(): Promise<void> {
     if (k === "escape") { // FIXE (touche système : déverrouille aussi le pointeur — non rebindable)
       e.preventDefault();
       if (titleOpen) return; // l'écran-titre se ferme par ses boutons, pas par Échap
-      if (rebindCapture) { rebindCapture = null; renderKeybinds(); return; } // annule la capture (reste sur le panneau)
-      if (keybindsOpen) { closeKeybinds(true); return; } // retour au menu Paramètres
+      if (keybindsPanel.capturing) { keybindsPanel.cancelCapture(); return; } // annule la capture (reste sur le panneau)
+      if (keybindsPanel.isOpen) { keybindsPanel.close(true); return; } // retour au menu Paramètres
       // Un événement est MODAL : on ne peut pas le fermer sans choisir (chaque scène a une
       // option gratuite). Sinon il resterait actif et invisible -> bloquerait les suivants.
       if (state.activeEvent && currentDialogue === eventView) return;
@@ -1133,7 +1037,7 @@ async function boot(): Promise<void> {
     }
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-    if (rebindCapture) { captureRebindKey(e); return; } // mode CAPTURE du panneau de touches
+    if (keybindsPanel.capturing) { keybindsPanel.captureKey(e); return; } // mode CAPTURE du panneau de touches
     // Raccourcis REBINDABLES — résolus via le modèle de bindings (cf. keybindings.ts).
     const act = actionForKey(bindings, k);
     if (act === "toggleDebug") { e.preventDefault(); hud.toggleDebug(); return; } // overlay debug
@@ -1990,7 +1894,7 @@ async function boot(): Promise<void> {
 
     // 2) Entrées -> personnage + interaction (E). Le déplacement est neutralisé quand une UI
     //    est ouverte (les touches servent alors à naviguer le dialogue, cf. listener clavier).
-    const uiOpen = titleOpen || keybindsOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
+    const uiOpen = titleOpen || keybindsPanel.isOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
     // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
     // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
     const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending" || state.flight.status === "escaped");
