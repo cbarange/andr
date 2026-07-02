@@ -6,7 +6,7 @@
 > Fabricator, **décollage pilotable en esquive 3D**). État détaillé : [`etat.md`](etat.md) · jalons :
 > [`roadmap-v2.md`](roadmap-v2.md) · refonte M11 : [`m11-refonte-roadmap.md`](m11-refonte-roadmap.md).
 >
-> Vérif courante : **typecheck propre · 293 tests unitaires · 20 e2e Playwright**.
+> Vérif courante : **typecheck propre · 300 tests unitaires · 21 e2e Playwright**.
 
 ---
 
@@ -89,7 +89,11 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
 
 ## Phase 4 — CONFORT & POLISH (Chantier D)
 
-- [ ] **Rebind clavier** (remapping des touches, persisté).
+- [x] **Rebind clavier** — ✅ **LIVRÉ** (cf. [`rebind-clavier-plan.md`](rebind-clavier-plan.md)) : modèle
+  central `src/input/keybindings.ts` (pur, testé — défauts ZQSD+WASD+flèches, conflits gérés), persistance
+  localStorage (back-fill), InputManager + raccourcis globaux + nav dialogue consomment les bindings,
+  panneau « Paramètres des touches » (capture/retrait/reset), indices affichés régénérés. Échap/DEV = fixes.
+  Le pilotage RF8 suit le rebind (même intention). e2e dédié (remap E→G réel + reset).
 - [x] **Cycle jour/nuit** — ✅ **LIVRÉ** (`render/daynight.ts`) : ambiance crépusculaire cyclique (nuit →
   aube → jour → crépuscule) dérivée du `tick` (cohérente en co-op). COSMÉTIQUE : pilote couleurs ciel/feux
   + direction du soleil + exposition, **jamais les intensités** (possédées par les intérieurs) ; ciel coupé

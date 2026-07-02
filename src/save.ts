@@ -135,6 +135,31 @@ export function loadComfortSettings(): ComfortSettings | null {
   }
 }
 
+// BINDINGS CLAVIER (rebind). Préférence LOCALE (≠ GameState, ≠ réseau), persistée à part — comme
+// l'audio/le confort. On stocke un PARTIEL brut ; la validation/le back-fill se font au chargement
+// via `mergeDefaults` (keybindings.ts) -> une action absente/corrompue retombe sur son défaut.
+const KEYS_KEY = "darkroom3d.keybindings";
+
+export function saveKeybindings(bindings: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(KEYS_KEY, JSON.stringify(bindings));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Charge les bindings sauvés (PARTIEL brut, à passer à mergeDefaults), ou null si absents/illisibles. */
+export function loadKeybindings(): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(KEYS_KEY);
+    if (!raw) return null;
+    const d: unknown = JSON.parse(raw);
+    return d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Charge les réglages audio, ou null si absents/illisibles (-> défauts du moteur). */
 export function loadAudioSettings(): AudioSettings | null {
   try {

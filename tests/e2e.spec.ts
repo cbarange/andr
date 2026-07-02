@@ -166,6 +166,52 @@ test("ÉCRAN-TITRE : le seuil s'affiche (forcé) et « commencer » lance la par
   await expect(page.locator("#titleScreen")).toBeHidden();
 });
 
+// REBIND CLAVIER — panneau « Paramètres des touches » : remapper « interagir » E -> G via l'UI
+// (capture), vérifier FONCTIONNELLEMENT (G confirme un dialogue, E ne fait plus rien), puis Réinitialiser.
+test("REBIND : remapper « interagir » E -> G via le panneau, effet réel, puis reset", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.evaluate(() => window.__game?.pauseEventScheduler?.());
+
+  // Ouvrir Paramètres (Échap) -> « Paramètres des touches ».
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeVisible();
+  await page.locator("#keysBtn").click();
+  await expect(page.locator("#keybinds")).toBeVisible();
+
+  // Ligne « interagir » : retirer E (×), puis lier G (+ -> capture -> touche G).
+  const interactRow = page.locator(".kbRow", { hasText: "interagir" }).first();
+  await interactRow.locator(".kbKey button").first().click(); // retire E
+  await expect(interactRow).not.toContainText("E");
+  await interactRow.locator(".kbAdd").click(); // mode capture
+  await expect(interactRow).toContainText("appuyez sur une touche");
+  await page.keyboard.press("g");
+  await expect(interactRow.locator(".kbKey")).toContainText("G");
+
+  // Retour + fermer le menu ; l'indice d'aide suit le rebind.
+  await page.locator("#keybindBack").click();
+  await expect(page.locator("#keybinds")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#helpControls")).toContainText("G");
+
+  // FONCTIONNEL : un dialogue d'événement se confirme au clavier avec G (E ne fait plus rien).
+  await page.evaluate(() => window.__game?.triggerEvent?.("beast_attack"));
+  await expect(page.locator("#dialogue")).toBeVisible();
+  await page.keyboard.press("e"); // délié -> le dialogue reste ouvert
+  await page.waitForTimeout(200);
+  await expect(page.locator("#dialogue")).toBeVisible();
+  await page.keyboard.press("g"); // = interagir -> confirme le choix sélectionné (« rentrer »)
+  await expect.poll(() => page.evaluate(() => window.__game?.getActiveEvent?.())).toBeNull();
+
+  // RESET : retour aux défauts (E rebranché), persisté.
+  await expect(page.locator("#dialogue")).toBeHidden(); // l'événement vient de se fermer
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeVisible();
+  await page.locator("#keysBtn").click();
+  await page.locator("#keybindReset").click();
+  await expect(page.locator(".kbRow", { hasText: "interagir" }).first()).toContainText("E");
+});
+
 // M5 — un événement s'affiche dans le panneau de dialogue et se résout sur un choix.
 // (Les effets chiffrés — morts, butin, coûts — sont couverts de façon déterministe par les
 //  tests de simulation ; ici on vérifie le CÂBLAGE état -> panneau -> choix -> fermeture.)

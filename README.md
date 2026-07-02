@@ -57,6 +57,9 @@ npm run dev        # serveur de dev Vite -> http://localhost:5173
 | `Échap`                         | Ouvre le **menu Paramètres** (centré) ; ou **ferme** l'interface ouverte (dialogue / tableau / menu). |
 | Interfaces (dialogue, tableau, menu) | Le **curseur est libéré** pour cliquer. Les dialogues restent aussi navigables au clavier (`ZQSD`/flèches + `E`). |
 
+> **Touches remappables** : ce tableau montre les défauts. Menu Paramètres (`Échap`) → **Paramètres des
+> touches** pour rebinder (plusieurs touches par action, persisté). `Échap` et les outils dev restent fixes.
+
 > **Sauvegarde automatique** (façon A Dark Room) : la partie est sérialisée dans le `localStorage`
 > du navigateur toutes les ~15 s et à la fermeture de l'onglet ; elle est **restaurée au
 > rechargement**. (La simulation reste en mémoire ; `localStorage` ne sert qu'à la persistance.)

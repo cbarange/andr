@@ -50,7 +50,7 @@ src/
     flight.ts              DÉCOLLAGE PUR (M11/RF8) : stepFlight() — pilotage d'esquive (STEER sommé, spawns seedés,
                            collision par position + i-frames), tir support. Déterministe & host-autoritaire.
     roads.ts               drawRoad() : réseau de routes qui FUSIONNE (spirale → plus proche, L Manhattan) — fidèle ADR
-    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout… 293 tests)
+    *.test.ts              tests purs (sim, worldgen, dungeon, roads, host, save, campLayout… 300 tests)
   render/                  LE CORPS (Babylon.js)
     scene.ts               moteur WebGPU→WebGL2, lumières, fog, post-process, PALETTE
     physics.ts             chargement du plugin Havok (WASM depuis public/)
@@ -74,11 +74,11 @@ src/
     audio.ts               AUDIO (présentation) : bus, musique adaptative, SFX (dont PORTE + IMPACT/LANCEMENT synthétisés). Lit l'état.
   ui/hud.ts                HUD (sac, feu, village, combat/décollage), étiquette E, DIALOGUES, menu PARAMÈTRES (son, CONFORT, multi)
   ui/minimap.ts            minimap UNIFIÉE & contextuelle (M11/RF4) : camp / exploration-monde / grotte-mine / vaisseau + fog
-  input/                   input.ts (clavier→intentions) · pointerLook.ts (souris=caméra, sensibilité réglable)
+  input/                   input.ts (clavier→intentions) · keybindings.ts (REBIND : modèle pur action→touches, persisté) · pointerLook.ts (souris=caméra, sensibilité réglable)
   net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
   save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)
   main.ts                  point d'entrée : init, boucle à pas fixe, dialogues, interactions, réseau, save
-tests/e2e.spec.ts          Playwright (20 tests) : boucle, P2P, save, perf/LOD, sites, survie, combat, cuirassé, fabricator, raid militaire, décollage→évasion→prestige…
+tests/e2e.spec.ts          Playwright (21 tests) : boucle, P2P, save, perf/LOD, sites, survie, combat, cuirassé, fabricator, raid militaire, décollage→évasion→prestige…
 ```
 
 ---
@@ -355,10 +355,10 @@ Exposés pour Playwright et le debug console (sans effet sur le gameplay) :
 
 ## 12. Tests & vérification
 
-- **`npm run test`** (Vitest, `src/sim/*.test.ts`, **293 tests**) : règles pures + **déterminisme**
+- **`npm run test`** (Vitest, `src/sim/*.test.ts` + `src/input/keybindings.test.ts`, **300 tests**) : règles pures + **déterminisme**
   (replay), sans Babylon — survie, combat co-op, donjons, routes, fin de partie + décollage d'esquive (RF8).
   C'est le filet de sécurité principal.
-- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **20 tests**) : (1) boucle complète headless
+- **`npm run e2e`** (Playwright, `tests/e2e.spec.ts`, **21 tests**) : (1) boucle complète headless
   (récolte→feu→cabane→entrepôt→construction→population, gravité, déplacement, relève de piège) +
   capture `tests/screenshot.png` ; (2) smoke P2P (rejoindre un salon → HUD en ligne) ; (3)
   **sauvegarde/rechargement** (l'état est restauré). Headless = repli **WebGL2** (rendu logiciel) ;

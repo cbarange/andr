@@ -36,6 +36,10 @@ import { Villagers } from "./render/villagers";
 import { EntityManager, type Entity } from "./render/entities";
 import { nextScaling, SCALE_MIN, SCALE_MAX, SCALE_STEP } from "./render/autoperf";
 import { InputManager } from "./input/input";
+import {
+  ACTION_LABELS, actionForKey, actionKeyLabel, clearBinding, keyLabel,
+  mergeDefaults, moveClusterLabel, normalizeKey, withBinding, type Action,
+} from "./input/keybindings";
 import { PointerLook } from "./input/pointerLook";
 import { Hud, type DialogueChoice, type DialogueStepper, type DialogueView } from "./ui/hud";
 import { NetRoom } from "./net/room";
@@ -73,7 +77,7 @@ import { createOcean } from "./render/ocean";
 // « Dans le village » = à l'intérieur du retranchement (zone sûre). Au-delà : EXPLORATION
 // (les événements ne bloquent plus — cf. reflectState).
 const VILLAGE_RADIUS = worldgen.safeRadiusCells * worldgen.cellSize;
-import { saveGame, loadGame, clearSave, saveDiscovered, loadDiscovered, saveAudioSettings, loadAudioSettings, saveComfortSettings, loadComfortSettings } from "./save";
+import { saveGame, loadGame, clearSave, saveDiscovered, loadDiscovered, saveAudioSettings, loadAudioSettings, saveComfortSettings, loadComfortSettings, saveKeybindings, loadKeybindings } from "./save";
 import { AudioManager } from "./render/audio";
 import { audioManifest } from "../data/audio";
 import { DevConsole } from "./dev/console";
@@ -355,7 +359,16 @@ async function boot(): Promise<void> {
   };
   entities.register(villageEntity);
 
-  const input = new InputManager();
+  // BINDINGS CLAVIER (rebind) : save locale fusionnée sur les défauts (back-fill), appliquée à
+  // l'InputManager (déplacement/interaction) ET aux raccourcis globaux/nav dialogue (plus bas).
+  let bindings = mergeDefaults(loadKeybindings());
+  const applyBindings = (b: typeof bindings): void => {
+    bindings = b;
+    input.setBindings(b);
+    saveKeybindings(b);
+    refreshKeyHints(); // les indices affichés ([E], ZQSD…) suivent le rebind
+  };
+  const input = new InputManager(bindings);
   // Console de développement (slash-commandes) — créée plus bas en DEV uniquement.
   let devConsole: DevConsole | null = null;
   let spawnEditor: SpawnEditor | null = null; // éditeur de layout du spawn (DEV, touche F2)
@@ -364,6 +377,8 @@ async function boot(): Promise<void> {
   const loaded = loadGame();
   const hasSave = !!loaded; // pour l'écran-titre : « reprendre » vs « commencer »
   let titleOpen = false; // l'écran-titre est-il affiché (gèle le déplacement/l'interaction le temps du seuil)
+  let keybindsOpen = false; // panneau « Paramètres des touches » affiché (sous-vue du menu)
+  let rebindCapture: Action | null = null; // action en attente de CAPTURE d'une touche (mode rebind)
   // On fusionne sur un état neuf : remplit les champs manquants (évolution du schéma) et
   // repart d'un sac vide (le selfId change à chaque session -> le sac n'est pas persistant).
   let state: GameState = loaded
@@ -713,6 +728,111 @@ async function boot(): Promise<void> {
     hud.closeSettings();
     pointerLook.engage(); // appelé dans un geste (clic/Échap) -> recapture
   }
+
+  // ---- PANNEAU « PARAMÈTRES DES TOUCHES » (rebind — cf. docs/rebind-clavier-plan.md) ----
+  // Sous-vue du menu Paramètres, gérée ici (comme l'écran-titre) : `keybindsOpen` entre dans
+  // `uiOpen` (gèle le jeu) et Échap ramène au menu. Rendu = liste ACTION_LABELS -> chips.
+  const keybindsEl = document.getElementById("keybinds");
+  const keybindListEl = document.getElementById("keybindList");
+  function openKeybinds(): void {
+    hud.closeSettings();
+    keybindsOpen = true;
+    if (keybindsEl) keybindsEl.style.display = "block";
+    renderKeybinds();
+    pointerLook.release();
+  }
+  function closeKeybinds(backToSettings: boolean): void {
+    keybindsOpen = false;
+    rebindCapture = null;
+    if (keybindsEl) keybindsEl.style.display = "none";
+    if (backToSettings) openSettings();
+    else pointerLook.engage();
+  }
+  /** (Re)construit la liste actions -> touches. Appelé à l'ouverture et après chaque changement. */
+  function renderKeybinds(): void {
+    if (!keybindListEl) return;
+    keybindListEl.textContent = "";
+    for (const { action, label } of ACTION_LABELS) {
+      const row = document.createElement("div");
+      row.className = "kbRow" + (rebindCapture === action ? " capturing" : "");
+      const name = document.createElement("span");
+      name.className = "kbName";
+      name.textContent = label;
+      row.appendChild(name);
+      const keys = document.createElement("span");
+      keys.className = "kbKeys";
+      if (rebindCapture === action) {
+        const cap = document.createElement("span");
+        cap.className = "kbCapture";
+        cap.textContent = "appuyez sur une touche… (Échap : annuler)";
+        keys.appendChild(cap);
+      } else {
+        if (bindings[action].length === 0) {
+          const none = document.createElement("span");
+          none.className = "kbNone";
+          none.textContent = "aucune touche";
+          keys.appendChild(none);
+        }
+        for (const k of bindings[action]) {
+          const chip = document.createElement("span");
+          chip.className = "kbKey";
+          chip.appendChild(document.createTextNode(keyLabel(k)));
+          const rm = document.createElement("button");
+          rm.textContent = "×";
+          rm.title = "retirer cette touche";
+          rm.addEventListener("click", () => { applyBindings(clearBinding(bindings, action, k)); renderKeybinds(); });
+          chip.appendChild(rm);
+          keys.appendChild(chip);
+        }
+        const add = document.createElement("button");
+        add.className = "kbAdd";
+        add.textContent = "+";
+        add.title = "lier une touche";
+        add.addEventListener("click", () => { rebindCapture = action; renderKeybinds(); });
+        keys.appendChild(add);
+      }
+      row.appendChild(keys);
+      keybindListEl.appendChild(row);
+    }
+  }
+  /** Capture la prochaine touche pour l'action en attente (réservées ignorées via normalizeKey). */
+  function captureRebindKey(e: KeyboardEvent): void {
+    e.preventDefault();
+    const key = normalizeKey(e);
+    if (!rebindCapture) return;
+    if (key !== null) applyBindings(withBinding(bindings, rebindCapture, key)); // réservée -> on reste en capture
+    if (key !== null) rebindCapture = null;
+    renderKeybinds();
+  }
+  document.getElementById("keysBtn")?.addEventListener("click", () => openKeybinds());
+  document.getElementById("keybindBack")?.addEventListener("click", () => closeKeybinds(true));
+  document.getElementById("keybindReset")?.addEventListener("click", () => {
+    applyBindings(mergeDefaults(null)); // retour aux défauts (persisté)
+    rebindCapture = null;
+    renderKeybinds();
+    hud.toast("touches réinitialisées");
+  });
+
+  /** Régénère les INDICES de contrôle affichés (aide, titre, combat, badge E) après un rebind. */
+  function refreshKeyHints(): void {
+    const move = moveClusterLabel(bindings);
+    const jump = actionKeyLabel(bindings, "jump");
+    const interact = actionKeyLabel(bindings, "interact");
+    const eat = actionKeyLabel(bindings, "eat");
+    const help = document.getElementById("helpControls");
+    if (help) help.innerHTML = `<kbd>${move}</kbd> se déplacer · <kbd>${jump}</kbd> sauter · <kbd>${interact}</kbd> interagir · souris : caméra`;
+    const title = document.getElementById("titleControls");
+    if (title) title.textContent = `souris : caméra · ${move} : se déplacer · ${interact} : interagir`;
+    const hit = document.getElementById("combatKeyHit");
+    if (hit) hit.textContent = interact;
+    const eatK = document.getElementById("combatKeyEat");
+    if (eatK) eatK.textContent = eat;
+    const promptK = document.getElementById("promptKey");
+    if (promptK) promptK.textContent = interact;
+    const eatHint = document.getElementById("eatHint");
+    if (eatHint) eatHint.textContent = `${eat} : manger (+8 vie)`;
+  }
+  refreshKeyHints(); // au boot : reflète la save (ou les défauts)
 
   function buildChoices(): DialogueChoice[] {
     const choices: DialogueChoice[] = [];
@@ -1080,12 +1200,13 @@ async function boot(): Promise<void> {
   // Sinon, navigation clavier du DIALOGUE (la souris marche aussi : curseur libéré).
   hud.onSettingsResume(() => closeInteractive());
   window.addEventListener("keydown", (e) => {
-    const k = e.key.toLowerCase();
-    if (k === "f3") { e.preventDefault(); hud.toggleDebug(); return; } // bascule l'overlay debug
-    if (k === "f2") { e.preventDefault(); spawnEditor?.toggle(); return; } // éditeur de spawn (DEV)
-    if (k === "escape") {
+    const k = e.key.toLowerCase() === "spacebar" ? " " : e.key.toLowerCase();
+    if (k === "f2") { e.preventDefault(); spawnEditor?.toggle(); return; } // éditeur de spawn (DEV — FIXE)
+    if (k === "escape") { // FIXE (touche système : déverrouille aussi le pointeur — non rebindable)
       e.preventDefault();
       if (titleOpen) return; // l'écran-titre se ferme par ses boutons, pas par Échap
+      if (rebindCapture) { rebindCapture = null; renderKeybinds(); return; } // annule la capture (reste sur le panneau)
+      if (keybindsOpen) { closeKeybinds(true); return; } // retour au menu Paramètres
       // Un événement est MODAL : on ne peut pas le fermer sans choisir (chaque scène a une
       // option gratuite). Sinon il resterait actif et invisible -> bloquerait les suivants.
       if (state.activeEvent && currentDialogue === eventView) return;
@@ -1095,17 +1216,21 @@ async function boot(): Promise<void> {
     }
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-    // V (hors UI) : bascule 1ʳᵉ/3ᵉ personne (filet manuel, en plus de l'auto en intérieur).
-    if (k === "v" && !hud.interactiveOpen) { forceFpv = !forceFpv; e.preventDefault(); return; }
-    // M (hors UI / cinématique) : bascule la minimap en plein écran (RF4b).
-    if (k === "m" && !hud.interactiveOpen && !cine.active) { minimap.toggleFullscreen(); e.preventDefault(); return; }
-    // R (MAINTENU, hors UI) : zoom « longue-vue » (façon OptiFine). Relâché -> keyup ci-dessous.
-    if (k === "r" && !hud.interactiveOpen && !devConsole?.isOpen && !spawnEditor?.active) {
+    if (rebindCapture) { captureRebindKey(e); return; } // mode CAPTURE du panneau de touches
+    // Raccourcis REBINDABLES — résolus via le modèle de bindings (cf. keybindings.ts).
+    const act = actionForKey(bindings, k);
+    if (act === "toggleDebug") { e.preventDefault(); hud.toggleDebug(); return; } // overlay debug
+    // Vue 1ʳᵉ/3ᵉ personne (hors UI) — filet manuel, en plus de l'auto en intérieur.
+    if (act === "toggleView" && !hud.interactiveOpen) { forceFpv = !forceFpv; e.preventDefault(); return; }
+    // Minimap plein écran (hors UI / cinématique) — RF4b.
+    if (act === "toggleMinimap" && !hud.interactiveOpen && !cine.active) { minimap.toggleFullscreen(); e.preventDefault(); return; }
+    // Longue-vue (MAINTENU, hors UI) — façon OptiFine. Relâché -> keyup ci-dessous.
+    if (act === "spyglass" && !hud.interactiveOpen && !devConsole?.isOpen && !spawnEditor?.active) {
       zoomHeld = true;
       e.preventDefault();
       return;
     }
-    // ENTER (hors UI) -> ouvre la CONSOLE DE DEV (montée en DEV uniquement). Ensuite la
+    // ENTER (hors UI, FIXE) -> ouvre la CONSOLE DE DEV (montée en DEV uniquement). Ensuite la
     // console capte sa propre saisie (stopPropagation) : ce listener ne la voit plus.
     if (k === "enter" && devConsole && !hud.interactiveOpen && !devConsole.isOpen) {
       devConsole.openConsole();
@@ -1113,14 +1238,16 @@ async function boot(): Promise<void> {
       return;
     }
     if (!hud.dialogueOpen) return; // (le menu se manie à la souris)
-    if (k === "arrowup" || k === "z" || k === "w") { hud.dialogueNavigate(-1); e.preventDefault(); }
-    else if (k === "arrowdown" || k === "s") { hud.dialogueNavigate(1); e.preventDefault(); }
-    else if (k === "arrowleft" || k === "q" || k === "a") { hud.dialogueAdjust(-1); e.preventDefault(); }
-    else if (k === "arrowright" || k === "d") { hud.dialogueAdjust(1); e.preventDefault(); }
-    else if (k === "e" || k === "enter") { hud.dialogueConfirm(); e.preventDefault(); }
+    // Navigation du DIALOGUE : RÉUTILISE les bindings de déplacement (pas de binding propre —
+    // une seule source de vérité) ; valider = interagir (ou Entrée, fixe).
+    if (act === "forward") { hud.dialogueNavigate(-1); e.preventDefault(); }
+    else if (act === "back") { hud.dialogueNavigate(1); e.preventDefault(); }
+    else if (act === "left") { hud.dialogueAdjust(-1); e.preventDefault(); }
+    else if (act === "right") { hud.dialogueAdjust(1); e.preventDefault(); }
+    else if (act === "interact" || k === "enter") { hud.dialogueConfirm(); e.preventDefault(); }
   });
-  // Relâcher R -> fin du zoom (toujours, même si une UI s'est ouverte entre-temps).
-  window.addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "r") zoomHeld = false; });
+  // Relâcher la longue-vue -> fin du zoom (toujours, même si une UI s'est ouverte entre-temps).
+  window.addEventListener("keyup", (e) => { if (bindings.spyglass.includes(e.key.toLowerCase())) zoomHeld = false; });
 
   // ---- Détection de l'interactable le plus proche (étiquette + action E) ----
   interface Focus { world: Vector3; verb: string; act: () => void; }
@@ -1829,7 +1956,7 @@ async function boot(): Promise<void> {
       hud.setCombat({
         name: boarding ? "embarquement…" : "ascension",
         hpFrac: f.hull / Math.max(1, f.hullMax),
-        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}%${crew} · ${f.asteroids.length} entrant(s) — ESQUIVE (ZQSD) · [E] tirer`,
+        weaponLabel: boarding ? "le vaisseau attend l'équipage" : `altitude ${Math.round(f.progress * 100)}%${crew} · ${f.asteroids.length} entrant(s) — ESQUIVE (${moveClusterLabel(bindings)}) · [${actionKeyLabel(bindings, "interact")}] tirer`,
         ready: !boarding && f.asteroids.length > 0,
       });
       // RF8 — AMBIANCE du décollage : musique de tension (réutilise la rencontre tier-3, overlay+ducking)
@@ -1946,7 +2073,7 @@ async function boot(): Promise<void> {
 
     // 2) Entrées -> personnage + interaction (E). Le déplacement est neutralisé quand une UI
     //    est ouverte (les touches servent alors à naviguer le dialogue, cf. listener clavier).
-    const uiOpen = titleOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
+    const uiOpen = titleOpen || keybindsOpen || hud.interactiveOpen || (devConsole?.isOpen ?? false) || (spawnEditor?.active ?? false);
     // M11/E3b — DÉCOLLAGE en cours : la caméra/mouvement passent en mode cinématique (l'équipage est
     // à bord, dans l'espace) ; l'interaction (E) sert à TIRER sur les débris entrants.
     const flying = !!state.flight && (state.flight.status === "boarding" || state.flight.status === "ascending" || state.flight.status === "escaped");
