@@ -116,7 +116,8 @@ export interface GameHooksContext {
   emit: (action: PlayerAction) => void;
   self: () => string;
   selfEngagedEnc: () => { id: string; enc: SharedEncounter } | null;
-  worldMap: { sites: Array<{ type: string; cx: number; cz: number }> };
+  /** Carte-monde COURANTE (un `let` rebindé par /seed/prestige -> toujours via accesseur). */
+  getWorldMap: () => { sites: Array<{ type: string; cx: number; cz: number }> };
   shipWorldPos: () => { x: number; z: number };
   restartWorld: () => void;
   endingText: () => string;
@@ -140,7 +141,8 @@ export interface GameHooksContext {
 
 /** Installe `window.__game` (lecture d'état + déclencheurs). Extrait tel quel de main.ts (A6). */
 export function installGameHooks(ctx: GameHooksContext): void {
-  const { emit, self, selfEngagedEnc, worldMap } = ctx;
+  const { emit, self, selfEngagedEnc } = ctx;
+  const worldMap = () => ctx.getWorldMap(); // toujours la carte COURANTE
   const state = ctx.getState; // raccourci : l'état COURANT (jamais capturé — toujours relu)
   window.__game = {
     ready: true,
@@ -169,11 +171,11 @@ export function installGameHooks(ctx: GameHooksContext): void {
     getShip: () => ({ ...state().ship }),
     enterRoom: (room: string, cx?: number, cz?: number) => {
       let ecx = cx, ecz = cz;
-      if (ecx === undefined || ecz === undefined) { const s = worldMap.sites.find((s) => s.type === "executioner"); if (s) { ecx = s.cx; ecz = s.cz; } }
+      if (ecx === undefined || ecz === undefined) { const s = worldMap().sites.find((s) => s.type === "executioner"); if (s) { ecx = s.cx; ecz = s.cz; } }
       if (ecx !== undefined && ecz !== undefined) emit(enterRoom(self(), ecx, ecz, room));
     },
-    getRooms: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state().sites?.[k]?.rooms ?? {}) } : {}; },
-    getWings: () => { const s = worldMap.sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state().sites?.[k]?.wings ?? {}) } : {}; },
+    getRooms: () => { const s = worldMap().sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state().sites?.[k]?.rooms ?? {}) } : {}; },
+    getWings: () => { const s = worldMap().sites.find((s) => s.type === "executioner"); const k = s ? s.cx + "," + s.cz : null; return k ? { ...(state().sites?.[k]?.wings ?? {}) } : {}; },
     reinforceShip: () => emit(reinforceShip(self())),
     upgradeEngine: () => emit(upgradeEngine(self())),
     grantPerk: (perk: string) => emit(debugGrantPerk(perk)),
