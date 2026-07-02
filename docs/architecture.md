@@ -74,6 +74,9 @@ src/
     audio.ts               AUDIO (présentation) : bus, musique adaptative, SFX (dont PORTE + IMPACT/LANCEMENT synthétisés). Lit l'état.
   ui/hud.ts                HUD (sac, feu, village, combat/décollage), étiquette E, DIALOGUES, menu PARAMÈTRES (son, CONFORT, multi)
   ui/minimap.ts            minimap UNIFIÉE & contextuelle (M11/RF4) : camp / exploration-monde / grotte-mine / vaisseau + fog
+  ui/keybindsPanel.ts      panneau « Paramètres des touches » (rebind : capture/retrait/reset) + indices affichés (A6)
+  ui/titleScreen.ts        écran-titre (seuil d'entrée : reprendre/nouvelle partie/rejoindre ; sauté en webdriver) (A6)
+  dev/gameHooks.ts         hooks d'auto-vérification `window.__game` (type Window + installGameHooks) (A6)
   input/                   input.ts (clavier→intentions) · keybindings.ts (REBIND : modèle pur action→touches, persisté) · pointerLook.ts (souris=caméra, sensibilité réglable)
   net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
   save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)
