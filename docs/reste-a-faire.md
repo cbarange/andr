@@ -80,10 +80,8 @@ Fils ADR encore ouverts, repérés dans [`roadmap-v2.md`](roadmap-v2.md) (M8.5/M
 - [~] **A6 — refactor `main.ts`** *(EN COURS — 3 extractions livrées, iso-comportement, un commit
   chacune)* : **A6.1** hooks debug -> `dev/gameHooks.ts` (déclaration Window + installGameHooks(ctx à
   accesseurs + hostMutate)) · **A6.2** panneau de touches + indices -> `ui/keybindsPanel.ts` (classe à
-  état propre) · **A6.3** écran-titre -> `ui/titleScreen.ts`. **main.ts : 2704 -> 2414 lignes (−290).**
-  Chaque extraction validée par typecheck + 300 tests + 21 e2e. **Reste (gros blocs, mêmes précautions)** :
-  vues de dialogue (~415 l. — attention à l'IDENTITÉ d'`eventView`, comparée dans le handler Échap),
-  `computeFocus` (~310 l.), `reflectState` (~345 l.), wiring audio (~140 l.).
+  état propre) · **A6.3** écran-titre -> `ui/titleScreen.ts`. **main.ts : 2704 -> 2002 lignes (−702).**
+  Chaque extraction validée par typecheck + 300 tests + 21 e2e. · **A6.4** vues de dialogue + révélation + plomberie -> `ui/dialogues.ts` (~500 l., identité `eventView`/`rootView` préservée via des membres stables). **Reste** : `computeFocus` (~310 l.), `reflectState` (~345 l.), wiring audio (~140 l.).
 - [ ] **A2 — outils dev hors prod** : `dev/commands.ts` + mutateurs `window.__game` **shippent** en prod
   (gardés volontairement pour le dev). À gater derrière un flag de build avant distribution publique.
 - [ ] **A5 — bâtiments merge + instance** : ⏸️ différé (analyse de risque faite) — optimisation de draw calls

@@ -77,6 +77,8 @@ src/
   ui/keybindsPanel.ts      panneau « Paramètres des touches » (rebind : capture/retrait/reset) + indices affichés (A6)
   ui/titleScreen.ts        écran-titre (seuil d'entrée : reprendre/nouvelle partie/rejoindre ; sauté en webdriver) (A6)
   dev/gameHooks.ts         hooks d'auto-vérification `window.__game` (type Window + installGameHooks) (A6)
+  ui/dialogues.ts          TOUTES les vues de dialogue (constructrice/atelier/troc/coffre/vaisseau/tableau/événement/fin)
+                           + plomberie (show/refresh/close) + révélation ADR des craftables (A6)
   input/                   input.ts (clavier→intentions) · keybindings.ts (REBIND : modèle pur action→touches, persisté) · pointerLook.ts (souris=caméra, sensibilité réglable)
   net/                     room.ts (salon + heartbeat/failover) · host.ts (élection PURE) · messages.ts
   save.ts                  saveGame/loadGame (+ migrateSave), réglages audio & CONFORT (localStorage)

@@ -40,23 +40,23 @@ import { installGameHooks } from "./dev/gameHooks";
 import { actionForKey, actionKeyLabel, mergeDefaults, moveClusterLabel } from "./input/keybindings";
 import { KeybindsPanel, refreshKeyHints } from "./ui/keybindsPanel";
 import { TitleScreen } from "./ui/titleScreen";
+import { Dialogues } from "./ui/dialogues";
 import { PointerLook } from "./input/pointerLook";
-import { Hud, type DialogueChoice, type DialogueStepper, type DialogueView } from "./ui/hud";
+import { Hud, type DialogueView } from "./ui/hud";
 import { NetRoom } from "./net/room";
 import type { StateSyncMsg } from "./net/messages";
 
 import {
-  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, plannedCount, survivalOf, maxWaterOf, maxHealthOf, stockOf, type GameState, type SharedEncounter,
+  createInitialState, Fire, freeWorkers, carriedTotal, carriedOf, carryCapacity, survivalOf, maxWaterOf, maxHealthOf, stockOf, type GameState, type SharedEncounter,
 } from "./sim/state";
 import { reduce } from "./sim/reducer";
 import { generateWorld } from "./sim/worldgen";
 import {
-  gatherWood, lightFire, stokeFire, build, harvestTrap, assignWorker, unassignWorker,
-  deposit, repairCabin, upgradeCabin, resolveEventChoice, tick, debugSetSeed,
+  gatherWood, lightFire, stokeFire, harvestTrap, resolveEventChoice, tick, debugSetSeed,
   takeLoot, secureMine, setOutside, useOutpost,
-  attack, eatMeat, craftItem, buy, useMeds, withdraw, steps, engageGuardian, enterRoom,
-  visitHouse, talkSwamp, setPositions, takeDrop, reinforceShip, upgradeEngine,
-  liftOff, flightFire, endFlight, steer, prestige, discoverShip, revealCells,
+  attack, eatMeat, useMeds, steps, engageGuardian, enterRoom,
+  visitHouse, talkSwamp, setPositions, takeDrop,
+  flightFire, endFlight, steer, prestige, discoverShip, revealCells,
   isNetworkSafeAction, type PlayerAction,
 } from "./sim/actions";
 import { bestReadyWeapon, ENGAGE_RADIUS } from "./sim/combat";
@@ -68,16 +68,16 @@ import { DayNight } from "./render/daynight";
 import { ShipAtCamp } from "./render/shipCamp";
 import {
   config, worldgen, FIRE_LABELS, TEMP_LABELS, BUILDER_MESSAGES, RESOURCE_LABELS,
-  craftables, craftableCost, craftableRevealed, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById, nextCabinTier, cabinUpgradeCost, storageCap,
+  craftables, jobs, terrainHeight, terrainBaseHeight, setTerrainPlateaus, type TerrainPlateau, eventById,
   configureBorders, SEA_LEVEL, BORDER_START, BORDER_BAND, campLayout, campPathsFor,
-  enemyById, weaponById, craftableItems, craftableItemById, tradeGoods, mineGuardians, Biome, SHIP,
+  enemyById, weaponById, craftableItemById, mineGuardians, Biome,
 } from "../data/world";
 import { createOcean } from "./render/ocean";
 
 // « Dans le village » = à l'intérieur du retranchement (zone sûre). Au-delà : EXPLORATION
 // (les événements ne bloquent plus — cf. reflectState).
 const VILLAGE_RADIUS = worldgen.safeRadiusCells * worldgen.cellSize;
-import { saveGame, loadGame, clearSave, saveDiscovered, loadDiscovered, saveAudioSettings, loadAudioSettings, saveComfortSettings, loadComfortSettings, saveKeybindings, loadKeybindings } from "./save";
+import { saveGame, loadGame, clearSave, saveAudioSettings, loadAudioSettings, saveComfortSettings, loadComfortSettings, saveKeybindings, loadKeybindings } from "./save";
 import { AudioManager } from "./render/audio";
 import { audioManifest } from "../data/audio";
 import { DevConsole } from "./dev/console";
@@ -514,41 +514,8 @@ async function boot(): Promise<void> {
   const self = () => net.selfId;
 
   // ====== INTERACTIONS DIÉGÉTIQUES ======
-  // Craftables RÉVÉLÉS (présentation, COLLANT + PERSISTÉ, façon A Dark Room) : une fois débloqué,
-  // l'élément reste dans la liste de construction (grisé si pas les moyens), même après un
-  // rechargement. Donnée LOCALE de présentation (≠ GameState déterministe), restaurée du disque.
-  const discovered = new Set<string>(loadDiscovered());
-  const pendingReveal = new Set<string>(); // révélés mais pas encore vus -> « ! » au-dessus de la constructrice
-  const justRevealed = new Set<string>(); // vus dans le dialogue OUVERT -> badge « nouveau » (vidé à la fermeture)
-  /** Le joueur « voit » les nouveautés : on passe pendingReveal -> justRevealed (badge), « ! » s'éteint. */
-  function acknowledgeReveals(): void {
-    for (const id of pendingReveal) justRevealed.add(id);
-    pendingReveal.clear();
-  }
+  // (La révélation des craftables + toutes les VUES de dialogue vivent dans ui/dialogues.ts — A6.)
   let chopCooldown = 0; // « couper prend du temps » : délai entre deux coups de hache
-
-  /** Révèle les craftables selon la règle d'A Dark Room (`craftableRevealed` : ½ du bois + chaque
-   *  autre ingrédient « vu » ≥ 1, ou déjà bâti). Gate D4 : rien avant la cabane réparée (≈ builder
-   *  lvl 4 d'ADR). Révélation COLLANTE et persistée ; chaque nouveauté alimente `pendingReveal`
-   *  (le « ! » au-dessus de la constructrice + le badge « nouveau »). Donnée LOCALE de présentation. */
-  function updateDiscovered(): boolean {
-    if (!state.cabinRepaired) return false;
-    let grew = false;
-    for (const c of craftables) {
-      if (discovered.has(c.id)) continue;
-      if (craftableRevealed(c, state.resources, state.buildings[c.id] ?? 0)) {
-        discovered.add(c.id);
-        pendingReveal.add(c.id);
-        grew = true;
-      }
-    }
-    if (grew) saveDiscovered([...discovered]);
-    return grew;
-  }
-
-  function formatCost(cost: Record<string, number>): string {
-    return Object.keys(cost).map((r) => `${cost[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", ");
-  }
 
   /** Allumer / nourrir le feu — consomme le bois DU SAC. */
   function interactFire(): void {
@@ -596,51 +563,33 @@ async function boot(): Promise<void> {
     if (hit.felled) hud.toast("l'arbre s'abat.");
   }
 
-  function depositAtChest(): void {
-    if (carriedTotal(state, self()) <= 0) {
-      hud.toast("le sac est vide.");
-      return;
-    }
-    // Surplus PERDU au dépôt : l'entrepôt borne chaque ressource à son plafond (clamp sec dans
-    // le reducer pur). On le PRÉDIT localement depuis l'état pré-dépôt — feedback HUD seul, sans
-    // toucher à la sim ni au déterminisme.
-    const bag = state.carried[self()] ?? {};
-    const overflow: string[] = [];
-    for (const id of Object.keys(bag)) {
-      const total = (state.resources[id] ?? 0) + bag[id];
-      if (total - Math.min(storageCap(state.cabinTier, id), total) > 0) overflow.push(RESOURCE_LABELS[id] ?? id);
-    }
-    emit(deposit(self()));
-    audio.playSfx("deposit");
-    hud.toast(overflow.length
-      ? `entrepôt plein : surplus de ${overflow.join(", ")} perdu`
-      : "rangé dans l'entrepôt.");
-  }
-
   // ---- INTERFACES INTERACTIVES (dialogues + menu) ----
-  // Règle souris : ouvrir une UI LIBÈRE le pointeur (curseur visible) ; fermer le RECAPTURE.
-  // Cliquables à la souris ET navigables au clavier (le dialogue).
-  let currentDialogue: (() => DialogueView) | null = null;
-  function showDialogue(make: () => DialogueView): void {
-    currentDialogue = make;
-    hud.openDialogue(make(), false);
-    pointerLook.release(); // souris libérée pour cliquer
-  }
-  function refreshDialogue(): void {
-    if (currentDialogue) hud.openDialogue(currentDialogue(), true);
-  }
+  // Les vues + la plomberie (show/refresh/close, règle souris) vivent dans ui/dialogues.ts (A6).
   function openSettings(): void {
     hud.openSettings();
     pointerLook.release();
   }
-  /** Ferme toute interface ouverte (dialogue ou menu) et RECAPTURE le pointeur. */
-  function closeInteractive(): void {
-    currentDialogue = null;
-    justRevealed.clear(); // les badges « nouveau » ne valent que pour la session de dialogue
-    hud.closeDialogue();
-    hud.closeSettings();
-    pointerLook.engage(); // appelé dans un geste (clic/Échap) -> recapture
+  /** Position-monde du vaisseau — l'ANCRE AU CAMP (RF1b : réparé/décollé depuis la base, fidèle ADR). */
+  function shipWorldPos(): { x: number; z: number } {
+    return shipAtCamp.worldPos();
   }
+  const dialogs = new Dialogues({
+    getState: () => state,
+    emit,
+    self,
+    hud,
+    audio,
+    releasePointer: () => pointerLook.release(),
+    engagePointer: () => pointerLook.engage(),
+    shipWorldPos,
+    // PRESTIGE appliqué localement -> régénère le monde + réveil au camp + save (cf. restartWorld).
+    onWorldRestart: () => {
+      regenerateWorld();
+      player.teleport(cabin.center.x + 1, cabin.center.z + 0.5);
+      cameraFollow = true;
+      saveGame(state);
+    },
+  });
 
   // ---- PANNEAU « PARAMÈTRES DES TOUCHES » — extrait dans ui/keybindsPanel.ts (A6). Sous-vue du
   //      menu : `isOpen` entre dans `uiOpen` (gèle le jeu) ; Échap = annuler la capture / retour menu.
@@ -655,371 +604,10 @@ async function boot(): Promise<void> {
   });
   refreshKeyHints(bindings); // au boot : reflète la save (ou les défauts)
 
-  function buildChoices(): DialogueChoice[] {
-    const choices: DialogueChoice[] = [];
-    for (const c of craftables) {
-      // Construit + EN CHANTIER : le coût/plafond suit le rang du prochain exemplaire commandé
-      // (sinon on pourrait enfiler plusieurs chantiers au même prix et dépasser le maximum).
-      const count = plannedCount(state, c.id);
-      if (!discovered.has(c.id)) continue; // pas encore débloqué (révélation gérée par updateDiscovered)
-      const cost = craftableCost(c, count);
-      const affordable = Object.keys(cost).every((r) => (state.resources[r] ?? 0) >= cost[r]);
-      const maxed = count >= c.maximum;
-      // Info-bulle au survol : ce qu'il manque à l'entrepôt (le message n'encombre plus le dialogue).
-      const missing = Object.keys(cost)
-        .map((r) => ({ r, lack: cost[r] - Math.floor(state.resources[r] ?? 0) }))
-        .filter((m) => m.lack > 0);
-      // On N'AFFICHE PAS le plafond (`c.maximum`) : la limite reste une découverte du joueur.
-      // Le compte de ce qu'il a déjà bâti, lui, est légitime (c'est son propre geste).
-      const isNew = justRevealed.has(c.id);
-      // Survol : pour une NOUVEAUTÉ, le message narratif d'ADR ; sinon ce qui manque / le plafond.
-      const tooltip = isNew && c.availableMsg
-        ? c.availableMsg
-        : maxed
-          ? "inutile d'en bâtir davantage" // découverte au moment où on bute dessus (sans révéler le chiffre)
-          : missing.length
-            ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
-            : undefined;
-      choices.push({
-        label: count > 0 ? `${c.name} ${count}` : c.name,
-        // Coût affiché UNIQUEMENT pour ce qui peut encore être construit (rien sur un bâtiment au plafond).
-        sublabel: maxed ? undefined : formatCost(cost),
-        tooltip,
-        isNew,
-        enabled: !maxed && affordable,
-        onSelect: () => { emit(build(self(), c.id)); audio.playSfx("build"); refreshDialogue(); },
-      });
-    }
-    // Amélioration de l'entrepôt (×1 -> ×5 -> ×10) : coût puisé dans l'entrepôt.
-    const next = nextCabinTier(state.cabinTier);
-    if (state.cabinRepaired && next !== null) {
-      const ucost = cabinUpgradeCost[next] ?? {};
-      const affordable = Object.keys(ucost).every((r) => (state.resources[r] ?? 0) >= ucost[r]);
-      const missing = Object.keys(ucost)
-        .map((r) => ({ r, lack: ucost[r] - Math.floor(state.resources[r] ?? 0) }))
-        .filter((m) => m.lack > 0);
-      choices.push({
-        label: `agrandir l'entrepôt (×${next})`,
-        sublabel: formatCost(ucost),
-        tooltip: missing.length ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}` : undefined,
-        enabled: affordable,
-        onSelect: () => { emit(upgradeCabin(self())); audio.playSfx("build"); refreshDialogue(); },
-      });
-    }
-    return choices;
-  }
-
-  function buildView(): DialogueView {
-    return {
-      speaker: "la constructrice",
-      text: "« qu'est-ce qu'on bâtit ? »",
-      choices: [
-        ...buildChoices(),
-        // M8/M10 — fabrication d'OBJETS simples (sans atelier : la torche, fidèle au room-craft ADR).
-        { label: "fabriquer un objet…", enabled: true, onSelect: () => showDialogue(craftViewBuilder) },
-        { label: "(s'éloigner)", enabled: true, onSelect: closeInteractive },
-      ],
-    };
-  }
-
-  // M8/M10 — vue « FABRIQUER » réutilisable : liste les `craftableItems` accessibles. `atelier` :
-  // true = station d'artisanat (E sur l'atelier construit — tous les items dont le prérequis
-  // bâtiment est satisfait) ; false = via la constructrice (items SANS bâtiment requis, ex. torche).
-  // Coûts puisés dans l'ENTREPÔT, l'objet va au SAC (guards sim CRAFT_ITEM : recette/bâtiment/place).
-  function craftView(atelier: boolean): DialogueView {
-    const items = craftableItems.filter((it) => {
-      // M11/RF7 — Fabricator : items gatés PERK (tech alien) -> à l'atelier, seulement une fois
-      // l'antichambre du cuirassé franchie. Jamais chez la constructrice (objets simples).
-      if (it.requiresPerk) return atelier && !!state.perks[it.requiresPerk];
-      return atelier ? !it.building || (state.buildings[it.building] ?? 0) > 0 : !it.building;
-    });
-    const hasFab = atelier && craftableItems.some((it) => it.requiresPerk && !!state.perks[it.requiresPerk]);
-    const room = carryCapacity(state) - carriedTotal(state, self()) > 0;
-    const choices: DialogueChoice[] = items.map((it) => {
-      const isUpgrade = it.type === "upgrade"; // M10 : possession du village -> entrepôt, max 1
-      const owned = isUpgrade && it.maximum !== undefined && stockOf(state, it.id) >= it.maximum;
-      const needsRoom = !isUpgrade && !room; // un upgrade ne prend pas de place de sac
-      const missing = Object.keys(it.recipe)
-        .map((r) => ({ r, lack: it.recipe[r] - Math.floor(state.resources[r] ?? 0) }))
-        .filter((m) => m.lack > 0);
-      return {
-        label: it.name,
-        sublabel: owned ? "déjà possédé" : Object.keys(it.recipe).map((r) => `${it.recipe[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
-        tooltip: needsRoom
-          ? "sac plein"
-          : missing.length && !owned
-            ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
-            : undefined,
-        enabled: !owned && missing.length === 0 && !needsRoom,
-        onSelect: () => {
-          emit(craftItem(self(), it.id));
-          audio.playSfx("deposit");
-          hud.toast(isUpgrade ? `${it.name} — le village s'équipe.` : `${it.name} — dans votre sac.`);
-          refreshDialogue();
-        },
-      };
-    });
-    return {
-      speaker: hasFab ? "l'atelier · fabricateur" : atelier ? "l'atelier" : "la constructrice",
-      text: hasFab
-        ? "l'établi ronronne d'une lueur alien — le fabricateur a appris d'étranges plans. qu'est-ce qu'on forge ?"
-        : atelier ? "l'établi est prêt. qu'est-ce qu'on fabrique ?" : "« je peux te préparer quelques objets simples. »",
-      choices: [...choices, { label: "(fermer)", enabled: true, onSelect: closeInteractive }],
-    };
-  }
-  const craftViewBuilder = (): DialogueView => craftView(false);
-  const craftViewWorkshop = (): DialogueView => craftView(true);
-
-  // M10 — POSTE DE TRAITE : vue de commerce (Room.TradeGoods d'ADR — coûts exacts, fourrure/
-  // écailles/dents = monnaies). Achats payés à l'ENTREPÔT, gains à l'ENTREPÔT (guards sim BUY).
-  function tradeView(): DialogueView {
-    const choices: DialogueChoice[] = tradeGoods.map((g) => {
-      const missing = Object.keys(g.cost)
-        .map((r) => ({ r, lack: g.cost[r] - Math.floor(state.resources[r] ?? 0) }))
-        .filter((m) => m.lack > 0);
-      return {
-        label: RESOURCE_LABELS[g.id] ?? g.id,
-        sublabel: Object.keys(g.cost).map((r) => `${g.cost[r]} ${RESOURCE_LABELS[r] ?? r}`).join(", "),
-        tooltip: missing.length
-          ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
-          : undefined,
-        enabled: missing.length === 0,
-        onSelect: () => { emit(buy(self(), g.id)); audio.playSfx("buy"); refreshDialogue(); },
-      };
-    });
-    return {
-      speaker: "le poste de traite",
-      text: "les étals sont garnis. la fourrure fait foi.",
-      choices: [...choices, { label: "(fermer)", enabled: true, onSelect: closeInteractive }],
-    };
-  }
-  const tradeViewRef = (): DialogueView => tradeView();
-
-  // M10 — COFFRE : « tout déposer » + S'ÉQUIPER (l'outfitting d'ADR : retirer des consommables
-  // d'expédition de l'entrepôt vers le sac — action WITHDRAW bornée par stock & capacité).
-  const OUTFIT_IDS = ["cured meat", "medicine", "bullets", "grenade", "torch", "bait"];
-  function chestView(): DialogueView {
-    const total = Math.floor(carriedTotal(state, self()));
-    const cap = carryCapacity(state);
-    const steppers: DialogueStepper[] = OUTFIT_IDS
-      .filter((id) => stockOf(state, id) > 0 || carriedOf(state, self(), id) > 0)
-      .map((id) => ({
-        label: RESOURCE_LABELS[id] ?? id,
-        value: `${Math.floor(carriedOf(state, self(), id))}`,
-        sublabel: `entrepôt : ${Math.floor(stockOf(state, id))}`,
-        canDec: false, // re-déposer = « tout déposer » (DEPOSIT vide le sac entier)
-        canInc: stockOf(state, id) > 0 && total < cap,
-        onDec: () => {},
-        onInc: () => { emit(withdraw(self(), id, 1)); refreshDialogue(); },
-      }));
-    return {
-      speaker: "le coffre",
-      text: `votre sac : ${total}/${cap}. prendre des vivres pour la route, ou tout déposer.`,
-      steppers,
-      choices: [
-        { label: "tout déposer", sublabel: total > 0 ? `${total} au total` : "(sac vide)", enabled: total > 0,
-          onSelect: () => { depositAtChest(); refreshDialogue(); } },
-        { label: "(fermer)", enabled: true, onSelect: closeInteractive },
-      ],
-    };
-  }
-  const chestViewRef = (): DialogueView => chestView();
-
-  // M11/E2 — LE VAISSEAU : réparer l'épave avec l'alliage (l'écran Ship d'ADR). Renforcer la coque
-  // (PV de l'ascension) / calibrer le moteur (réduit la difficulté du décollage). Le décollage (E3)
-  // s'arme une fois la coque minimale atteinte — annoncé ici pour donner le cap.
-  /** Position-monde du vaisseau — l'ANCRE AU CAMP (RF1b : réparé/décollé depuis la base, fidèle ADR). */
-  function shipWorldPos(): { x: number; z: number } {
-    return shipAtCamp.worldPos();
-  }
-  function shipView(): DialogueView {
-    const alloy = Math.floor(stockOf(state, "alien alloy"));
-    const { hull, engine } = state.ship;
-    const ready = hull >= SHIP.liftoffHullMin;
-    return {
-      speaker: "le vaisseau",
-      text: `coque ${hull}/${SHIP.hullMax} · moteur ${engine}/${SHIP.engineMax} · alliage en réserve : ${alloy}. `
-        + (ready ? "la coque tiendra l'ascension." : `il faut au moins ${SHIP.liftoffHullMin} de coque pour décoller.`),
-      choices: [
-        {
-          label: "renforcer la coque", sublabel: `${SHIP.alloyPerHull} alliage → +1 coque`,
-          tooltip: hull >= SHIP.hullMax ? "coque au maximum" : (alloy < SHIP.alloyPerHull ? "pas assez d'alliage" : undefined),
-          enabled: hull < SHIP.hullMax && alloy >= SHIP.alloyPerHull,
-          onSelect: () => { emit(reinforceShip(self())); audio.playSfx("build"); refreshDialogue(); },
-        },
-        {
-          label: "calibrer le moteur", sublabel: `${SHIP.alloyPerEngine} alliage → +1 poussée`,
-          tooltip: engine >= SHIP.engineMax ? "moteur au maximum" : (alloy < SHIP.alloyPerEngine ? "pas assez d'alliage" : undefined),
-          enabled: engine < SHIP.engineMax && alloy >= SHIP.alloyPerEngine,
-          onSelect: () => { emit(upgradeEngine(self())); audio.playSfx("build"); refreshDialogue(); },
-        },
-        {
-          label: "DÉCOLLER", sublabel: ready ? "quitter cette planète" : `coque insuffisante (${hull}/${SHIP.liftoffHullMin})`,
-          tooltip: ready ? undefined : "renforce d'abord la coque",
-          enabled: ready,
-          onSelect: () => showDialogue(liftoffConfirmView), // point-of-no-return : on confirme
-        },
-        { label: "(fermer)", enabled: true, onSelect: closeInteractive },
-      ],
-    };
-  }
-  const shipViewRef = (): DialogueView => shipView();
-  // Confirmation du décollage (point-of-no-return — standard de l'industrie avant un climax irréversible).
-  const liftoffConfirmView = (): DialogueView => ({
-    speaker: "le vaisseau",
-    text: "les moteurs grondent. une fois lancés, plus de retour en arrière — il faudra percer l'atmosphère. prêt ?",
-    choices: [
-      { label: "décoller — quitter ce monde", enabled: true, onSelect: () => { const w = shipWorldPos(); emit(liftOff(self(), w.x, w.z)); closeInteractive(); } },
-      { label: "pas encore", enabled: true, onSelect: () => showDialogue(shipViewRef) },
-    ],
-  });
-
-  // M11/E4 — ÉCRAN DE FIN (épilogue) + PRESTIGE (NG+). Ouvert à l'évasion ; « recommencer » réamorce
-  // un monde neuf (graine fraîche) en reportant les perks. « contempler » laisse l'écran ouvert.
-  function restartWorld(): void {
-    const before = state.worldSeed;
-    emit(prestige(self())); // hôte/hors-ligne -> applique localement ; client -> demande à l'hôte (snapshot)
-    closeInteractive();
-    if (state.worldSeed !== before) { // appliqué localement -> régénère le monde + réveil au camp
-      regenerateWorld();
-      player.teleport(cabin.center.x + 1, cabin.center.z + 0.5);
-      cameraFollow = true;
-      saveGame(state);
-    }
-    hud.toast(`un monde neuf s'éveille. (évasions : ${state.prestige})`);
-  }
-  const endingView = (): DialogueView => {
-    // M11/RF6 — FIN ÉTENDUE si le `fleet beacon` (drop du boss du pont) a été ramené à bord
-    // (à l'entrepôt OU au sac). Sinon, fin standard. Le beacon est OPTIONNEL (n'empêche pas l'évasion).
-    const hasBeacon = stockOf(state, "fleet beacon") > 0 || carriedOf(state, self(), "fleet beacon") > 0;
-    const text = hasBeacon
-      ? "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
-        + "la balise de flotte s'éveille dans la soute : un signal court vers les ténèbres, et QUELQUE CHOSE "
-        + "répond. des silhouettes immenses glissent entre les étoiles — la flotte des wanderers vous a "
-        + "entendu·e. vous n'êtes pas seul·e. la première à fuir, jamais la dernière."
-      : "le vaisseau perce les nuages, puis le vide. la planète sombre rétrécit — un point, puis rien. "
-        + "derrière vous, un feu que vous avez nourri ; devant, les étoiles. le silence est total. vous êtes libre.";
-    return {
-      speaker: "épilogue",
-      text,
-      choices: [
-        { label: "recommencer — un monde neuf", enabled: true, onSelect: restartWorld },
-        { label: "contempler les étoiles", enabled: true, onSelect: () => { /* reste sur l'écran de fin */ } },
-      ],
-    };
-  };
-  const endingViewRef = (): DialogueView => endingView();
-
-  function formatStores(stores: Record<string, number>): string {
-    return Object.keys(stores).map((s) => `${stores[s] > 0 ? "+" : ""}${stores[s]} ${RESOURCE_LABELS[s] ?? s}`).join(", ");
-  }
-
-  function workerSteppers(): DialogueStepper[] {
-    const free = freeWorkers(state);
-    const steppers: DialogueStepper[] = [];
-    for (const j of jobs) {
-      if (j.building && (state.buildings[j.building] ?? 0) === 0) continue;
-      // Le bûcheron est l'occupation par défaut (le « reste ») : listé comme les autres, mais
-      // SANS +/- (on ne l'assigne pas, on reconvertit des bûcherons vers les métiers).
-      if (j.id === "gatherer") {
-        steppers.push({
-          label: j.name,
-          value: String(free),
-          sublabel: formatStores(j.stores),
-          canDec: false,
-          canInc: false,
-          onDec: () => {},
-          onInc: () => {},
-          readOnly: true,
-        });
-        continue;
-      }
-      const n = state.workers[j.id] ?? 0;
-      steppers.push({
-        label: j.name,
-        value: String(n),
-        sublabel: formatStores(j.stores),
-        canDec: n > 0,
-        canInc: free > 0,
-        onDec: () => { emit(unassignWorker(self(), j.id)); refreshDialogue(); },
-        onInc: () => { emit(assignWorker(self(), j.id)); refreshDialogue(); },
-      });
-    }
-    return steppers;
-  }
-
-  // Le GRAND TABLEAU (dans la cabane) gère la répartition des villageois (Temps 2).
-  function workersView(): DialogueView {
-    return {
-      speaker: "le tableau du village",
-      text: "qui fait quoi au village ?",
-      steppers: workerSteppers(),
-      choices: [{ label: "(fermer)", enabled: true, onSelect: closeInteractive }],
-    };
-  }
-
-  // La CONSTRUCTRICE : réparer la cabane, puis construire.
-  function rootView(): DialogueView {
-    const speaker = "la constructrice";
-    if (state.builder < config.fire.builder.maxLevel) {
-      return { speaker, text: "« laisse-moi me réchauffer encore un peu près du feu… »",
-        choices: [{ label: "(s'éloigner)", enabled: true, onSelect: closeInteractive }] };
-    }
-    if (!state.cabinRepaired) {
-      const have = Math.floor(carriedOf(state, self(), "wood"));
-      const cost = config.cabinRepairCost;
-      return {
-        speaker,
-        text: "« cette vieille cabane tient encore debout. aide-moi à la remettre d'aplomb. »",
-        choices: [
-          { label: "réparer la cabane", sublabel: `${cost} bois (sac : ${have})`, enabled: have >= cost,
-            onSelect: () => { emit(repairCabin(self())); audio.playSfx("build"); refreshDialogue(); } },
-          { label: "(s'éloigner)", enabled: true, onSelect: closeInteractive },
-        ],
-      };
-    }
-    // Cabane réparée → directement la liste de construction (plus de dialogue d'intro inutile).
-    return buildView();
-  }
-
-  function openBuilderDialogue(): void { acknowledgeReveals(); showDialogue(rootView); }
-  function openBoard(): void { showDialogue(workersView); }
-
-  // M5 — panneau d'ÉVÉNEMENT : la scène courante de l'état -> DialogueView (réutilise le dialogue).
-  // L'ouverture/fermeture/rafraîchissement est piloté par le watcher dans reflectState (l'état
-  // fait foi : en P2P, l'événement arrive par snapshot et les deux joueurs voient le même panneau).
-  function eventView(): DialogueView {
-    const active = state.activeEvent;
-    const ev = active ? eventById[active.id] : undefined;
-    const scene = ev && active ? ev.scenes[active.scene] : undefined;
-    if (!ev || !scene) {
-      return { speaker: "", text: "", choices: [{ label: "(fermer)", enabled: true, onSelect: closeInteractive }] };
-    }
-    const choices: DialogueChoice[] = scene.choices
-      .filter((c) => c.available?.(state) ?? true)
-      .map((c) => {
-        const missing = c.cost
-          ? Object.keys(c.cost)
-              .map((r) => ({ r, lack: c.cost![r] - Math.floor(state.resources[r] ?? 0) }))
-              .filter((m) => m.lack > 0)
-          : [];
-        return {
-          label: c.text,
-          sublabel: c.cost ? formatCost(c.cost) : undefined,
-          tooltip: missing.length
-            ? `il manque : ${missing.map((m) => `${m.lack} ${RESOURCE_LABELS[m.r] ?? m.r}`).join(", ")}`
-            : undefined,
-          enabled: missing.length === 0,
-          onSelect: () => emit(resolveEventChoice(self(), c.id)),
-        };
-      });
-    return { speaker: ev.title, text: scene.text.join(" "), choices };
-  }
-
   // Échap (global) : ferme l'interface ouverte, sinon ouvre le menu Paramètres.
   // (NB : Échap libère aussi le pointer lock côté navigateur — c'est voulu pour le menu.)
   // Sinon, navigation clavier du DIALOGUE (la souris marche aussi : curseur libéré).
-  hud.onSettingsResume(() => closeInteractive());
+  hud.onSettingsResume(() => dialogs.closeInteractive());
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase() === "spacebar" ? " " : e.key.toLowerCase();
     if (k === "f2") { e.preventDefault(); spawnEditor?.toggle(); return; } // éditeur de spawn (DEV — FIXE)
@@ -1030,8 +618,8 @@ async function boot(): Promise<void> {
       if (keybindsPanel.isOpen) { keybindsPanel.close(true); return; } // retour au menu Paramètres
       // Un événement est MODAL : on ne peut pas le fermer sans choisir (chaque scène a une
       // option gratuite). Sinon il resterait actif et invisible -> bloquerait les suivants.
-      if (state.activeEvent && currentDialogue === eventView) return;
-      if (hud.interactiveOpen) closeInteractive();
+      if (state.activeEvent && dialogs.current() === dialogs.eventView) return;
+      if (hud.interactiveOpen) dialogs.closeInteractive();
       else openSettings();
       return;
     }
@@ -1107,7 +695,7 @@ async function boot(): Promise<void> {
         consider(Math.hypot(wp.x - p.x, wp.z - p.z), config.cabinRange, () => ({
           world: new Vector3(wp.x, terrainHeight(wp.x, wp.z) + 2.2, wp.z),
           verb: "fabriquer",
-          act: () => showDialogue(craftViewWorkshop),
+          act: () => dialogs.showDialogue(dialogs.craftViewWorkshop),
         }));
       }
     }
@@ -1117,7 +705,7 @@ async function boot(): Promise<void> {
         consider(Math.hypot(tp.x - p.x, tp.z - p.z), config.cabinRange, () => ({
           world: new Vector3(tp.x, terrainHeight(tp.x, tp.z) + 2.4, tp.z),
           verb: "commercer",
-          act: () => showDialogue(tradeViewRef),
+          act: () => dialogs.showDialogue(dialogs.tradeViewRef),
         }));
       }
     }
@@ -1133,7 +721,7 @@ async function boot(): Promise<void> {
     if (stranger.isActive) {
       const s = stranger.position;
       consider(Math.hypot(s.x - p.x, s.z - p.z), config.builderRange, () => ({
-        world: new Vector3(s.x, s.y + 1.3, s.z), verb: "parler", act: openBuilderDialogue,
+        world: new Vector3(s.x, s.y + 1.3, s.z), verb: "parler", act: dialogs.openBuilderDialogue,
       }));
     }
 
@@ -1141,11 +729,11 @@ async function boot(): Promise<void> {
     if (cabin.isRepaired) {
       const c = cabin.chestPosition;
       consider(Math.hypot(c.x - p.x, c.z - p.z), config.cabinRange, () => ({
-        world: new Vector3(c.x, c.y + 1.2, c.z), verb: "ouvrir le coffre", act: () => showDialogue(chestViewRef),
+        world: new Vector3(c.x, c.y + 1.2, c.z), verb: "ouvrir le coffre", act: () => dialogs.showDialogue(dialogs.chestViewRef),
       }));
       const b = cabin.boardPosition;
       consider(Math.hypot(b.x - p.x, b.z - p.z), config.cabinRange, () => ({
-        world: new Vector3(b.x, b.y + 1.9, b.z), verb: "organiser le village", act: openBoard,
+        world: new Vector3(b.x, b.y + 1.9, b.z), verb: "organiser le village", act: dialogs.openBoard,
       }));
     }
 
@@ -1326,7 +914,7 @@ async function boot(): Promise<void> {
       consider(Math.hypot(sc.x - p.x, sc.z - p.z), 7.0, () => ({
         world: new Vector3(sc.x, terrainHeight(sc.x, sc.z) + 3.0, sc.z),
         verb: "examiner le vaisseau",
-        act: () => showDialogue(shipViewRef),
+        act: () => dialogs.showDialogue(dialogs.shipViewRef),
       }));
     }
 
@@ -1506,11 +1094,11 @@ async function boot(): Promise<void> {
   }
   function reflectState(): void {
     // Déblocages (façon ADR) : révèle les craftables atteignables, de façon collante + persistée.
-    const grew = updateDiscovered();
+    const grew = dialogs.updateDiscovered();
     // Si le dialogue de la constructrice est OUVERT, on acquitte (badge « nouveau ») et on rafraîchit
     // pour que le bâtiment fraîchement révélé apparaisse tout de suite, sans réouverture.
-    if (currentDialogue === rootView && pendingReveal.size > 0) acknowledgeReveals();
-    if (grew && currentDialogue === rootView) refreshDialogue();
+    if (dialogs.current() === dialogs.rootView && dialogs.hasPendingReveals()) dialogs.acknowledgeReveals();
+    if (grew && dialogs.current() === dialogs.rootView) dialogs.refreshDialogue();
     // Sac du joueur (ce qu'il porte).
     const bag = state.carried[self()] ?? {};
     const entries: Array<{ label: string; value: number }> = [];
@@ -1593,7 +1181,7 @@ async function boot(): Promise<void> {
     audio.setBackgroundMusic(pickMusic()); // A2/A6 : fond = feu (spatial) / village / exploration (idempotent)
     stranger.setBuilder(state.builder);
     stranger.setActivity(state.cabinRepaired, state.tick < state.builderTendingUntil); // va réalimenter le feu (cosmétique)
-    stranger.setNews(state.cabinRepaired && pendingReveal.size > 0); // « ! » : un nouveau bâtiment est dispo
+    stranger.setNews(state.cabinRepaired && dialogs.hasPendingReveals()); // « ! » : un nouveau bâtiment est dispo
     village.sync(state.buildings, state.constructing);
     campRuins.sync(state.buildings, state.constructing[0]?.id ?? null); // gravats des emplacements futurs
     // Sentiers du village : RE-générés dès qu'un bâtiment (hors piège) est achevé — ou la cabane
@@ -1673,10 +1261,10 @@ async function boot(): Promise<void> {
     // figeaient à l'ouverture — ex. les métiers assignés par l'autre joueur n'apparaissaient pas,
     // et chez un client sa propre assignation (envoyée à l'hôte) ne se voyait qu'après réouverture.
     // L'eventView a déjà son propre suivi (signature des stocks) -> on l'exclut ici.
-    if (currentDialogue && currentDialogue !== eventView) {
+    if (dialogs.current() && dialogs.current() !== dialogs.eventView) {
       const sig = `${state.population}|${state.cabinTier}|${state.cabinRepaired}|${state.builder}|`
         + `${JSON.stringify(state.workers)}|${JSON.stringify(state.buildings)}|${JSON.stringify(state.resources)}`;
-      if (sig !== prevDialogueSig) { refreshDialogue(); prevDialogueSig = sig; }
+      if (sig !== prevDialogueSig) { dialogs.refreshDialogue(); prevDialogueSig = sig; }
     }
 
     // M5 — événement actif : ouvrir / rafraîchir / fermer le panneau de choix. On suit la
@@ -1692,7 +1280,7 @@ async function boot(): Promise<void> {
         const inVillage = Math.hypot(p.x, p.z) <= VILLAGE_RADIUS;
         if (inVillage) {
           if (sc?.notification) hud.toast(sc.notification);
-          showDialogue(eventView);
+          dialogs.showDialogue(dialogs.eventView);
           const track = EVENT_MUSIC[ae.id]; // A5 : musique d'événement (overlay + ducking), idempotent
           if (track) audio.playEventMusic(track);
         } else if (sc) {
@@ -1708,14 +1296,14 @@ async function boot(): Promise<void> {
           if (decline) emit(resolveEventChoice(self(), decline.id));
         }
       } else {
-        if (currentDialogue === eventView) closeInteractive(); // l'événement s'est résolu -> referme le panneau
+        if (dialogs.current() === dialogs.eventView) dialogs.closeInteractive(); // l'événement s'est résolu -> referme le panneau
         audio.stopEventMusic(); // A5 : restaure le fond (no-op si aucune musique d'événement)
       }
       prevEventKey = key;
       prevEventSig = JSON.stringify(state.resources);
-    } else if (key && currentDialogue === eventView) {
+    } else if (key && dialogs.current() === dialogs.eventView) {
       const sig = JSON.stringify(state.resources);
-      if (sig !== prevEventSig) { refreshDialogue(); prevEventSig = sig; }
+      if (sig !== prevEventSig) { dialogs.refreshDialogue(); prevEventSig = sig; }
     }
 
     // M8.6 — RENCONTRES PARTAGÉES : matérialise TOUS les ennemis + le butin au sol (état autoritaire),
@@ -1754,7 +1342,7 @@ async function boot(): Promise<void> {
         // ÉVASION : écran de fin (le vaisseau s'éloigne en fond, cf. liftoff) -> prestige / contempler.
         audio.stopEventMusic();
         audio.playSfx("buy");
-        showDialogue(endingViewRef);
+        dialogs.showDialogue(dialogs.endingView);
       } else if (fStatus === "crashed") {
         hud.toast("la coque cède — le vaisseau retombe en flammes. il faudra réparer et réessayer.");
         audio.stopEventMusic(); // RF8 : coupe la musique de tension du décollage
@@ -1763,7 +1351,7 @@ async function boot(): Promise<void> {
         player.teleport(w.x, w.z);
         emit(endFlight(self()));
       } else if (fStatus === null && prevFlightStatus === "escaped" && hud.interactiveOpen) {
-        closeInteractive(); // prestige déclenché par un AUTRE joueur (co-op) -> on referme l'épilogue
+        dialogs.closeInteractive(); // prestige déclenché par un AUTRE joueur (co-op) -> on referme l'épilogue
       }
       prevFlightStatus = fStatus;
     }
@@ -2259,8 +1847,8 @@ async function boot(): Promise<void> {
     selfEngagedEnc,
     worldMap,
     shipWorldPos,
-    restartWorld,
-    endingText: () => endingView().text, // M11/RF6 : variante d'épilogue (étendue si fleet beacon possédé)
+    restartWorld: dialogs.restartWorld,
+    endingText: () => dialogs.endingView().text, // M11/RF6 : variante d'épilogue (étendue si fleet beacon possédé)
     pauseEncounters: () => { encountersPaused = true; },
     player,
     getTerrainStats: () => terrain.stats, // P2 : colliders (physique) vs chunks (visible)
@@ -2270,8 +1858,8 @@ async function boot(): Promise<void> {
     setAutoPerf: (on) => { autoPerf = on; perfAcc = 0; },
     getFocusVerb: () => currentFocus?.verb ?? null,
     audio,
-    openBuilderDialogue,
-    openBoard,
+    openBuilderDialogue: dialogs.openBuilderDialogue,
+    openBoard: dialogs.openBoard,
     openSettings,
     camera,
     scene,
